@@ -1,0 +1,17 @@
+# Shared architecture of the user service (its own backing infra: DB, cache, queue...).
+# Shared by all horizontally scaled copies of the app; the app container is defined in the root compose file.
+# Included from the root docker-compose.yml via `include:`. Keep names prefixed with "user-" to stay unique.
+# services:
+#   user-db:
+#     image: postgres:16-alpine
+#     environment:
+#       POSTGRES_PASSWORD: ${USER_DB_PASSWORD:-change-me}
+#     volumes:
+#       - user-db-data:/var/lib/postgresql/data
+#     networks: [user-net]
+
+networks:
+  user-net:
+
+# volumes:
+#   user-db-data:

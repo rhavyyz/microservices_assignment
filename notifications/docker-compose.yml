@@ -1,0 +1,17 @@
+# Shared architecture of the notifications service (its own backing infra: DB, cache, queue...).
+# Shared by all horizontally scaled copies of the app; the app container is defined in the root compose file.
+# Included from the root docker-compose.yml via `include:`. Keep names prefixed with "notifications-" to stay unique.
+# services:
+#   notifications-db:
+#     image: postgres:16-alpine
+#     environment:
+#       POSTGRES_PASSWORD: ${NOTIFICATIONS_DB_PASSWORD:-change-me}
+#     volumes:
+#       - notifications-db-data:/var/lib/postgresql/data
+#     networks: [notifications-net]
+
+networks:
+  notifications-net:
+
+# volumes:
+#   notifications-db-data:

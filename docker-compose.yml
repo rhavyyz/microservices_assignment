@@ -1,0 +1,119 @@
+# Top-level architecture: includes each service's own infra and defines one app instance per service.
+# All apps join the shared "backbone" network (reach each other by service name) plus their own "<service>-net".
+# To scale a service, raise its `deploy.replicas`, or copy its entry under a new name (see the example at the bottom).
+include:
+  - ./service-discoverer/docker-compose.yml
+  - ./gateway/docker-compose.yml
+  - ./certificates/docker-compose.yml
+  - ./events/docker-compose.yml
+  - ./subscription/docker-compose.yml
+  - ./payments/docker-compose.yml
+  - ./user/docker-compose.yml
+  - ./notifications/docker-compose.yml
+  - ./reports/docker-compose.yml
+
+# Shared settings for every app instance. No container_name and no host ports, so replicas can coexist.
+x-app: &app
+  restart: unless-stopped
+
+networks:
+  backbone:
+
+volumes:
+  kafka-data:
+
+services:
+  # Shared event bus for all services: single-node Kafka in KRaft mode (no Zookeeper, combined broker+controller).
+  # Reachable from any container on "backbone" at kafka:9092. No host ports; data lives in the "kafka-data" volume.
+  kafka:
+    <<: *app
+    image: apache/kafka:3.9.1
+    networks: [backbone]
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  service-discoverer:
+    <<: *app 
+    deploy:
+      replicas: 1 # We cant horizontally scalle this service at all
+    build: ./service-discoverer
+    networks: [backbone, service-discoverer-net]
+  gateway: 
+    <<: *app
+    deploy:
+      replicas: 1 
+    build: ./gateway
+    networks: [backbone, gateway-net]
+  certificates:
+    <<: *app
+    deploy:
+      replicas: 1
+    build: ./certificates
+    networks: [backbone, certificates-net]
+  events:
+    <<: *app
+    deploy:
+      replicas: 1
+    build: ./events
+    networks: [backbone, events-net]
+  subscription:
+    <<: *app
+    deploy:
+      replicas: 1 # We cant horizontally scalle this service at all
+    build: ./subscription
+    networks: [backbone, subscription-net]
+  payments:
+    <<: *app
+    deploy:
+      replicas: 1
+    build: ./payments
+    networks: [backbone, payments-net]
+  user:
+    <<: *app
+    deploy:
+      replicas: 1
+    build: ./user
+    networks: [backbone, user-net]
+  notifications:
+    <<: *app
+    deploy:
+      replicas: 1
+    build: ./notifications
+    networks: [backbone, notifications-net]
+  reports:
+    <<: *app
+    deploy:
+      replicas: 1
+    build: ./reports
+    networks: [backbone, reports-net]
+
+  # Identical replicas: just raise `deploy.replicas` on the service.
+  # Only when an instance needs different config (env, ID...), copy its entry under a new name, e.g.:
+  # payments-2:
+  #   <<: *app
+  #   deploy:
+  #     replicas: 1
+  #   build: ./payments
+  #   networks: [backbone, payments-net]
+  #   environment:
+  #     INSTANCE_ID: 2

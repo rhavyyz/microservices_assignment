@@ -1,0 +1,17 @@
+# Shared architecture of the reports service (its own backing infra: DB, cache, queue...).
+# Shared by all horizontally scaled copies of the app; the app container is defined in the root compose file.
+# Included from the root docker-compose.yml via `include:`. Keep names prefixed with "reports-" to stay unique.
+# services:
+#   reports-db:
+#     image: postgres:16-alpine
+#     environment:
+#       POSTGRES_PASSWORD: ${REPORTS_DB_PASSWORD:-change-me}
+#     volumes:
+#       - reports-db-data:/var/lib/postgresql/data
+#     networks: [reports-net]
+
+networks:
+  reports-net:
+
+# volumes:
+#   reports-db-data:

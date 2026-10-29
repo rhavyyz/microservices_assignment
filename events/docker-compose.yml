@@ -1,0 +1,17 @@
+# Shared architecture of the events service (its own backing infra: DB, cache, queue...).
+# Shared by all horizontally scaled copies of the app; the app container is defined in the root compose file.
+# Included from the root docker-compose.yml via `include:`. Keep names prefixed with "events-" to stay unique.
+# services:
+#   events-db:
+#     image: postgres:16-alpine
+#     environment:
+#       POSTGRES_PASSWORD: ${EVENTS_DB_PASSWORD:-change-me}
+#     volumes:
+#       - events-db-data:/var/lib/postgresql/data
+#     networks: [events-net]
+
+networks:
+  events-net:
+
+# volumes:
+#   events-db-data:

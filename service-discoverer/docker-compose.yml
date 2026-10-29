@@ -1,0 +1,17 @@
+# Shared architecture of the service-discoverer service (its own backing infra: DB, cache, queue...).
+# Shared by all horizontally scaled copies of the app; the app container is defined in the root compose file.
+# Included from the root docker-compose.yml via `include:`. Keep names prefixed with "service-discoverer-" to stay unique.
+# services:
+#   service-discoverer-db:
+#     image: postgres:16-alpine
+#     environment:
+#       POSTGRES_PASSWORD: ${SERVICE_DISCOVERER_DB_PASSWORD:-change-me}
+#     volumes:
+#       - service-discoverer-db-data:/var/lib/postgresql/data
+#     networks: [service-discoverer-net]
+
+networks:
+  service-discoverer-net:
+
+# volumes:
+#   service-discoverer-db-data:
