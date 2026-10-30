@@ -1,0 +1,8 @@
+[project]
+name = "discovery"
+version = "0.1.0"
+description = "Client for the service-discoverer: register this instance and call other services by kind."
+requires-python = ">=3.9"
+
+[tool.setuptools]
+packages = ["discovery"]

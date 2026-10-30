@@ -4,6 +4,7 @@ Docker Compose monorepo of services: service-discoverer, gateway, certificates, 
 
 - Each service folder has a `Dockerfile` and a `docker-compose.yml` (its shared infra).
 - The root `docker-compose.yml` includes them all and runs one instance per service.
+- `service-discoverer/Libs/` has the discovery client for Python, Go and Java; see `service-discoverer/Libs/README.md`.
 
 - Kafka (KRaft, single broker) is the shared event bus, reachable from any service at `kafka:9092` on the `backbone` network.
 
