@@ -17,7 +17,7 @@ info:
 servers:
   - url: "{gatewayUrl}"
     description: |
-      URL pública do API Gateway (configurável por ambiente; nunca o endereço interno do serviço).
+      URL pública do API Gateway (configurável por ambiente).
       Os caminhos deste documento devem ser precedidos por `/user` quando chamados pelo Gateway.
     variables:
       gatewayUrl:

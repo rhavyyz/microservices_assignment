@@ -60,7 +60,7 @@ class TokenServiceTest {
 
         assertThat(t.expiresInSeconds()).isEqualTo(1800);
         assertThat(jwt.getSubject()).isEqualTo(user.getId().toString());
-        assertThat(jwt.getIssuer().toString()).isEqualTo("eventhub-users");
+        assertThat(jwt.getClaimAsString("iss")).isEqualTo("eventhub-users");
         assertThat(jwt.<java.util.List<String>>getClaim("roles")).containsExactly("PARTICIPANT");
         assertThat(jwt.getId()).isNotBlank();
         assertThat(jwt.getExpiresAt().getEpochSecond() - jwt.getIssuedAt().getEpochSecond()).isEqualTo(1800);
