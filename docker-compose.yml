@@ -61,6 +61,9 @@ services:
       replicas: 1 # We cant horizontally scalle this service at all
     build: ./service-discoverer
     networks: [backbone, service-discoverer-net]
+    # environment:
+    #   RECHECK_INTERVAL: 5s # optional, this is the default: how often failing hosts are rechecked
+    #   RECHECK_MAX_FAILURES: 12 # optional, this is the default: consecutive failed rechecks before a host is dropped
   gateway:
     <<: *app
     deploy:
