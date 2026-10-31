@@ -1,17 +1,27 @@
-# Shared architecture of the gateway service (its own backing infra: DB, cache, queue...).
-# Shared by all horizontally scaled copies of the app; the app container is defined in the root compose file.
-# Included from the root docker-compose.yml via `include:`. Keep names prefixed with "gateway-" to stay unique.
-# services:
-#   gateway-db:
-#     image: postgres:16-alpine
-#     environment:
-#       POSTGRES_PASSWORD: ${GATEWAY_DB_PASSWORD:-change-me}
-#     volumes:
-#       - gateway-db-data:/var/lib/postgresql/data
-#     networks: [gateway-net]
+# Standalone compose project owned by the gateway: its private MongoDB (endpoint table: kind, method, path, maxPerMin).
+# NOT included from the root docker-compose.yml. Start it separately, before the root stack:
+#   docker compose -f gateway/docker-compose.yml up -d
+# No host ports; only reachable as gateway-db:27017 on the "gateway-net" network, which the root gateway app joins.
+# The network has a fixed name (gateway-net) so both projects refer to the same Docker network.
+name: gateway-db
+
+services:
+  gateway-db:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - gateway-db-data:/data/db
+    networks: [gateway-net]
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.adminCommand({ping: 1}).ok' | grep -q 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
 
 networks:
   gateway-net:
+    name: gateway-net
 
-# volumes:
-#   gateway-db-data:
+volumes:
+  gateway-db-data:
