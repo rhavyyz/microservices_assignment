@@ -76,6 +76,8 @@ services:
       MONGO_URI: mongodb://gateway-db:27017
       # gateway-db is NOT part of this project: start it first with `docker compose -f gateway/docker-compose.yml up -d`
       # SERVICE_DISCOVERER_URL: http://service-discoverer:8080 # optional, this is the default
+      # KAFKA_BROKERS: kafka:9092 # optional, this is the default: where the push consumer reads from (no depends_on: the gateway boots without Kafka)
+      # NOTIFICATIONS_PUSH_TOPIC: notifications-push # optional, this is the default: topic of the pushes forwarded to /ws
   certificates:
     <<: *app
     deploy:

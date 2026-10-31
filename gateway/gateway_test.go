@@ -499,7 +499,7 @@ func newGateway(t *testing.T, store Store, disc *Discovery) (*httptest.Server, *
 		t.Fatal(err)
 	}
 	l := NewLimiter(time.Now)
-	srv := httptest.NewServer(newMux(store, eps, NewPipeline(eps, l, nil, NewProxy(disc))))
+	srv := httptest.NewServer(newMux(store, eps, NewHub(), NewPipeline(eps, l, nil, NewProxy(disc))))
 	t.Cleanup(srv.Close)
 	return srv, eps
 }

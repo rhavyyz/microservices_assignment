@@ -16,9 +16,10 @@ func env(key, def string) string {
 	return def
 }
 
-// newMux wires the admin API, the healthcheck and the middleware pipeline (everything else),
-// all wrapped in CORS so that error responses and preflights are covered too.
-func newMux(store Store, eps *Endpoints, pipeline http.Handler) http.Handler {
+// newMux wires the admin API, the healthcheck, the websocket entry point and the middleware pipeline (everything
+// else), all wrapped in CORS so that error responses and preflights are covered too. /ws is not a proxied kind, so
+// it skips the endpoint pipeline and is logged here.
+func newMux(store Store, eps *Endpoints, hub *Hub, pipeline http.Handler) http.Handler {
 	a := &admin{store: store, eps: eps}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /admin/endpoints", a.list)
@@ -26,6 +27,7 @@ func newMux(store Store, eps *Endpoints, pipeline http.Handler) http.Handler {
 	mux.HandleFunc("GET /healthcheck", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+	mux.Handle("GET /ws", Chain(WebSocket(hub), Logging()))
 	mux.Handle("/", pipeline)
 	return Chain(mux, Cors())
 }
@@ -52,7 +54,11 @@ func main() {
 	go limiter.Run(ctx.Done())
 	go NewSyncer(disc, store, eps, defaultMax).Run(ctx) // never blocks the server start
 
-	mux := newMux(store, eps, NewPipeline(eps, limiter, proxies, NewProxy(disc)))
+	hub := NewHub()
+	push := NewPushConsumer(env("KAFKA_BROKERS", "kafka:9092"), env("NOTIFICATIONS_PUSH_TOPIC", "notifications-push"), hub)
+	go push.Run(ctx) // never blocks the server start
+
+	mux := newMux(store, eps, hub, NewPipeline(eps, limiter, proxies, NewProxy(disc)))
 	port := env("PORT", "8080")
 	log.Printf("gateway listening on :%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, mux))

@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bufio"
+	"errors"
 	"log"
+	"net"
 	"net/http"
 	"time"
 )
 
 // statusWriter records the status code. Unwrap keeps Flusher & co. reachable via http.ResponseController;
-// Flush is explicit because ReverseProxy type-asserts http.Flusher.
+// Flush and Hijack are explicit because ReverseProxy type-asserts http.Flusher and the websocket upgrader
+// type-asserts http.Hijacker.
 type statusWriter struct {
 	http.ResponseWriter
 	status int
@@ -31,6 +35,18 @@ func (w *statusWriter) Flush() {
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("response writer does not support hijacking")
+	}
+	conn, rw, err := h.Hijack()
+	if err == nil && w.status == 0 {
+		w.status = http.StatusSwitchingProtocols // the handler writes the 101 itself, on the raw connection
+	}
+	return conn, rw, err
 }
 
 func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
