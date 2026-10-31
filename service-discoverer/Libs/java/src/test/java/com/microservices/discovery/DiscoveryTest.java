@@ -2,9 +2,11 @@ package com.microservices.discovery;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -19,6 +21,8 @@ public class DiscoveryTest {
     static final AtomicReference<String> registered = new AtomicReference<>();
     static final AtomicReference<String> nextHost = new AtomicReference<>();
     static final AtomicInteger consults = new AtomicInteger();
+    static final AtomicInteger registerCalls = new AtomicInteger();
+    static final AtomicInteger registerFailures = new AtomicInteger();
 
     static String read(HttpExchange ex) throws Exception {
         return new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
@@ -52,6 +56,10 @@ public class DiscoveryTest {
         serve(18099, ex -> {
             if (ex.getRequestMethod().equals("POST")) {
                 registered.set(read(ex));
+                if (registerCalls.incrementAndGet() <= registerFailures.get()) {
+                    reply(ex, 503, "not ready");
+                    return;
+                }
                 reply(ex, 204, "");
             } else {
                 consults.incrementAndGet();
@@ -65,6 +73,30 @@ public class DiscoveryTest {
         Discovery.register(Kind.PAYMENTS);
         check("{\"kind\":\"payments\",\"host\":\"payments-1:9000\"}".equals(registered.get())
                 || "{\"host\":\"payments-1:9000\",\"kind\":\"payments\"}".equals(registered.get()), "register body: " + registered.get());
+
+        // register retries with exponential backoff (sleep is replaced, so no real waiting)
+        List<Long> delays = new ArrayList<>();
+        Discovery.sleeper = delays::add;
+        registerCalls.set(0);
+        registerFailures.set(3);
+        Discovery.register(Kind.PAYMENTS);
+        check(registerCalls.get() == 4, "register calls after 3 failures: " + registerCalls.get());
+        check(delays.equals(List.of(1000L, 2000L, 4000L)), "delays after 3 failures: " + delays);
+
+        delays.clear();
+        registerCalls.set(0);
+        registerFailures.set(1000);
+        try {
+            Discovery.register(Kind.PAYMENTS);
+            check(false, "register should have failed");
+        } catch (IOException e) {
+            check(e.getMessage().startsWith("could not register with the service-discoverer: ")
+                    && e.getMessage().contains("register failed: 503 not ready"), "message: " + e.getMessage());
+        }
+        check(registerCalls.get() == 10, "register calls when giving up: " + registerCalls.get());
+        check(delays.equals(List.of(1000L, 2000L, 4000L, 8000L, 16000L, 30000L, 30000L, 30000L, 30000L)),
+                "delays when giving up: " + delays);
+        registerFailures.set(0);
 
         // request: headers/body are sent and the host is cached
         nextHost.set(host(target));

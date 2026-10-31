@@ -19,7 +19,7 @@ Every instance registers itself at startup. To call another service, ask the dis
 Discoverer env (all optional): `RECHECK_INTERVAL` (`5s`), `RECHECK_MAX_FAILURES` (`12`, so ~1 minute of grace by default).
 
 ## Usage
-Both functions: `register(kind)` once at startup with the service's own kind, and `request(method, kind, url, {headers, body})` to call another service. `url` is a path like `/charge`; `body` is sent as JSON. `consult(kind)` is also exposed on its own: it asks the discoverer for a host every time, with no caching (`request` uses it internally). HTTP error statuses (4xx/5xx) are returned, not raised. Only an unreachable host triggers one rediscovery and retry.
+Both functions: `register(kind)` once at startup with the service's own kind (it retries up to 10 times with exponential backoff, 1s doubling up to a 30s cap, about 2.5 minutes in all, then returns/raises an error; it blocks while retrying, so a service that must not wait should call it from a goroutine/thread), and `request(method, kind, url, {headers, body})` to call another service. `url` is a path like `/charge`; `body` is sent as JSON. `consult(kind)` is also exposed on its own: it asks the discoverer for a host every time, with no caching (`request` uses it internally). HTTP error statuses (4xx/5xx) are returned, not raised. Only an unreachable host triggers one rediscovery and retry.
 
 ### Python (`service-discoverer/Libs/python`, stdlib only; `pip install ./service-discoverer/Libs/python`)
 ```python
@@ -48,6 +48,26 @@ Discovery.register(Kind.USER);
 HttpResponse<String> res = Discovery.request("POST", Kind.PAYMENTS, "/charge",
     RequestOptions.of(Map.of("X-Id", "1"), Map.of("amount", 10)));
 ```
+
+### Using the Go lib in a service's Docker build
+A service's build context (e.g. `./notifications`) cannot see `service-discoverer/Libs/go`, so pass the lib as a named additional context and mirror the repo layout in the image (`/src` is the service folder, so `../service-discoverer/Libs/go` resolves the same on the host and in the image):
+```yaml
+# docker-compose.yml
+build:
+  context: ./my-service
+  additional_contexts:
+    discovery: ./service-discoverer/Libs/go
+```
+```dockerfile
+# Dockerfile: after WORKDIR /src, before go mod download
+COPY --from=discovery . /service-discoverer/Libs/go
+```
+```
+# go.mod
+require microservices/discovery v0.0.0
+replace microservices/discovery => ../service-discoverer/Libs/go
+```
+Python can use the same `additional_contexts` with a `COPY --from=discovery` and `pip install`; Java with a `COPY --from=discovery` and a Maven install of the lib.
 
 ## Raw protocol (any other language)
 - `POST /register` with `{"kind": "payments", "host": "payments-1:8080"}` -> `204`

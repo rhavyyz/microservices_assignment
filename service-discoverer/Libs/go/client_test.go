@@ -5,9 +5,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func host(s *httptest.Server) string { return strings.TrimPrefix(s.URL, "http://") }
@@ -55,6 +57,77 @@ func TestRegister(t *testing.T) {
 	}
 	if got["kind"] != "payments" || got["host"] != "payments-1:9000" {
 		t.Fatalf("got %v", got)
+	}
+}
+
+// flakyDiscoverer fails the first `failures` register calls with a 503, then answers 204.
+func flakyDiscoverer(t *testing.T, failures int) (*int, *[]time.Duration) {
+	calls := 0
+	var delays []time.Duration
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls <= failures {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(s.Close)
+	t.Setenv("SERVICE_DISCOVERER_URL", s.URL)
+	t.Setenv("SERVICE_HOST", "payments-1:9000")
+	orig := sleep
+	sleep = func(d time.Duration) { delays = append(delays, d) }
+	t.Cleanup(func() { sleep = orig })
+	return &calls, &delays
+}
+
+func TestRegisterRetriesUntilSuccess(t *testing.T) {
+	calls, delays := flakyDiscoverer(t, 3)
+	if err := Register(Payments); err != nil {
+		t.Fatal(err)
+	}
+	if *calls != 4 {
+		t.Fatalf("calls = %d", *calls)
+	}
+	want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
+	if !slices.Equal(*delays, want) {
+		t.Fatalf("delays = %v, want %v", *delays, want)
+	}
+}
+
+func TestRegisterGivesUpWithBackoff(t *testing.T) {
+	calls, delays := flakyDiscoverer(t, 1000)
+	err := Register(Payments)
+	if err == nil || !strings.Contains(err.Error(), "could not register with the service-discoverer") ||
+		!strings.Contains(err.Error(), "register failed: 503 not ready") {
+		t.Fatalf("err = %v", err)
+	}
+	if *calls != 10 {
+		t.Fatalf("calls = %d", *calls)
+	}
+	want := []time.Duration{1, 2, 4, 8, 16, 30, 30, 30, 30}
+	for i := range want {
+		want[i] *= time.Second
+	}
+	if !slices.Equal(*delays, want) {
+		t.Fatalf("delays = %v, want %v", *delays, want)
+	}
+}
+
+func TestRegisterRetriesConnectionErrors(t *testing.T) {
+	dead := httptest.NewServer(http.NotFoundHandler())
+	dead.Close()
+	t.Setenv("SERVICE_DISCOVERER_URL", dead.URL)
+	t.Setenv("SERVICE_HOST", "payments-1:9000")
+	n := 0
+	orig := sleep
+	sleep = func(time.Duration) { n++ }
+	t.Cleanup(func() { sleep = orig })
+	if err := Register(Payments); err == nil {
+		t.Fatal("expected an error")
+	}
+	if n != 9 {
+		t.Fatalf("sleeps = %d", n)
 	}
 }
 

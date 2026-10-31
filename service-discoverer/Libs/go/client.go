@@ -14,9 +14,13 @@ import (
 )
 
 const (
-	registerAttempts = 5
-	registerDelay    = time.Second
+	registerAttempts     = 10
+	registerInitialDelay = time.Second
+	registerMaxDelay     = 30 * time.Second
 )
+
+// sleep is time.Sleep, replaced in tests.
+var sleep = time.Sleep
 
 var client = &http.Client{Timeout: 5 * time.Second}
 
@@ -35,7 +39,9 @@ func discovererURL() string {
 
 // Register registers this instance with the service-discoverer. Call it once
 // at startup, passing only the instance's own kind. The host sent is
-// SERVICE_HOST, or "<hostname>:<PORT or 8080>".
+// SERVICE_HOST, or "<hostname>:<PORT or 8080>". It retries up to 10 times with
+// a delay doubling from 1s up to 30s (about 2.5 minutes in all), so it blocks
+// meanwhile: call it from a goroutine if the service must not wait.
 func Register(kind Kind) error {
 	host := os.Getenv("SERVICE_HOST")
 	if host == "" {
@@ -52,9 +58,11 @@ func Register(kind Kind) error {
 	payload, _ := json.Marshal(map[string]string{"kind": string(kind), "host": host})
 
 	var last error
+	delay := registerInitialDelay
 	for i := 0; i < registerAttempts; i++ {
 		if i > 0 {
-			time.Sleep(registerDelay)
+			sleep(delay)
+			delay = min(delay*2, registerMaxDelay)
 		}
 		resp, err := client.Post(discovererURL()+"/register", "application/json", bytes.NewReader(payload))
 		if err != nil {

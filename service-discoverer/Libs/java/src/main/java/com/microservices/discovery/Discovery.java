@@ -20,8 +20,9 @@ import java.util.regex.Pattern;
  * by kind, caching the discovered host per kind.
  */
 public final class Discovery {
-    private static final int REGISTER_ATTEMPTS = 5;
-    private static final long REGISTER_DELAY_MS = 1000;
+    private static final int REGISTER_ATTEMPTS = 10;
+    private static final long REGISTER_INITIAL_DELAY_MS = 1000;
+    private static final long REGISTER_MAX_DELAY_MS = 30_000;
     private static final Pattern HOST = Pattern.compile("\"host\"\\s*:\\s*\"([^\"]+)\"");
 
     private static final HttpClient CLIENT = HttpClient.newBuilder()
@@ -39,6 +40,11 @@ public final class Discovery {
         String host;
     }
 
+    /** Sleeps between register attempts; package-private so tests can replace it. */
+    interface Sleeper { void sleep(long millis) throws InterruptedException; }
+
+    static Sleeper sleeper = Thread::sleep;
+
     private Discovery() {}
 
     private static String discovererUrl() {
@@ -50,6 +56,9 @@ public final class Discovery {
     /**
      * Registers this instance. Call once at startup, passing only its own kind.
      * The host sent is SERVICE_HOST, or "&lt;hostname&gt;:&lt;PORT or 8080&gt;".
+     * Retries up to 10 times with a delay doubling from 1s up to 30s (about 2.5
+     * minutes in all), so it blocks meanwhile: call it from a thread if the
+     * service must not wait.
      */
     public static void register(Kind kind) throws IOException, InterruptedException {
         String host = System.getenv("SERVICE_HOST");
@@ -64,8 +73,12 @@ public final class Discovery {
                 .POST(HttpRequest.BodyPublishers.ofString(payload)).build();
 
         Exception last = null;
+        long delay = REGISTER_INITIAL_DELAY_MS;
         for (int i = 0; i < REGISTER_ATTEMPTS; i++) {
-            if (i > 0) Thread.sleep(REGISTER_DELAY_MS);
+            if (i > 0) {
+                sleeper.sleep(delay);
+                delay = Math.min(delay * 2, REGISTER_MAX_DELAY_MS);
+            }
             try {
                 HttpResponse<String> res = CLIENT.send(req, HttpResponse.BodyHandlers.ofString());
                 if (res.statusCode() >= 200 && res.statusCode() < 300) return;

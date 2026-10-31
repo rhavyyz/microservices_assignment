@@ -110,8 +110,25 @@ services:
     <<: *app
     deploy:
       replicas: 1
-    build: ./notifications
+    # additional_contexts gives the build access to the Go discovery lib, which lives outside ./notifications
+    build:
+      context: ./notifications
+      additional_contexts:
+        discovery: ./service-discoverer/Libs/go
     networks: [backbone, notifications-net]
+    depends_on:
+      kafka:
+        condition: service_healthy
+      notifications-db:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      MONGO_URI: mongodb://notifications-db:27017
+      # NOTIFICATIONS_TOPIC: notifications # optional, this is the default
+      # NOTIFICATIONS_PARTITIONS: 6 # optional, this is the default
+      # NOTIFICATIONS_PUSH_TOPIC: notifications-push # optional, this is the default
+      # NOTIFICATIONS_PUSH_PARTITIONS: 6 # optional, this is the default
+      # RETENTION_DAYS: 30 # optional, this is the default
   reports:
     <<: *app
     deploy:
