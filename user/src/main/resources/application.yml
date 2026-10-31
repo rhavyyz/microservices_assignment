@@ -1,0 +1,74 @@
+# Serviço de Usuários. Segredos NUNCA têm valor padrão aqui: vêm do ambiente (ver .env.example na raiz).
+spring:
+  application:
+    name: users-service
+  main:
+    banner-mode: "off"
+  datasource:
+    url: ${USERS_DB_URL}
+    username: ${USERS_DB_USER}
+    password: ${USERS_DB_PASSWORD}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate      # o esquema é criado somente pelo Flyway
+  flyway:
+    enabled: true
+  jackson:
+    deserialization:
+      # Corpo com campo desconhecido (ex.: "roles" no cadastro) vira 400, em vez de ser ignorado em silêncio.
+      fail-on-unknown-properties: true
+
+server:
+  port: ${PORT:8080}
+  error:
+    include-message: never
+    include-stacktrace: never
+    include-binding-errors: never
+    whitelabel:
+      enabled: false
+
+# Contrato do service-discoverer: GET /healthcheck com 2xx (ADR-003). Inclui o banco; sem detalhes.
+management:
+  endpoints:
+    web:
+      base-path: /
+      exposure:
+        include: health
+      path-mapping:
+        health: healthcheck
+  endpoint:
+    health:
+      show-details: never
+  health:
+    diskspace:
+      enabled: false
+
+# O Gateway lê GET /openapi.json para registrar as rotas do serviço (kind "user").
+springdoc:
+  api-docs:
+    path: /openapi.json
+  swagger-ui:
+    enabled: false
+
+logging:
+  pattern:
+    # %kvp imprime os pares chave=valor do log de auditoria; com saída estruturada (JSON) este padrão é ignorado.
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%X{traceId:-}] %logger{24} - %msg %kvp%n"
+
+users:
+  jwt:
+    issuer: ${USERS_JWT_ISSUER:eventhub-users}
+    key-id: ${USERS_JWT_KEY_ID:users-key-1}
+    private-key-file: ${USERS_JWT_PRIVATE_KEY_FILE:/run/keys/jwt-private.pem}
+    ttl-seconds: ${USERS_JWT_TTL_SECONDS:1800}
+  password:
+    bcrypt-strength: ${USERS_BCRYPT_STRENGTH:12}
+  dev-seed:
+    enabled: ${USERS_DEV_SEED_ENABLED:false}
+    name: ${USERS_DEV_SEED_NAME:}
+    email: ${USERS_DEV_SEED_EMAIL:}
+    password: ${USERS_DEV_SEED_PASSWORD:}
+  discovery:
+    enabled: ${USERS_DISCOVERY_ENABLED:true}
+    reregister-seconds: ${USERS_DISCOVERY_REREGISTER_SECONDS:30}

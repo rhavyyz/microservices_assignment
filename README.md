@@ -114,3 +114,21 @@ Stop in reverse: `docker compose down`, then `docker compose -f gateway/docker-c
 
 ## Scale
 Raise `deploy.replicas` for the service in the root `docker-compose.yml` (every app service sets it explicitly, default `1`), or add another entry for the service (see the `payments-2` example).
+
+## User service (`user/`)
+Registration, login (JWT RS256) and own-profile API (Spring Boot 4.1, Java 21, PostgreSQL). Docs: `docs/architecture/users-service.md`, `docs/api/users.openapi.yaml`, `docs/integration/contracts-with-team.md`, `docs/decisions/`.
+
+    cp .env.example .env                       # set USERS_DB_PASSWORD (the user-db refuses to start without it)
+    user/scripts/gen-dev-keys.sh               # dev JWT signing key in user/.keys (git-ignored)
+    docker compose up --build user user-db     # via the Gateway the routes are /user/api/v1/... (see docs/integration)
+
+Run the tests (needs JDK 21; `*IT` need Docker):
+
+    (cd service-discoverer/Libs/java && mvn -q install -DskipTests)   # discovery lib -> local Maven repo
+    cd user && ./mvnw verify
+
+Run outside Docker: publish the database with `docker compose --env-file .env -f user/docker-compose.yml -f user/docker-compose.dev.yml up -d user-db`, then export `USERS_DB_URL=jdbc:postgresql://localhost:5433/users`, `USERS_DB_USER`, `USERS_DB_PASSWORD`, `USERS_JWT_PRIVATE_KEY_FILE=$PWD/user/.keys/jwt-private.pem`, `USERS_DISCOVERY_ENABLED=false` and run `./mvnw spring-boot:run` in `user/`.
+
+After the Gateway synced the `user` kind, open the routes with `user/scripts/register-gateway-routes.sh` (instructions in the script header).
+
+> Status: the backend was written without access to Maven Central and has **not been compiled or tested with Maven yet**; see `docs/testing/test-report.md`.

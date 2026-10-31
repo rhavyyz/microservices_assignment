@@ -15,3 +15,7 @@ build/
 
 # Exceção: manter o exemplo versionado
 !.env.example
+
+# Serviço de Usuários: build Maven e chaves de desenvolvimento (nunca versionar)
+target/
+user/.keys/

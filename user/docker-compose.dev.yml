@@ -1,0 +1,7 @@
+# Development only: publishes the user database on the loopback interface so the service can run with
+# `./mvnw spring-boot:run` outside Docker. Use together with user/docker-compose.yml:
+#   docker compose --env-file .env -f user/docker-compose.yml -f user/docker-compose.dev.yml up -d user-db
+services:
+  user-db:
+    ports:
+      - "127.0.0.1:${USERS_DB_HOST_PORT:-5433}:5432"
