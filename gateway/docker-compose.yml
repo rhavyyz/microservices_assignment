@@ -1,7 +1,10 @@
-# Shared architecture of the gateway service (its own backing infra: DB, cache, queue...).
-# Shared by all horizontally scaled copies of the app; the app container is defined in the root compose file.
-# Included from the root docker-compose.yml via `include:`. Keep names prefixed with "gateway-" to stay unique.
-# gateway-db stores the endpoint table (kind, method, path, maxPerMin). No host ports.
+# Standalone compose project owned by the gateway: its private MongoDB (endpoint table: kind, method, path, maxPerMin).
+# NOT included from the root docker-compose.yml. Start it separately, before the root stack:
+#   docker compose -f gateway/docker-compose.yml up -d
+# No host ports; only reachable as gateway-db:27017 on the "gateway-net" network, which the root gateway app joins.
+# The network has a fixed name (gateway-net) so both projects refer to the same Docker network.
+name: gateway-db
+
 services:
   gateway-db:
     image: mongo:7
@@ -18,6 +21,7 @@ services:
 
 networks:
   gateway-net:
+    name: gateway-net
 
 volumes:
   gateway-db-data:

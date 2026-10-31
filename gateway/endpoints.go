@@ -12,7 +12,12 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
-const cacheRefreshEvery = 30 * time.Second
+const (
+	cacheRefreshEvery = 30 * time.Second
+	// Mongo may be down or start later: fail fast (5xx) instead of waiting for the driver's 30s defaults.
+	mongoServerSelectionTimeout = 3 * time.Second
+	mongoOpTimeout              = 10 * time.Second
+)
 
 // Endpoint is one downstream route the gateway knows about. Path is the OpenAPI template (/users/{id}).
 type Endpoint struct {
@@ -37,7 +42,9 @@ type Store interface {
 type mongoStore struct{ coll *mongo.Collection }
 
 func newMongoStore(uri string) (*mongoStore, error) {
-	c, err := mongo.Connect(options.Client().ApplyURI(uri)) // connects lazily
+	c, err := mongo.Connect(options.Client().ApplyURI(uri).
+		SetServerSelectionTimeout(mongoServerSelectionTimeout).
+		SetTimeout(mongoOpTimeout)) // connects lazily; never blocks nor fails while Mongo is down
 	if err != nil {
 		return nil, err
 	}

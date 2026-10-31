@@ -1,9 +1,8 @@
-# Top-level architecture: includes each service's own infra and defines one app instance per service.
+# Top-level architecture: includes each service's own infra (except the gateway's private DB, a standalone project) and defines one app instance per service.
 # All apps join the shared "backbone" network (reach each other by service name) plus their own "<service>-net".
 # To scale a service, raise its `deploy.replicas`, or copy its entry under a new name (see the example at the bottom).
 include:
   - ./service-discoverer/docker-compose.yml
-  - ./gateway/docker-compose.yml
   - ./certificates/docker-compose.yml
   - ./events/docker-compose.yml
   - ./subscription/docker-compose.yml
@@ -18,6 +17,10 @@ x-app: &app
 
 networks:
   backbone:
+  # Owned by the standalone gateway-db project (gateway/docker-compose.yml); start that one first or `up` fails.
+  gateway-net:
+    external: true
+    name: gateway-net
 
 volumes:
   kafka-data:
@@ -68,10 +71,8 @@ services:
       - "8080:8080" # UI-facing entry point
     environment:
       MONGO_URI: mongodb://gateway-db:27017
+      # gateway-db is NOT part of this project: start it first with `docker compose -f gateway/docker-compose.yml up -d`
       # SERVICE_DISCOVERER_URL: http://service-discoverer:8080 # optional, this is the default
-    depends_on:
-      gateway-db:
-        condition: service_healthy
   certificates:
     <<: *app
     deploy:

@@ -18,6 +18,8 @@ import (
 type fakeStore struct {
 	mu   sync.Mutex
 	data map[[3]string]Endpoint
+	// indexFails makes the first N EnsureIndex calls fail, like Mongo being down at boot.
+	indexFails int
 }
 
 func newFakeStore(eps ...Endpoint) *fakeStore {
@@ -28,7 +30,15 @@ func newFakeStore(eps ...Endpoint) *fakeStore {
 	return s
 }
 
-func (s *fakeStore) EnsureIndex(context.Context) error { return nil }
+func (s *fakeStore) EnsureIndex(context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.indexFails > 0 {
+		s.indexFails--
+		return fmt.Errorf("mongo down")
+	}
+	return nil
+}
 
 func (s *fakeStore) List(_ context.Context, kind Kind) ([]Endpoint, error) {
 	s.mu.Lock()
@@ -529,6 +539,34 @@ func TestSyncRunRetriesFailedKinds(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not finish")
+	}
+	all, _ := store.List(context.Background(), "")
+	if len(all) != len(allKinds) {
+		t.Errorf("want one endpoint per kind, got %d", len(all))
+	}
+}
+
+func TestSyncRunRecoversWhenStoreComesUpLater(t *testing.T) {
+	svc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"paths":{"/a":{"get":{}}}}`)
+	}))
+	defer svc.Close()
+	hosts := map[string][]string{}
+	for _, k := range allKinds {
+		hosts[string(k)] = []string{hostOf(svc)}
+	}
+	ds, _ := fakeDiscoverer(t, hosts)
+	store := newFakeStore()
+	store.indexFails = 2
+	s := NewSyncer(NewDiscovery(ds.URL), store, NewEndpoints(store), 60)
+	s.minDelay, s.maxDelay = time.Millisecond, 2*time.Millisecond
+
+	done := make(chan struct{})
+	go func() { s.Run(context.Background()); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not recover after the store came up")
 	}
 	all, _ := store.List(context.Background(), "")
 	if len(all) != len(allKinds) {
