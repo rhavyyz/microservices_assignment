@@ -1,82 +1,78 @@
 # Contratos e dependências com a equipe
 
-> Estado: **Fase 0/1** — inventário do repositório, contratos propostos e pendências.
-> Legenda: **Aprovado** (já existe no repositório) · **Proposto** (sugestão desta entrega, aguardando confirmação) · **Pendente** (sem contrato; não foi inventado).
+> Estado: **backend de Usuários implementado (Fases 0–5)**; frontend na próxima etapa.
+> Legenda: **Aprovado** (existe no código do repositório) · **Proposto** (sugestão desta entrega, aguardando confirmação) · **Pendente** (sem contrato; não foi inventado).
+> Revisado sobre o `main` em `b0753be` (Gateway e Notificações já mesclados).
 
-## 1. Inventário do repositório (commit `75d163d`)
+## 1. Inventário do repositório
 
-| Item | Estado encontrado | Consequência para esta entrega |
+| Item | Estado encontrado | Consequência |
 |---|---|---|
-| `service-discoverer/` | Implementado em Go (registro em memória). Libs cliente em Python, Go e **Java 17+ (sem dependências)** em `service-discoverer/Libs/`. | Aprovado. O serviço de Usuários usa a lib Java para se registrar com `Kind.USER`. |
-| `user/` | Apenas `Dockerfile` placeholder (`alpine` + `sleep infinity`) e `docker-compose.yml` com o template de banco comentado (`postgres:16-alpine`, rede `user-net`). | Será substituído pelo serviço real (Fase 2). O template de Postgres será descomentado. |
-| `gateway/` | Apenas placeholder. **Nenhuma rota, porta publicada ou contrato definidos.** | Contrato do Gateway **pendente** (seção 3). |
-| `events/`, `subscription/`, `payments/`, `notifications/`, `reports/`, `certificates/` | Apenas placeholders. | Nenhum contrato disponível. Não serão simulados. |
-| `docker-compose.yml` raiz | Kafka KRaft (`kafka:9092`), rede `backbone`; cada serviço com `deploy.replicas` e **sem portas no host**. | O serviço `user` já está em `[backbone, user-net]`. Sem porta no host, o acesso externo depende do Gateway (P1). |
-| Frontend | **Não existe.** | Será criado em `frontend/` (Fase 6). |
-| `.gitignore` | Continha `.env.*`, que **também ignorava `.env.example`**. | Ajuste mínimo: `!.env.example` (já aplicado). |
+| `service-discoverer/` (Go) + libs Python/Go/**Java** | Implementado. Registro **em memória**; exige `GET /healthcheck` 2xx; remove hosts sem saúde após ~1 min. | Usuários usa a lib Java e **re-registra periodicamente** (ADR-003). |
+| `gateway/` (Go) | **Implementado**: rota `/{kind}/...`, tabela de endpoints no MongoDB, CORS, rate limit, `/admin/endpoints`, WebSocket `/ws`. | Contrato lido do código (seção 2). Substitui as suposições anteriores P1–P4. |
+| `notifications/` (Go) | Implementado (Kafka → MongoDB, API de listagem). | Não consome Usuários; usa `X-User-Id` (ver P13). |
+| `user/` | **Serviço implementado** (Spring Boot 4.1, Java 21, PostgreSQL). | Esta entrega. |
+| `events/`, `subscription/`, `payments/`, `reports/`, `certificates/` | Apenas placeholders. | Nenhum contrato disponível; nada foi simulado. |
+| `docker-compose.yml` raiz | Kafka KRaft; sem portas publicadas no host. Entrada `user:` editada (única alteração). | **Não há porta pública do Gateway** (P1). |
 
-### Contrato de descoberta (Aprovado — lido do código)
+## 2. Contrato do Gateway (Aprovado — lido do código)
 
-- `POST /register` `{"kind":"user","host":"<host:porta>"}` → `204`.
-- `GET /consult?kind=<kind>` → `200 {"host":"..."}`; `503` sem instância saudável; `400` kind inválido.
-- Kinds válidos: `certificates, events, subscription, payments, user, notifications, reports`. **Gateway não é um kind.**
-- O discoverer exige que o serviço exponha **`GET /healthcheck` com 2xx**, chamado a cada consulta; 5 falhas seguidas removem o host.
-- Variáveis: `SERVICE_DISCOVERER_URL` (padrão `http://service-discoverer:8080`), `SERVICE_HOST`, `PORT`.
-
-> **Divergência com o prompt:** o prompt sugere `/actuator/health`; o contrato aprovado exige `/healthcheck`. Prevalece o contrato do repositório (ver ADR-003).
-
-## 2. Plano por fases
-
-| Fase | Conteúdo | Verificável neste ambiente? |
+| Comportamento | Detalhe | Efeito em Usuários |
 |---|---|---|
-| 0 | Inventário e plano | Sim |
-| 1 | OpenAPI v1, ADRs, catálogo de contratos | Sim (validação do OpenAPI) |
-| 2 | Backend: Spring Boot 4.1.x, Postgres, Flyway, entidades | **Não compila aqui** (Maven Central bloqueado) |
-| 3 | Cadastro e perfil | Idem |
-| 4 | Login, JWT RS256, Spring Security, JWKS | Idem |
-| 5 | `/healthcheck`, auditoria, correlation ID, registro no discoverer | Idem |
-| 6 | Frontend React/TS (cadastro, login, perfil) | Sim (npm funciona) |
-| 7 | Integração com colegas | Depende dos contratos |
-| 8 | Testes finais, relatório | Parcial |
+| Roteamento | `/{kind}/resto` → instância saudável do kind (via discoverer), **prefixo `/{kind}` removido**. | O frontend chama `{GATEWAY}/user/api/v1/...`. |
+| Descoberta de endpoints | O Gateway lê **`GET /openapi.json`** de cada kind (só `paths` + métodos) e registra cada par método/caminho. | O serviço publica `/openapi.json` (springdoc). |
+| Visibilidade | Endpoints nascem **privados (404)**, `requireAuth=false`, `maxPerMin` padrão. Só `PUT /admin/endpoints` altera. | `user/scripts/register-gateway-routes.sh` abre os endpoints necessários. |
+| `requireAuth` | Apenas verifica que o cabeçalho **`X-User-Id` existe**; não valida identidade (comentário no código). | Mantido `false` em Usuários; o serviço valida o JWT. |
+| CORS | Gateway responde preflight e define cabeçalhos; **reflete qualquer `Origin` com credenciais**; remove `Access-Control-*` do serviço. | Usuários **não** configura CORS (ADR-003). |
+| Correlação | Usa **`X-Request-Id`** (gera se ausente; ecoa na resposta). | Usuários adota `X-Request-Id` em vez de `X-Correlation-Id` do prompt. |
+| Rate limit | Por endpoint; `user_or_ip` confia em `X-User-Id` (controlado pelo cliente). | Script usa `rateLimitBy=ip`. |
+| Admin API | **Sem autenticação**, sem porta no host. | Não expor publicamente. |
 
-Riscos: (a) backend sem compilação local — o código não será declarado testado até ser compilado em outro ambiente; (b) Gateway inexistente impede teste fim a fim; (c) várias réplicas do serviço exigem **chave de assinatura compartilhada** (ADR-001).
+### Rotas de Usuários no Gateway
 
-## 3. Pendências para a equipe
-
-| # | Pergunta concreta | Proposta provisória | Quem confirma | Efeito na implementação |
+| Método | Caminho público | Destino | Aberto pelo script | Limite |
 |---|---|---|---|---|
-| P1 | Qual a URL pública do Gateway em dev e qual porta será publicada no host? | Frontend lê `VITE_API_BASE_URL`; sem valor fixo no código. | Responsável pelo Gateway | Apenas configuração. |
-| P2 | Mapeamento de rotas no Gateway para o kind `user` (tabela abaixo). | Ver tabela de rotas. | Responsável pelo Gateway | Frontend usa esses caminhos. |
-| P3 | O Gateway valida o JWT ou apenas repassa `Authorization`? | Apenas repassa `Authorization` e `X-Correlation-Id`; cada serviço valida. | Gateway + todos os serviços | Nenhuma em Usuários. |
-| P4 | CORS: tratado no Gateway ou no serviço? | Usuários permite só origens listadas em `USERS_CORS_ALLOWED_ORIGINS`; se o Gateway tratar, deixar vazio. | Gateway | Configuração. |
-| P5 | Como os demais serviços obtêm a chave pública? | JWKS em `GET /.well-known/jwks.json`, localizado via `GET /consult?kind=user`. Alternativa: chave pública por configuração. | Todos os serviços | Define se o endpoint JWKS é usado. |
-| P6 | Valor de `iss` e se haverá `aud`. | `iss=eventhub-users` (configurável), sem `aud`. | Todos os serviços | Configuração e validação nos consumidores. |
-| P7 | Fluxo aprovado para criar `ORGANIZER` em produção. | Nenhum endpoint. Somente seed de dev (desativado por padrão). | Equipe/docente | Sem endpoint de promoção até decisão. |
-| P8 | Usuários publica algum evento Kafka (ex.: `user.registered`)? | **Não.** Nenhum tópico criado. | Notificações + Usuários | Sem Kafka no serviço. |
-| P9 | Certificados precisa do nome do participante: snapshot em Inscrições ou endpoint interno? | Nenhum endpoint criado. | Certificados + Inscrições | Nenhuma por ora. |
-| P10 | Onde o frontend é servido e entra no `docker-compose` raiz? | Pasta `frontend/` com build estático; **compose raiz não alterado** até confirmação. | Equipe | Define o Dockerfile do frontend. |
-| P11 | A lib Java de discovery está fora do contexto `./user`. | `build.additional_contexts` na entrada `user:` do compose raiz (ADR-003). | Equipe | Edição só na entrada `user:`. |
-| P12 | Proteção contra força bruta/rate limit no login. | Fora do escopo; sugerida no Gateway. | Gateway | Limitação conhecida. |
+| POST | `/user/api/v1/auth/register` | `/api/v1/auth/register` | sim | 10/min/IP |
+| POST | `/user/api/v1/auth/login` | `/api/v1/auth/login` | sim | 10/min/IP |
+| GET | `/user/api/v1/users/me` | `/api/v1/users/me` | sim | 120/min/IP |
+| PATCH | `/user/api/v1/users/me` | `/api/v1/users/me` | sim | 30/min/IP |
+| GET | `/.well-known/jwks.json` | — | **não** (servido direto via discoverer) | — |
+| GET | `/healthcheck`, `/openapi.json` | — | **não** (internos) | — |
 
-### Rotas propostas no Gateway (P2) — **Proposto**
+## 3. Contrato de descoberta (Aprovado)
 
-| Método | Caminho público | Destino (kind `user`) | Auth |
-|---|---|---|---|
-| POST | `/api/v1/auth/register` | `/api/v1/auth/register` | Não |
-| POST | `/api/v1/auth/login` | `/api/v1/auth/login` | Não |
-| GET, PATCH | `/api/v1/users/me` | `/api/v1/users/me` | Bearer |
-| GET | `/.well-known/jwks.json` | idem | Não |
+`POST /register {"kind":"user","host":"host:porta"}` → 204; `GET /consult?kind=user` → `{"host":...}`. Variáveis: `SERVICE_DISCOVERER_URL`, `SERVICE_HOST`, `PORT`. Divergência com o prompt: `/healthcheck` (contrato do repositório) em vez de `/actuator/health`.
 
-`/healthcheck` é de uso interno (discoverer/orquestrador) e **não** deve ser exposto publicamente.
+## 4. Pendências para a equipe
 
-## 4. Dependências por consumidor
+| # | Pergunta concreta | Proposta provisória | Quem confirma | Efeito |
+|---|---|---|---|---|
+| P1 | O Gateway não publica porta no host. Qual será a URL pública em dev? | Frontend lê `VITE_API_BASE_URL`, sem valor fixo no código. | Gateway | Só configuração; **bloqueia teste fim a fim**. |
+| P3 | **Quem valida o JWT e define `X-User-Id`?** Hoje ninguém: o Gateway só confere a presença do cabeçalho e Notificações confia nele (e no `user_id` da URL do `/ws`). Qualquer cliente pode se passar por outro usuário nesses serviços. | O Gateway valida o JWT (JWKS de Usuários), **remove** o `X-User-Id` recebido e injeta `sub`. Depois `requireAuth=true` em `/users/me`. Usuários **nunca** confia em `X-User-Id`. | Gateway + Notificações | Nenhuma em Usuários; risco de segurança nos demais. |
+| P5 | Como os serviços obtêm a chave pública? | `GET /.well-known/jwks.json` via `GET /consult?kind=user`. | Todos | Endpoint já existe. |
+| P6 | `iss` e `aud`. | `iss=eventhub-users` (configurável), sem `aud`. | Todos | Validação nos consumidores. |
+| P7 | Fluxo aprovado para criar `ORGANIZER` em produção. | Nenhum endpoint; somente seed de dev (desligado por padrão). | Equipe/docente | Sem área de organizador real até decidir. |
+| P8 | Usuários publica evento Kafka? | **Não.** Nenhum tópico criado. | Notificações | Sem Kafka no serviço. |
+| P9 | Certificados: nome do participante por snapshot em Inscrições ou endpoint interno? | Nenhum endpoint criado. | Certificados + Inscrições | Nenhuma. |
+| P10 | Onde o frontend é servido? | Pasta `frontend/` com build estático; compose raiz não alterado. | Equipe | Próxima etapa. |
+| P12 | Força bruta no login. | Limite por IP no Gateway (script). Usuários não limita. IPs compartilhados (campus/NAT) podem ser bloqueados juntos. | Gateway | Limitação conhecida. |
+| P13 | O cadastro retorna `409` para e-mail existente (exigido), o que permite enumerar e-mails. | Mitigar com o rate limit do Gateway. | Equipe | Aceito conscientemente. |
+| P14 | O Gateway **reflete qualquer `Origin` com `Allow-Credentials: true`**. Hoje é inofensivo (Bearer em memória, sem cookies), mas vira falha se algum serviço passar a usar cookies. | Restringir às origens do frontend por ambiente. | Gateway | Nenhuma em Usuários. |
+| P15 | O Gateway define `X-Request-Id` e o proxy copia o do serviço: o cabeçalho pode chegar duplicado (`a, a`). | Frontend usa o `traceId` do corpo de erro. | Gateway | Cosmético. |
+| P16 | Sem `USERS_DB_PASSWORD` no `.env`, o `user-db` não inicia (de propósito, sem senha padrão) e o `user` fica aguardando; os demais serviços não são afetados. | Copiar `.env.example` para `.env`. | Equipe | Documentado no README. |
+| P17 | Compose raiz: entrada `user:` ganhou `build.additional_contexts`, `depends_on`, `environment` e `volumes` (padrão idêntico ao de `notifications`). | — | Equipe | Revisar o diff. |
+
+## 5. Dependências por consumidor
 
 | Consumidor | O que recebe de Usuários | Estado |
 |---|---|---|
-| Eventos | `sub` e `roles` do JWT; valida a responsabilidade pelo evento | Proposto |
+| Eventos | `sub` e `roles` do JWT; valida a responsabilidade pelo evento (RN07) | Proposto |
 | Inscrições | `sub` do token validado (nunca `userId` do corpo) | Proposto |
-| Pagamentos | Referência via Inscrições, sem acesso ao banco de Usuários | Proposto |
-| Notificações | Contrato de mensagem a definir (P8) | Pendente |
+| Pagamentos | Referência via Inscrições; sem acesso ao banco de Usuários | Proposto |
+| Notificações | Contrato de mensagem a definir (P8); hoje identifica por `X-User-Id` (P3) | Pendente |
 | Check-in | Valida inscrição no domínio proprietário | Proposto |
 | Certificados | Ver P9 | Pendente |
 | Relatórios | Sem dados pessoais de Usuários | Proposto |
+
+### Como um consumidor valida o token (Proposto)
+RS256; chave pública em `GET /consult?kind=user` → `http://<host>/.well-known/jwks.json` (`kid` na assinatura); exigir `iss`, `exp` e assinatura. Claims: `sub` (UUID), `roles` (`PARTICIPANT`/`ORGANIZER`), `iss`, `iat`, `exp`, `jti`.

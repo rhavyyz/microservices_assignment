@@ -1,0 +1,9 @@
+flowchart LR
+    FE[Frontend React] -->|"HTTPS /user/api/v1/..."| GW[API Gateway]
+    GW -->|"consulta host (kind=user)"| SD[(service-discoverer)]
+    GW -->|"proxy sem o prefixo /user"| US[Serviço de Usuários]
+    US -->|"register a cada 30 s"| SD
+    GW -.->|"GET /openapi.json (registro de rotas)"| US
+    US --> DB[(PostgreSQL user-db)]
+    EV[Eventos / Inscrições / demais] -->|"GET /.well-known/jwks.json via discoverer"| US
+    EV -. "valida JWT localmente (RS256)" .-> EV

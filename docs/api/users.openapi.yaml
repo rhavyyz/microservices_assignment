@@ -1,19 +1,24 @@
 openapi: 3.0.3
 info:
   title: EventHub — Serviço de Usuários
-  version: 1.0.0-draft
+  version: 1.0.0
   description: |
-    Cadastro, autenticação e perfil. **Rascunho (Fase 1)**: prefixos e rotas dependem da confirmação do
-    Gateway (ver `docs/integration/contracts-with-team.md`, P1–P2).
+    Cadastro, autenticação e perfil. **v1.0.0 — backend implementado** (Fases 2–5); o frontend ainda não consome.
+
+    Os caminhos abaixo são os do **serviço**. Pelo Gateway (contrato do repositório) o prefixo `/{kind}` é
+    acrescentado: `POST {gatewayUrl}/user/api/v1/auth/login` chega ao serviço como `POST /api/v1/auth/login`.
+    O serviço publica este mesmo conjunto de rotas, gerado do código, em `GET /openapi.json` (uso interno do Gateway).
 
     Convenções:
     - Autenticação: `Authorization: Bearer <access token>` (JWT RS256, ver ADR-001).
     - Todo corpo JSON rejeita campos desconhecidos com `400 MALFORMED_REQUEST`.
-    - Todas as respostas incluem `X-Correlation-Id`. Erros seguem `application/problem+json`.
+    - Todas as respostas incluem `X-Request-Id`. Erros seguem `application/problem+json`.
     - Exemplos usam valores fictícios; nenhum token ou senha é válido.
 servers:
   - url: "{gatewayUrl}"
-    description: URL pública do API Gateway (configurável por ambiente; nunca o endereço interno do serviço).
+    description: |
+      URL pública do API Gateway (configurável por ambiente; nunca o endereço interno do serviço).
+      Os caminhos deste documento devem ser precedidos por `/user` quando chamados pelo Gateway.
     variables:
       gatewayUrl:
         default: https://gateway.example.test
@@ -30,7 +35,7 @@ paths:
       description: Cria sempre um usuário com o papel `PARTICIPANT`. Papéis enviados pelo cliente são rejeitados.
       security: []
       parameters:
-        - $ref: "#/components/parameters/CorrelationId"
+        - $ref: "#/components/parameters/RequestId"
       requestBody:
         required: true
         content:
@@ -41,8 +46,8 @@ paths:
         "201":
           description: Conta criada.
           headers:
-            X-Correlation-Id:
-              $ref: "#/components/headers/CorrelationId"
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
           content:
             application/json:
               schema:
@@ -81,7 +86,7 @@ paths:
         resposta `401 INVALID_CREDENTIALS`, sem indicar se o e-mail existe.
       security: []
       parameters:
-        - $ref: "#/components/parameters/CorrelationId"
+        - $ref: "#/components/parameters/RequestId"
       requestBody:
         required: true
         content:
@@ -92,8 +97,8 @@ paths:
         "200":
           description: Autenticado.
           headers:
-            X-Correlation-Id:
-              $ref: "#/components/headers/CorrelationId"
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
           content:
             application/json:
               schema:
@@ -133,13 +138,13 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - $ref: "#/components/parameters/CorrelationId"
+        - $ref: "#/components/parameters/RequestId"
       responses:
         "200":
           description: Perfil do usuário autenticado.
           headers:
-            X-Correlation-Id:
-              $ref: "#/components/headers/CorrelationId"
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
           content:
             application/json:
               schema:
@@ -148,6 +153,12 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          description: O usuário do token não existe mais (`NOT_FOUND`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
         "500":
           $ref: "#/components/responses/InternalError"
     patch:
@@ -160,7 +171,7 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - $ref: "#/components/parameters/CorrelationId"
+        - $ref: "#/components/parameters/RequestId"
       requestBody:
         required: true
         content:
@@ -171,8 +182,8 @@ paths:
         "200":
           description: Perfil atualizado.
           headers:
-            X-Correlation-Id:
-              $ref: "#/components/headers/CorrelationId"
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
           content:
             application/json:
               schema:
@@ -190,7 +201,9 @@ paths:
       tags: [Infraestrutura]
       operationId: jwks
       summary: Chaves públicas para validação dos tokens (JWKS)
-      description: Somente material público. **Proposto** — depende da decisão P5.
+      description: |
+        Somente material público (nunca `d`, `p`, `q`, `dp`, `dq`, `qi`). Consumido pelos demais serviços via
+        service-discoverer (`GET /consult?kind=user`); não é aberto no Gateway público.
       security: []
       responses:
         "200":
@@ -213,8 +226,8 @@ paths:
       operationId: healthcheck
       summary: Health check usado pelo service-discoverer
       description: |
-        Contrato do `service-discoverer` (2xx = saudável). Considera aplicação e banco de dados. Não retorna
-        detalhes internos. **Uso interno — não expor pelo Gateway.**
+        Contrato do `service-discoverer` (2xx = saudável). Considera aplicação e banco de dados (se o banco cai,
+        a instância sai da descoberta). Não retorna detalhes internos. **Uso interno — não expor pelo Gateway.**
       security: []
       responses:
         "200":
@@ -246,18 +259,18 @@ components:
       scheme: bearer
       bearerFormat: JWT
   parameters:
-    CorrelationId:
-      name: X-Correlation-Id
+    RequestId:
+      name: X-Request-Id
       in: header
       required: false
       description: |
-        Identificador de correlação opcional. Aceito apenas se casar com `^[A-Za-z0-9._-]{8,64}$`;
-        caso contrário o serviço gera um novo valor.
+        Identificador de correlação opcional (o Gateway já o gera e propaga). Aceito apenas se casar com
+        `^[A-Za-z0-9._-]{8,64}$`; caso contrário o serviço gera um novo valor.
       schema:
         type: string
         pattern: "^[A-Za-z0-9._-]{8,64}$"
   headers:
-    CorrelationId:
+    RequestId:
       description: Identificador de correlação da requisição (também presente em `traceId` nos erros).
       schema:
         type: string
@@ -430,10 +443,12 @@ components:
             - UNAUTHENTICATED
             - ACCESS_DENIED
             - NOT_FOUND
+            - HTTP_405
+            - HTTP_415
             - INTERNAL_ERROR
         traceId:
           type: string
-          description: Mesmo valor de `X-Correlation-Id`.
+          description: Mesmo valor de `X-Request-Id`.
         errors:
           type: array
           description: Presente em `VALIDATION_ERROR`.
