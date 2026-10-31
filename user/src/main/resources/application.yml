@@ -52,6 +52,10 @@ springdoc:
     enabled: false
 
 logging:
+  level:
+    # O Hibernate registra a violação de unicidade com o e-mail em claro ("Key (email)=(...)"); o conflito já é
+    # tratado e auditado (com impressão digital) pelo UserService, então este logger fica em ERROR.
+    org.hibernate.orm.jdbc.error: ERROR
   pattern:
     # %kvp imprime os pares chave=valor do log de auditoria; com saída estruturada (JSON) este padrão é ignorado.
     console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%X{traceId:-}] %logger{24} - %msg %kvp%n"

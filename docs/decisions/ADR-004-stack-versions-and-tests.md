@@ -21,4 +21,4 @@ O repositório não define pilha para Usuários. O prompt exige versões estáve
 - H2 nos ITs: não valida constraints do PostgreSQL real.
 
 ## Consequências
-Este ambiente de desenvolvimento **não alcança o Maven Central**: o código foi escrito e revisado sem compilar (ver `docs/testing/test-report.md`). A primeira execução de `./mvnw verify` pode revelar ajustes de API do Boot 4/Testcontainers 2.
+O código foi inicialmente escrito sem acesso ao Maven Central. A primeira execução real (ver `docs/testing/test-report.md`) confirmou as premissas de API do Boot 4.1.1, springdoc 3.0.3 × Boot 4.1, Testcontainers 2.0.5 (`org.testcontainers.postgresql.PostgreSQLContainer`) e `spring.jackson.deserialization.fail-on-unknown-properties`: tudo compilou e funcionou. Os únicos ajustes foram bugs de teste.

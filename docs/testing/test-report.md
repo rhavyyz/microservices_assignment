@@ -1,34 +1,41 @@
 # Relatório de testes — backend de Usuários
 
-**Data:** 2026-10-31 · **Ambiente:** sandbox Linux, OpenJDK 21.0.10, PostgreSQL 16 (apt), Node/npm. **Sem Docker e sem acesso ao Maven Central** (`repo.maven.apache.org` bloqueado pelo proxy; npm, GitHub e apt funcionam).
+## Execução 2 — `./mvnw verify` na máquina da equipe (2026-10-31, 15:00 -03)
+**Ambiente:** Ubuntu 24.04, JDK 21.0.12, Docker 29.9.0 (Server API 1.56), Testcontainers 2.0.5, `postgres:16-alpine` (PostgreSQL 16.15), Spring Boot 4.1.1, Hibernate 7.4.5, Spring Security 7.1.1, springdoc 3.0.3.
 
-## Conclusão
-**O backend NÃO foi compilado e NENHUM teste Maven (`*Test` ou `*IT`) foi executado.** Spring Boot, Spring Security, springdoc, Testcontainers e Nimbus não puderam ser baixados. O que consta como aprovado abaixo é só o que foi de fato executado, e é parcial.
+| Fase | Resultado |
+|---|---|
+| Compilação (30 fontes main, 15 test) | **OK** |
+| `*Test` (surefire, sem Docker) | **26/26 aprovados** (após corrigir a asserção do `iss`, ver abaixo) |
+| `*IT` (failsafe, PostgreSQL real) | **22/23 aprovados; 1 erro no próprio teste** (corrigido, **re-execução pendente**) |
 
-## Executado e aprovado
-| # | Verificação | Comando | Resultado |
+Passaram nos `*IT`: `InfraEndpointsIT` (3: healthcheck, `/openapi.json`, JWKS), `MigrationIT` (5), `NoSeedByDefaultIT` (1), `DevSeedIT` (1) e 12 dos 13 de `AuthFlowIT`, incluindo cadastro/duplicidade, campos privilegiados rejeitados, 8 cadastros concorrentes do mesmo e-mail (1 criado e 7 `409`, nenhum `500`), login genérico, perfil próprio, PATCH restrito, `X-Request-Id`, erros sem vazamento e logs sem senha/token.
+
+### Falhas encontradas e tratamento
+| # | Onde | Causa | Correção |
 |---|---|---|---|
-| 1 | Migração V1 aplicada no PostgreSQL 16 real | `psql -f V1__create_users.sql` | **OK** |
-| 2 | 11 cenários de constraint no PostgreSQL 16: insert válido; e-mail duplicado (`uk_users_email`); e-mail em maiúsculas e com espaço (`ck_users_email_normalized`); status inválido; nome em branco; papel válido; papel inválido; papel repetido (`pk_user_roles`); FK órfã (`fk_user_roles_user`); delete em cascata | `src/test/sql/constraints.sql` | **11/11 conforme esperado** |
-| 3 | `PemKeys` compilado com `javac` e executado com chaves do `openssl`: 2048 válida; 1024; PKCS#1; lixo; inexistente | harness em `/tmp` (não versionado) | **5/5 conforme esperado**, sem vazar conteúdo |
-| 4 | OpenAPI estático válido | `@apidevtools/swagger-parser validate` | **válido** (3.0, 5 paths) |
-| 5 | YAML dos composes e do `application.yml` | `python3 yaml.safe_load` | **OK** |
-| 6 | Sintaxe dos scripts | `sh -n user/scripts/*.sh` | **OK** |
-| 7 | Varredura do `javac` sobre todos os 45 fontes | `javac -proc:none` | **0 erros de sintaxe**; restam apenas erros por dependências ausentes (esperado) |
+| 1 | `TokenServiceTest.issuesDocumentedClaimsOnly` | Bug do **teste**: o Spring Security 7 converte `jwt.getIssuer()` para `URL`, e o `iss` é a string `eventhub-users`. | Asserção trocada por `jwt.getClaimAsString("iss")`. Reexecutado: 26/26. |
+| 2 | `AuthFlowIT.meRejects...` | Bug do **teste**: o JWK da chave "estrangeira" não tinha `kid`, então o `NimbusJwtEncoder` não o selecionou ("Failed to select a JWK signing key") e o cenário nem chegou ao serviço. | O JWK estrangeiro recebe o mesmo `kid` do serviço (cenário mais exigente: kid forjado, assinatura de outra chave). **Re-execução pendente.** |
 
-## Não executado
-- `./mvnw verify` (compilação, `*Test`, `*IT`): **não executado**.
-- Subida da aplicação, `ddl-auto=validate`, springdoc com Boot 4.1: **não verificado**.
-- Docker build/compose, `register-gateway-routes.sh`, integração real com Gateway/discoverer: **não executados**.
-- Nimbus/JWKS/`NimbusJwtDecoder`: **não executados** (só revisão de código).
+### Achado de segurança/privacidade (corrigido, a confirmar)
+Na duplicidade de e-mail o Hibernate registrava em WARN `Key (email)=(...) already exists`, ou seja, **e-mail em claro nos logs**, o que contraria a diretriz de minimizar dados pessoais. Os testes de log só verificavam senha e token e não pegaram isso. Correção: `logging.level.org.hibernate.orm.jdbc.error=ERROR` (o conflito continua auditado com `emailFingerprint`). Confirmar na próxima execução que a linha `HHH000247` não aparece.
 
-## Riscos conhecidos de ajuste na primeira compilação
-APIs que mudaram no Boot 4 / Testcontainers 2 e que não pude conferir: nomes de starters, `org.testcontainers.postgresql.PostgreSQLContainer`, chave `spring.jackson.deserialization.fail-on-unknown-properties`, compatibilidade springdoc 3.0.3 × Boot 4.1. Os testes foram escritos para falhar de forma explícita se alguma dessas premissas estiver errada.
+### Observações
+- `SpringDoc /openapi.json endpoint is enabled by default`: esperado, pois o Gateway precisa ler esse endpoint; ele não é aberto no Gateway público (nasce privado).
+- Avisos do Mockito/ByteBuddy (agente dinâmico): inofensivos hoje; podem exigir configuração em JDKs futuros.
+
+## Execução 1 — sandbox sem Maven Central (2026-10-31, antes da execução 2)
+Verificações parciais, todas aprovadas: migração e 11 cenários de constraint no PostgreSQL 16 (`src/test/sql/constraints.sql`), `PemKeys` com chaves do `openssl` (5 cenários), OpenAPI estático válido (`swagger-parser`), YAML dos composes e scripts. Substituída pela execução 2, que cobre compilação e testes completos.
+
+## Ainda não executado
+- Build da imagem Docker do serviço e `docker compose up` com `user`, `user-db`, discoverer e Gateway.
+- `user/scripts/register-gateway-routes.sh` e o fluxo real pelo Gateway.
+- Registro real no `service-discoverer` (`USERS_DISCOVERY_ENABLED=true`): desativado nos testes.
+- Carga/pico.
 
 ## Como reproduzir
 ```
-user/scripts/gen-dev-keys.sh
-(cd service-discoverer/Libs/java && mvn -q install -DskipTests)   # lib de descoberta no repositório Maven local
-cd user && ./mvnw verify                                          # exige Docker
+(cd service-discoverer/Libs/java && ../../../user/mvnw -f pom.xml install -DskipTests)   # ou: mvn install -DskipTests
+cd user && ./mvnw verify          # *Test + *IT (exige Docker)
+./mvnw test                       # só *Test
 ```
-Registrar aqui o resultado real após a primeira execução.

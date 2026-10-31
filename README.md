@@ -131,4 +131,4 @@ Run outside Docker: publish the database with `docker compose --env-file .env -f
 
 After the Gateway synced the `user` kind, open the routes with `user/scripts/register-gateway-routes.sh` (instructions in the script header).
 
-> Status: the backend was written without access to Maven Central and has **not been compiled or tested with Maven yet**; see `docs/testing/test-report.md`.
+> Status: `./mvnw verify` compiles and passes all 26 unit tests and 22 of 23 integration tests (the failing one was a test bug, fixed; re-run pending); Docker/Gateway end-to-end is not tested yet. See `docs/testing/test-report.md`.

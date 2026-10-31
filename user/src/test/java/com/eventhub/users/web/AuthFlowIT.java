@@ -185,11 +185,13 @@ class AuthFlowIT extends PostgresIT {
         String email = uniqueEmail();
         String id = register(email).json("$.id");
         Instant now = Instant.now();
-        // Token assinado por uma chave que o serviço não conhece.
+        // Token assinado por uma chave que o serviço não conhece, mas com o MESMO kid (ataque de kid forjado).
+        // O kid precisa existir no JWK para o NimbusJwtEncoder selecioná-lo; o decoder deve rejeitar pela assinatura.
         java.security.KeyPair kp = TestKeys.generate(2048);
         JwtEncoder foreign = new NimbusJwtEncoder(new com.nimbusds.jose.jwk.source.ImmutableJWKSet<>(
                 new com.nimbusds.jose.jwk.JWKSet(new com.nimbusds.jose.jwk.RSAKey.Builder(
-                        (java.security.interfaces.RSAPublicKey) kp.getPublic()).privateKey(kp.getPrivate()).build())));
+                        (java.security.interfaces.RSAPublicKey) kp.getPublic()).privateKey(kp.getPrivate())
+                        .keyID("users-key-it").build())));
 
         String noneHeader = Base64.getUrlEncoder().withoutPadding()
                 .encodeToString("{\"alg\":\"none\"}".getBytes(StandardCharsets.UTF_8));
