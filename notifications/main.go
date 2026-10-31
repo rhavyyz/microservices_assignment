@@ -9,6 +9,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"microservices/discovery"
 )
 
 func env(key, def string) string {
@@ -203,14 +205,16 @@ func main() {
 		log.Fatal(err)
 	}
 	port := env("PORT", "8080")
-	host, err := selfHost(port)
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	ctx := context.Background()
 	// Everything below runs in the background: the server boots even if Mongo, Kafka or the discoverer are late.
-	go Register(ctx, env("SERVICE_DISCOVERER_URL", "http://service-discoverer:8080"), host)
+	go func() {
+		if err := discovery.Register(discovery.Notifications); err != nil {
+			log.Printf("%v", err)
+			return
+		}
+		log.Printf("registered with the service-discoverer")
+	}()
 	go func() {
 		if !retry(ctx, "ensure mongo schema", func(ctx context.Context) error { return store.EnsureSchema(ctx, retention) }) {
 			return

@@ -10,9 +10,12 @@ from typing import Any, Dict, Optional
 
 from .kinds import Kind
 
-REGISTER_ATTEMPTS = 5
-REGISTER_DELAY = 1.0
+REGISTER_ATTEMPTS = 10
+REGISTER_INITIAL_DELAY = 1.0
+REGISTER_MAX_DELAY = 30.0
 TIMEOUT = 5.0
+
+_sleep = time.sleep  # replaced in tests
 
 
 def _discoverer_url() -> str:
@@ -47,13 +50,17 @@ def register(kind: Kind) -> None:
     """Registers this instance. Call once at startup, passing only its own kind.
 
     The host sent is SERVICE_HOST, or "<container hostname>:<PORT or 8080>".
+    Retries up to 10 times with a delay doubling from 1s up to 30s (about 2.5 minutes
+    in all), so it blocks meanwhile: call it from a thread if the service must not wait.
     """
     host = os.environ.get("SERVICE_HOST") or f"{socket.gethostname()}:{os.environ.get('PORT', '8080')}"
     payload = _json.dumps({"kind": Kind(kind).value, "host": host}).encode()
     last: Optional[Exception] = None
+    delay = REGISTER_INITIAL_DELAY
     for attempt in range(REGISTER_ATTEMPTS):
         if attempt:
-            time.sleep(REGISTER_DELAY)
+            _sleep(delay)
+            delay = min(delay * 2, REGISTER_MAX_DELAY)
         try:
             res = _send("POST", _discoverer_url() + "/register", {"Content-Type": "application/json"}, payload)
             if 200 <= res.status < 300:

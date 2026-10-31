@@ -59,6 +59,57 @@ def test_register(discoverer, monkeypatch):
     assert discoverer["registered"] == {"kind": "payments", "host": "payments-1:9000"}
 
 
+@pytest.fixture
+def sleeps(monkeypatch):
+    delays = []
+    monkeypatch.setattr(client, "_sleep", delays.append)
+    return delays
+
+
+def flaky_discoverer(monkeypatch, failures):
+    state = {"calls": 0}
+
+    class H(BaseHTTPRequestHandler):
+        def do_POST(self):
+            state["calls"] += 1
+            self.rfile.read(int(self.headers["Content-Length"]))
+            self.send_response(503 if state["calls"] <= failures else 204)
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    _, host = serve(H)
+    monkeypatch.setenv("SERVICE_DISCOVERER_URL", "http://" + host)
+    monkeypatch.setenv("SERVICE_HOST", "payments-1:9000")
+    return state
+
+
+def test_register_retries_until_success(monkeypatch, sleeps):
+    state = flaky_discoverer(monkeypatch, 3)
+    discovery.register(discovery.Kind.PAYMENTS)
+    assert state["calls"] == 4
+    assert sleeps == [1, 2, 4]
+
+
+def test_register_gives_up_with_backoff(monkeypatch, sleeps):
+    state = flaky_discoverer(monkeypatch, 1000)
+    with pytest.raises(RuntimeError, match="could not register with the service-discoverer: register failed: 503"):
+        discovery.register(discovery.Kind.PAYMENTS)
+    assert state["calls"] == 10
+    assert sleeps == [1, 2, 4, 8, 16, 30, 30, 30, 30]
+
+
+def test_register_retries_connection_errors(monkeypatch, sleeps):
+    dead, host = serve(Target)
+    dead.shutdown()
+    dead.server_close()
+    monkeypatch.setenv("SERVICE_DISCOVERER_URL", "http://" + host)
+    with pytest.raises(RuntimeError, match="could not register"):
+        discovery.register(discovery.Kind.PAYMENTS)
+    assert len(sleeps) == 9
+
+
 def test_request_caches_host(discoverer):
     _, target = serve(Target)
     discoverer["hosts"] = [target]

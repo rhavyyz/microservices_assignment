@@ -110,7 +110,11 @@ services:
     <<: *app
     deploy:
       replicas: 1
-    build: ./notifications
+    # additional_contexts gives the build access to the Go discovery lib, which lives outside ./notifications
+    build:
+      context: ./notifications
+      additional_contexts:
+        discovery: ./service-discoverer/Libs/go
     networks: [backbone, notifications-net]
     depends_on:
       kafka:

@@ -28,7 +28,7 @@ UI-facing entry point on host port `8080` (so it cannot be scaled). Call `/{kind
 - Env: `PORT` (8080), `MONGO_URI` (`mongodb://gateway-db:27017`), `SERVICE_DISCOVERER_URL` (`http://service-discoverer:8080`), `DEFAULT_MAX_PER_MIN` (60), `TRUSTED_PROXIES` (empty).
 
 ## Notifications
-Consumes user notifications from Kafka and always stores them in its own MongoDB (`notifications-db`, part of the included compose, no host ports). Registers as kind `notifications`; serves `GET /healthcheck` (200 only when Mongo answers a ping, else 503), `GET /openapi.json` (`/healthcheck`, `/list` and `/update-state`), `GET /list` and `PUT /update-state` (below).
+Consumes user notifications from Kafka and always stores them in its own MongoDB (`notifications-db`, part of the included compose, no host ports). Registers as kind `notifications` through the Go discovery lib; serves `GET /healthcheck` (200 only when Mongo answers a ping, else 503), `GET /openapi.json` (`/healthcheck`, `/list` and `/update-state`), `GET /list` and `PUT /update-state` (below).
 - Topic `NOTIFICATIONS_TOPIC` (default `notifications`), consumer group `notifications-service`. The topic is created at startup if missing (`NOTIFICATIONS_PARTITIONS` partitions, default 6, replication 1). Message value (JSON):
 
       {"user_id": "…", "message": "…", "redirect_url": "…", "payload": {…}, "payload_type": "…"}
@@ -78,8 +78,24 @@ Consumes user notifications from Kafka and always stores them in its own MongoDB
 
         curl -X PUT localhost:8080/admin/endpoints -d '{"kind":"notifications","method":"PUT","path":"/update-state","isPublic":true,"requireAuth":true}'
 
-- Startup: the HTTP server boots immediately even if Mongo, Kafka or the discoverer are down; schema setup, topic creation (the push topic in the background) and registration retry with backoff in the background.
-- Env: `PORT` (8080), `KAFKA_BROKERS` (`kafka:9092`, comma-separated), `NOTIFICATIONS_TOPIC` (`notifications`), `NOTIFICATIONS_PARTITIONS` (6), `NOTIFICATIONS_PUSH_TOPIC` (`notifications-push`), `NOTIFICATIONS_PUSH_PARTITIONS` (6), `MONGO_URI` (`mongodb://notifications-db:27017`), `SERVICE_DISCOVERER_URL` (`http://service-discoverer:8080`), `SERVICE_HOST` (`<hostname>:<PORT>`), `RETENTION_DAYS` (30). The three integers (`RETENTION_DAYS` and the two partition counts) must be positive; an invalid value stops the service at startup.
+- Startup: the HTTP server boots immediately even if Mongo, Kafka or the discoverer are down; schema setup, topic creation (the push topic in the background) and registration (the lib retries up to 10 times with exponential backoff, 1s to 30s, about 2.5 minutes) run in the background.
+- Registration uses the shared Go discovery lib (`service-discoverer/Libs/go`), pulled into the image with a compose `additional_contexts` entry. To do the same in another Go service:
+
+      # docker-compose.yml
+      build:
+        context: ./my-service
+        additional_contexts:
+          discovery: ./service-discoverer/Libs/go
+
+      # Dockerfile (after WORKDIR /src, before go mod download; /src is my-service/)
+      COPY --from=discovery . /service-discoverer/Libs/go
+
+      # go.mod
+      require microservices/discovery v0.0.0
+      replace microservices/discovery => ../service-discoverer/Libs/go
+
+  The same idea works for Python (`COPY --from=discovery` then `pip install`) and Java (`COPY --from=discovery` then a Maven install of the lib).
+- Env: `PORT` (8080), `KAFKA_BROKERS` (`kafka:9092`, comma-separated), `NOTIFICATIONS_TOPIC` (`notifications`), `NOTIFICATIONS_PARTITIONS` (6), `NOTIFICATIONS_PUSH_TOPIC` (`notifications-push`), `NOTIFICATIONS_PUSH_PARTITIONS` (6), `MONGO_URI` (`mongodb://notifications-db:27017`), `SERVICE_DISCOVERER_URL` (`http://service-discoverer:8080`) and `SERVICE_HOST` (`<hostname>:<PORT>`) read by the lib, `RETENTION_DAYS` (30). The three integers (`RETENTION_DAYS` and the two partition counts) must be positive; an invalid value stops the service at startup.
 
 ## Run
 Two steps, in this order (the gateway's private MongoDB is its own compose project and creates the `gateway-net` network):
