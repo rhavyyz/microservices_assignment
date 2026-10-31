@@ -1,17 +1,23 @@
-# Shared architecture of the notifications service (its own backing infra: DB, cache, queue...).
+# Shared architecture of the notifications service: its private MongoDB (notifications collection).
 # Shared by all horizontally scaled copies of the app; the app container is defined in the root compose file.
 # Included from the root docker-compose.yml via `include:`. Keep names prefixed with "notifications-" to stay unique.
-# services:
-#   notifications-db:
-#     image: postgres:16-alpine
-#     environment:
-#       POSTGRES_PASSWORD: ${NOTIFICATIONS_DB_PASSWORD:-change-me}
-#     volumes:
-#       - notifications-db-data:/var/lib/postgresql/data
-#     networks: [notifications-net]
+# No host ports; only reachable as notifications-db:27017 on the "notifications-net" network.
+services:
+  notifications-db:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - notifications-db-data:/data/db
+    networks: [notifications-net]
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.adminCommand({ping: 1}).ok' | grep -q 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
 
 networks:
   notifications-net:
 
-# volumes:
-#   notifications-db-data:
+volumes:
+  notifications-db-data:
