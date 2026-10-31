@@ -13,8 +13,8 @@ const (
 )
 
 type limitKey struct {
-	user, method, path string
-	kind               Kind
+	id, method, path string // id is the mode-specific identity ("u:..", "ip:..", "global")
+	kind             Kind
 }
 
 type window struct {
@@ -22,7 +22,7 @@ type window struct {
 	count int
 }
 
-// Limiter is a fixed one-minute window counter per (user, kind, method, path template).
+// Limiter is a fixed one-minute window counter per (identity, kind, method, path template).
 // Counters live in memory: they are per gateway instance, not shared across replicas.
 type Limiter struct {
 	now     func() time.Time
@@ -78,18 +78,30 @@ func (l *Limiter) Run(stop <-chan struct{}) {
 	}
 }
 
-// RateLimit limits per user (X-User-Id header, trusted as-is; missing -> 401) against the endpoint's maxPerMin.
-func RateLimit(l *Limiter) Middleware {
+// rateLimitID is the identity part of the counter key for the endpoint's rateLimitBy mode.
+func rateLimitID(mode RateLimitBy, r *http.Request, tp TrustedProxies) string {
+	switch mode {
+	case RateLimitGlobal:
+		return "global"
+	case RateLimitIP:
+		return "ip:" + ClientIP(r, tp)
+	default: // user_or_ip
+		if u := r.Header.Get("X-User-Id"); u != "" {
+			return "u:" + u
+		}
+		return "ip:" + ClientIP(r, tp)
+	}
+}
+
+// RateLimit limits against the endpoint's maxPerMin, keyed according to its rateLimitBy.
+// X-User-Id is trusted as-is. Authentication is Auth's job: a missing user never fails here.
+func RateLimit(l *Limiter, tp TrustedProxies) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			user := r.Header.Get("X-User-Id")
-			if user == "" {
-				http.Error(w, "missing X-User-Id header", http.StatusUnauthorized)
-				return
-			}
 			rt, _ := routeFrom(r.Context())
 			ep := rt.Endpoint
-			ok, retry := l.Allow(limitKey{user: user, kind: ep.Kind, method: ep.Method, path: ep.Path}, ep.MaxPerMin)
+			id := rateLimitID(ep.RateLimitBy, r, tp)
+			ok, retry := l.Allow(limitKey{id: id, kind: ep.Kind, method: ep.Method, path: ep.Path}, ep.MaxPerMin)
 			if !ok {
 				secs := int((retry + time.Second - 1) / time.Second)
 				if secs < 1 {

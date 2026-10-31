@@ -29,7 +29,7 @@ func routeFrom(ctx context.Context) (route, bool) {
 	return rt, ok
 }
 
-// NewPipeline builds the gateway handler: logging, resolve, rate limit, default headers, then the proxy.
-func NewPipeline(eps *Endpoints, rl *Limiter, proxy http.Handler) http.Handler {
-	return Chain(proxy, Logging(), Resolve(eps), RateLimit(rl), DefaultHeaders())
+// NewPipeline builds the gateway handler: logging, resolve, auth, rate limit, default headers, then the proxy.
+func NewPipeline(eps *Endpoints, rl *Limiter, tp TrustedProxies, proxy http.Handler) http.Handler {
+	return Chain(proxy, Logging(), Resolve(eps), Auth(), RateLimit(rl, tp), DefaultHeaders())
 }

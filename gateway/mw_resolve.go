@@ -5,7 +5,7 @@ import (
 	"net/http"
 )
 
-// Resolve matches the request to a registered endpoint (404 if none) and stashes it in the request context.
+// Resolve matches the request to a registered public endpoint (404 if none or private) and stashes it in the request context.
 func Resolve(eps *Endpoints) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

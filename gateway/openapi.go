@@ -88,7 +88,7 @@ func (s *Syncer) fetch(ctx context.Context, kind Kind) ([]Endpoint, error) {
 	return parseOpenAPI(resp.Body)
 }
 
-// SyncKind adds the spec's endpoints missing from the store (never touching an existing maxPerMin)
+// SyncKind adds the spec's endpoints missing from the store (never touching existing maxPerMin, rateLimitBy, requireAuth or isPublic)
 // and removes stored ones absent from the spec. If fetching or parsing fails nothing is changed.
 func (s *Syncer) SyncKind(ctx context.Context, kind Kind) (added, removed int, err error) {
 	spec, err := s.fetch(ctx, kind)
@@ -98,7 +98,7 @@ func (s *Syncer) SyncKind(ctx context.Context, kind Kind) (added, removed int, e
 	inSpec := make(map[[2]string]bool, len(spec))
 	for _, e := range spec {
 		inSpec[[2]string{e.Method, e.Path}] = true
-		e.Kind, e.MaxPerMin = kind, s.defaultMax
+		e.Kind, e.MaxPerMin, e.RateLimitBy, e.RequireAuth, e.IsPublic = kind, s.defaultMax, RateLimitUserOrIP, false, false
 		ok, err := s.store.InsertIfAbsent(ctx, e)
 		if err != nil {
 			return added, removed, err

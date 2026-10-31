@@ -22,24 +22,36 @@ func (a *admin) list(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []Endpoint{}
 	}
+	for i := range list {
+		list[i] = list[i].withDefaults()
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(list)
 }
 
-// put updates maxPerMin of a registered endpoint. maxPerMin = 0 blocks every request to it.
+// put partially updates a registered endpoint: only the provided fields change, at least one is required.
+// maxPerMin = 0 blocks every request to it.
 func (a *admin) put(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Kind      Kind   `json:"kind"`
-		Method    string `json:"method"`
-		Path      string `json:"path"`
-		MaxPerMin *int   `json:"maxPerMin"`
+		Kind        Kind         `json:"kind"`
+		Method      string       `json:"method"`
+		Path        string       `json:"path"`
+		MaxPerMin   *int         `json:"maxPerMin"`
+		RateLimitBy *RateLimitBy `json:"rateLimitBy"`
+		RequireAuth *bool        `json:"requireAuth"`
+		IsPublic    *bool        `json:"isPublic"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || !body.Kind.valid() || body.Method == "" ||
-		!strings.HasPrefix(body.Path, "/") || body.MaxPerMin == nil || *body.MaxPerMin < 0 {
-		http.Error(w, "body must be {\"kind\": string, \"method\": string, \"path\": string, \"maxPerMin\": int >= 0}", http.StatusBadRequest)
+	patch := EndpointPatch{}
+	if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
+		patch = EndpointPatch{MaxPerMin: body.MaxPerMin, RateLimitBy: body.RateLimitBy, RequireAuth: body.RequireAuth, IsPublic: body.IsPublic}
+	}
+	if !body.Kind.valid() || body.Method == "" || !strings.HasPrefix(body.Path, "/") || patch.empty() ||
+		(patch.MaxPerMin != nil && *patch.MaxPerMin < 0) || (patch.RateLimitBy != nil && !patch.RateLimitBy.valid()) {
+		http.Error(w, "body must be {\"kind\", \"method\", \"path\"} plus at least one of \"maxPerMin\" (int >= 0), "+
+			"\"rateLimitBy\" (user_or_ip|ip|global), \"requireAuth\" (bool), \"isPublic\" (bool)", http.StatusBadRequest)
 		return
 	}
-	e, ok, err := a.store.SetMax(r.Context(), Endpoint{Kind: body.Kind, Method: strings.ToUpper(body.Method), Path: body.Path, MaxPerMin: *body.MaxPerMin})
+	e, ok, err := a.store.Update(r.Context(), Endpoint{Kind: body.Kind, Method: strings.ToUpper(body.Method), Path: body.Path}, patch)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -52,5 +64,5 @@ func (a *admin) put(w http.ResponseWriter, r *http.Request) {
 		log.Printf("cache refresh after PUT failed: %v", err)
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(e)
+	json.NewEncoder(w).Encode(e.withDefaults())
 }

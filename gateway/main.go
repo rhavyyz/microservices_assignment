@@ -35,6 +35,10 @@ func main() {
 	if err != nil || defaultMax < 0 {
 		log.Fatal("DEFAULT_MAX_PER_MIN must be an integer >= 0")
 	}
+	proxies, err := ParseTrustedProxies(env("TRUSTED_PROXIES", ""))
+	if err != nil {
+		log.Fatalf("TRUSTED_PROXIES must be a comma-separated list of IPs/CIDRs: %v", err)
+	}
 	store, err := newMongoStore(env("MONGO_URI", "mongodb://gateway-db:27017"))
 	if err != nil {
 		log.Fatal(err)
@@ -48,7 +52,7 @@ func main() {
 	go limiter.Run(ctx.Done())
 	go NewSyncer(disc, store, eps, defaultMax).Run(ctx) // never blocks the server start
 
-	mux := newMux(store, eps, NewPipeline(eps, limiter, NewProxy(disc)))
+	mux := newMux(store, eps, NewPipeline(eps, limiter, proxies, NewProxy(disc)))
 	port := env("PORT", "8080")
 	log.Printf("gateway listening on :%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, mux))
