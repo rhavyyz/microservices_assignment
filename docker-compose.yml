@@ -58,12 +58,20 @@ services:
       replicas: 1 # We cant horizontally scalle this service at all
     build: ./service-discoverer
     networks: [backbone, service-discoverer-net]
-  gateway: 
+  gateway:
     <<: *app
     deploy:
-      replicas: 1 
+      replicas: 1 # The fixed host port below prevents scaling this service
     build: ./gateway
     networks: [backbone, gateway-net]
+    ports:
+      - "8080:8080" # UI-facing entry point
+    environment:
+      MONGO_URI: mongodb://gateway-db:27017
+      # SERVICE_DISCOVERER_URL: http://service-discoverer:8080 # optional, this is the default
+    depends_on:
+      gateway-db:
+        condition: service_healthy
   certificates:
     <<: *app
     deploy:

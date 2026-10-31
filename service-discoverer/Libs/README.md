@@ -7,6 +7,7 @@ Every instance registers itself at startup. To call another service, ask the dis
 ## Requirements for a service
 - Be on the `backbone` network (all services in the root compose are).
 - Expose `GET /healthcheck` returning 2xx. The discoverer calls it on every consult; a host failing 5 retries is dropped.
+- Serve `GET /openapi.json` (OpenAPI with `paths`): the gateway reads it at startup to learn the service's endpoints.
 
 ## Config (env vars, all optional)
 | Var | Default | Meaning |

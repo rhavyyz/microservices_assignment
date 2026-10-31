@@ -8,6 +8,14 @@ Docker Compose monorepo of services: service-discoverer, gateway, certificates, 
 
 - Kafka (KRaft, single broker) is the shared event bus, reachable from any service at `kafka:9092` on the `backbone` network.
 
+## Gateway
+UI-facing entry point on host port `8080` (so it cannot be scaled). Call `/{kind}/{downstream url}` (e.g. `/payments/charge?x=1`); the gateway forwards to a healthy instance of `kind` (via the service-discoverer) with the `/{kind}` prefix stripped. Requests not matching an endpoint of the service's `GET /openapi.json` get 404.
+- Every request needs an `X-User-Id` header (trusted as-is, 401 if missing). Rate limit: `maxPerMin` per user per endpoint (fixed one-minute window, per gateway instance), 429 + `Retry-After` when exceeded; `0` blocks the endpoint.
+- Endpoints live in MongoDB (`gateway-db`). At startup, in the background, the gateway reads each kind's `/openapi.json`, adds new endpoints with `DEFAULT_MAX_PER_MIN` (existing `maxPerMin` is never overwritten) and removes stored endpoints no longer in the spec (only for kinds whose spec was fetched successfully; failed kinds are retried with backoff).
+- Admin API (no auth yet): `GET /admin/endpoints[?kind=]`, `PUT /admin/endpoints` with `{"kind","method","path","maxPerMin"}`. `GET /healthcheck`.
+- CORS is fully permissive for now (any origin is reflected, credentials allowed, preflights answered by the gateway itself).
+- Env: `PORT` (8080), `MONGO_URI` (`mongodb://gateway-db:27017`), `SERVICE_DISCOVERER_URL` (`http://service-discoverer:8080`), `DEFAULT_MAX_PER_MIN` (60).
+
 ## Run
     docker compose up --build
 
