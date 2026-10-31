@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
+	"time"
 )
 
 type server struct{ reg *Registry }
@@ -41,8 +45,34 @@ func (s *server) consult(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// configFromEnv reads RECHECK_INTERVAL and RECHECK_MAX_FAILURES, falling back to defaults.
+func configFromEnv(getenv func(string) string) (Config, error) {
+	cfg := Config{defaultRecheckInterval, defaultRecheckMaxFailures}
+	if v := getenv("RECHECK_INTERVAL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			return cfg, fmt.Errorf("RECHECK_INTERVAL must be a positive duration like 5s, got %q", v)
+		}
+		cfg.RecheckInterval = d
+	}
+	if v := getenv("RECHECK_MAX_FAILURES"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return cfg, fmt.Errorf("RECHECK_MAX_FAILURES must be an integer >= 1, got %q", v)
+		}
+		cfg.RecheckMaxFailures = n
+	}
+	return cfg, nil
+}
+
 func main() {
-	s := &server{reg: NewRegistry()}
+	cfg, err := configFromEnv(os.Getenv)
+	if err != nil {
+		log.Fatal(err)
+	}
+	reg := NewRegistryWithConfig(cfg)
+	go reg.Run(context.Background())
+	s := &server{reg: reg}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /register", s.register)
 	mux.HandleFunc("GET /consult", s.consult)
