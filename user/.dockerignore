@@ -1,0 +1,5 @@
+target/
+.keys/
+.env
+.env.*
+.git

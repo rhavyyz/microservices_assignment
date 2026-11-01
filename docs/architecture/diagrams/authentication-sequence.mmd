@@ -1,0 +1,37 @@
+sequenceDiagram
+    autonumber
+    actor U as Usuário
+    participant FE as Frontend
+    participant GW as Gateway
+    participant US as Usuários
+    participant DB as user-db
+
+    U->>FE: preenche cadastro
+    FE->>GW: POST /user/api/v1/auth/register
+    GW->>US: POST /api/v1/auth/register (X-Request-Id)
+    US->>DB: INSERT users + user_roles(PARTICIPANT)
+    alt e-mail já existe (inclui corrida: constraint única)
+        US-->>FE: 409 EMAIL_ALREADY_REGISTERED
+    else sucesso
+        US-->>FE: 201 perfil (sem hash)
+    end
+
+    FE->>GW: POST /user/api/v1/auth/login
+    GW->>US: POST /api/v1/auth/login
+    US->>DB: SELECT por e-mail normalizado
+    alt credencial inválida (e-mail inexistente, senha errada ou conta inativa)
+        US-->>FE: 401 INVALID_CREDENTIALS (mensagem genérica)
+    else sucesso
+        US-->>FE: 200 accessToken (JWT RS256), expiresIn
+        Note over FE: token apenas em memória
+    end
+
+    FE->>GW: GET /user/api/v1/users/me (Authorization Bearer)
+    GW->>US: GET /api/v1/users/me
+    US->>US: valida assinatura, iss e exp
+    alt token ausente, inválido ou expirado
+        US-->>FE: 401 UNAUTHENTICATED
+    else válido
+        US->>DB: SELECT por sub
+        US-->>FE: 200 perfil
+    end

@@ -1,0 +1,596 @@
+openapi: 3.0.3
+info:
+  title: EventHub — Serviço de Usuários
+  version: 1.0.0
+  description: |
+    Cadastro, autenticação e perfil. **v1.0.0 — backend implementado** (Fases 2–5); o frontend ainda não consome.
+
+    Os caminhos abaixo são os do **serviço**. Pelo Gateway (contrato do repositório) o prefixo `/{kind}` é
+    acrescentado: `POST {gatewayUrl}/user/api/v1/auth/login` chega ao serviço como `POST /api/v1/auth/login`.
+    O serviço publica este mesmo conjunto de rotas, gerado do código, em `GET /openapi.json` (uso interno do Gateway).
+
+    Convenções:
+    - Autenticação: `Authorization: Bearer <access token>` (JWT RS256, ver ADR-001).
+    - Todo corpo JSON rejeita campos desconhecidos com `400 MALFORMED_REQUEST`.
+    - Todas as respostas incluem `X-Request-Id`. Erros seguem `application/problem+json`.
+    - Exemplos usam valores fictícios; nenhum token ou senha é válido.
+servers:
+  - url: "{gatewayUrl}"
+    description: |
+      URL pública do API Gateway (configurável por ambiente).
+      Os caminhos deste documento devem ser precedidos por `/user` quando chamados pelo Gateway.
+    variables:
+      gatewayUrl:
+        default: https://gateway.example.test
+tags:
+  - name: Autenticação
+  - name: Perfil
+  - name: Infraestrutura
+paths:
+  /api/v1/auth/register:
+    post:
+      tags: [Autenticação]
+      operationId: register
+      summary: Cadastra um participante
+      description: Cria sempre um usuário com o papel `PARTICIPANT`. Papéis enviados pelo cliente são rejeitados.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Conta criada.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+              example:
+                id: 7b1a9b7d-045e-4d58-85b3-345a6f78a101
+                name: Mariana Costa
+                email: mariana@example.com
+                roles: [PARTICIPANT]
+                createdAt: "2026-10-29T15:00:00Z"
+                updatedAt: "2026-10-29T15:00:00Z"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: E-mail já cadastrado.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: about:blank
+                title: E-mail já cadastrado
+                status: 409
+                detail: Não foi possível concluir o cadastro com este e-mail.
+                code: EMAIL_ALREADY_REGISTERED
+                traceId: 3f6c1d2e-8a4b-4c1f-9d0e-5b7a2c9e1f40
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/auth/login:
+    post:
+      tags: [Autenticação]
+      operationId: login
+      summary: Valida credenciais e emite um Access Token
+      description: |
+        Qualquer falha de credencial (e-mail inexistente, senha incorreta ou conta inativa) retorna a mesma
+        resposta `401 INVALID_CREDENTIALS`, sem indicar se o e-mail existe.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Autenticado.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+              example:
+                accessToken: "<jwt>"
+                tokenType: Bearer
+                expiresIn: 1800
+                user:
+                  id: 7b1a9b7d-045e-4d58-85b3-345a6f78a101
+                  name: Mariana Costa
+                  email: mariana@example.com
+                  roles: [PARTICIPANT]
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Credenciais inválidas (mensagem genérica).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: about:blank
+                title: Credenciais inválidas
+                status: 401
+                detail: E-mail ou senha incorretos.
+                code: INVALID_CREDENTIALS
+                traceId: 3f6c1d2e-8a4b-4c1f-9d0e-5b7a2c9e1f40
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/users/me:
+    get:
+      tags: [Perfil]
+      operationId: getMe
+      summary: Consulta o perfil do usuário autenticado
+      description: O usuário é identificado exclusivamente pelo claim `sub` do token.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      responses:
+        "200":
+          description: Perfil do usuário autenticado.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: O usuário do token não existe mais (`NOT_FOUND`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    patch:
+      tags: [Perfil]
+      operationId: updateMe
+      summary: Atualiza campos permitidos do próprio perfil
+      description: |
+        Somente `name` pode ser alterado. `email`, `password`, `roles`, `id` ou qualquer outro campo
+        resultam em `400 MALFORMED_REQUEST`. Alteração de e-mail/senha exigirá fluxo próprio (fora do escopo inicial).
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProfileRequest"
+      responses:
+        "200":
+          description: Perfil atualizado.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /.well-known/jwks.json:
+    get:
+      tags: [Infraestrutura]
+      operationId: jwks
+      summary: Chaves públicas para validação dos tokens (JWKS)
+      description: |
+        Somente material público (nunca `d`, `p`, `q`, `dp`, `dq`, `qi`). Consumido pelos demais serviços via
+        service-discoverer (`GET /consult?kind=user`); não é aberto no Gateway público.
+      security: []
+      responses:
+        "200":
+          description: Conjunto de chaves públicas (RFC 7517).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Jwks"
+              example:
+                keys:
+                  - kty: RSA
+                    use: sig
+                    alg: RS256
+                    kid: users-key-1
+                    n: "<modulo-publico-base64url>"
+                    e: AQAB
+  /healthcheck:
+    get:
+      tags: [Infraestrutura]
+      operationId: healthcheck
+      summary: Health check usado pelo service-discoverer
+      description: |
+        Contrato do `service-discoverer` (2xx = saudável). Considera aplicação e banco de dados (se o banco cai,
+        a instância sai da descoberta). Não retorna detalhes internos. **Uso interno — não expor pelo Gateway.**
+      security: []
+      responses:
+        "200":
+          description: Saudável.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [UP]
+        "503":
+          description: "Indisponível (por exemplo, banco inacessível)."
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [DOWN]
+  /api/v1/users:
+    get:
+      tags: [Perfil]
+      operationId: searchUsers
+      summary: Busca usuários por id, e-mail e nome (somente ORGANIZER)
+      description: |
+        Expõe dados pessoais de terceiros, por isso:
+        - exige o papel `ORGANIZER` (participante recebe `403`; o papel é conferido no banco, não só no token);
+        - exige **ao menos um** filtro (`id`, `email` ou `name`); não existe listagem irrestrita;
+        - os filtros se combinam com **AND**; `id` é igualdade exata, `email` e `name` são "contém", sem diferenciar
+          maiúsculas (`%` e `_` valem como texto literal);
+        - o resultado é sempre paginado (máx. 50 por página) e ordenado por nome;
+        - nunca retorna hash de senha; o valor dos filtros não é gravado nos logs.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+        - name: id
+          in: query
+          required: false
+          description: UUID exato do usuário.
+          schema:
+            type: string
+            format: uuid
+        - name: email
+          in: query
+          required: false
+          description: Trecho do e-mail (3 a 254 caracteres).
+          schema:
+            type: string
+            minLength: 3
+            maxLength: 254
+        - name: name
+          in: query
+          required: false
+          description: Trecho do nome (2 a 120 caracteres).
+          schema:
+            type: string
+            minLength: 2
+            maxLength: 120
+        - name: page
+          in: query
+          required: false
+          description: Página, começando em 0.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: size
+          in: query
+          required: false
+          description: Itens por página.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        "200":
+          description: Página de resultados (pode ser vazia).
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    RequestId:
+      name: X-Request-Id
+      in: header
+      required: false
+      description: |
+        Identificador de correlação opcional (o Gateway já o gera e propaga). Aceito apenas se casar com
+        `^[A-Za-z0-9._-]{8,64}$`; caso contrário o serviço gera um novo valor.
+      schema:
+        type: string
+        pattern: "^[A-Za-z0-9._-]{8,64}$"
+  headers:
+    RequestId:
+      description: Identificador de correlação da requisição (também presente em `traceId` nos erros).
+      schema:
+        type: string
+  responses:
+    BadRequest:
+      description: Entrada inválida (`VALIDATION_ERROR`) ou corpo malformado/com campos desconhecidos (`MALFORMED_REQUEST`).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: about:blank
+            title: Dados inválidos
+            status: 400
+            detail: Verifique os campos enviados.
+            code: VALIDATION_ERROR
+            traceId: 3f6c1d2e-8a4b-4c1f-9d0e-5b7a2c9e1f40
+            errors:
+              - field: email
+                message: Informe um e-mail válido.
+    Unauthorized:
+      description: Token ausente, inválido, expirado ou de emissor não confiável.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: about:blank
+            title: Não autenticado
+            status: 401
+            detail: Sessão ausente, inválida ou expirada.
+            code: UNAUTHENTICATED
+            traceId: 3f6c1d2e-8a4b-4c1f-9d0e-5b7a2c9e1f40
+    Forbidden:
+      description: Token válido, mas a conta está inativa ou sem permissão para a operação.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: about:blank
+            title: Acesso negado
+            status: 403
+            detail: Você não tem permissão para esta operação.
+            code: ACCESS_DENIED
+            traceId: 3f6c1d2e-8a4b-4c1f-9d0e-5b7a2c9e1f40
+    InternalError:
+      description: Erro inesperado. Sem stack trace, SQL ou detalhes internos.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: about:blank
+            title: Erro interno
+            status: 500
+            detail: Ocorreu um erro inesperado. Informe o identificador ao suporte.
+            code: INTERNAL_ERROR
+            traceId: 3f6c1d2e-8a4b-4c1f-9d0e-5b7a2c9e1f40
+  schemas:
+    Role:
+      type: string
+      enum: [PARTICIPANT, ORGANIZER]
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      required: [name, email, password]
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 120
+          description: Nome de exibição (após `trim`).
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          description: Normalizado no servidor (`trim` + minúsculas).
+        password:
+          type: string
+          format: password
+          minLength: 10
+          maxLength: 72
+          description: Entre 10 caracteres e 72 **bytes** em UTF-8 (limite do BCrypt). Sem regras de composição.
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        password:
+          type: string
+          format: password
+          maxLength: 72
+    UpdateProfileRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 120
+    UserSummary:
+      type: object
+      required: [id, name, email, roles]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Role"
+    UserProfile:
+      allOf:
+        - $ref: "#/components/schemas/UserSummary"
+        - type: object
+          required: [createdAt, updatedAt]
+          properties:
+            createdAt:
+              type: string
+              format: date-time
+            updatedAt:
+              type: string
+              format: date-time
+    LoginResponse:
+      type: object
+      required: [accessToken, tokenType, expiresIn, user]
+      properties:
+        accessToken:
+          type: string
+          description: JWT RS256 com claims `sub`, `roles`, `iss`, `iat`, `exp`, `jti`.
+        tokenType:
+          type: string
+          enum: [Bearer]
+        expiresIn:
+          type: integer
+          description: Validade em segundos (configurável; padrão 1800).
+        user:
+          $ref: "#/components/schemas/UserSummary"
+    UserListItem:
+      type: object
+      required: [id, name, email, roles, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Role"
+        status:
+          type: string
+          enum: [ACTIVE, INACTIVE]
+    UserPage:
+      type: object
+      required: [items, page, size, totalElements, totalPages]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserListItem"
+        page:
+          type: integer
+        size:
+          type: integer
+        totalElements:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
+    Problem:
+      type: object
+      required: [type, title, status, code, traceId]
+      properties:
+        type:
+          type: string
+          example: about:blank
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        code:
+          type: string
+          enum:
+            - VALIDATION_ERROR
+            - MALFORMED_REQUEST
+            - EMAIL_ALREADY_REGISTERED
+            - INVALID_CREDENTIALS
+            - UNAUTHENTICATED
+            - ACCESS_DENIED
+            - NOT_FOUND
+            - HTTP_405
+            - HTTP_415
+            - INTERNAL_ERROR
+        traceId:
+          type: string
+          description: Mesmo valor de `X-Request-Id`.
+        errors:
+          type: array
+          description: Presente em `VALIDATION_ERROR`.
+          items:
+            type: object
+            required: [field, message]
+            properties:
+              field:
+                type: string
+              message:
+                type: string
+    Jwks:
+      type: object
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          items:
+            type: object
+            required: [kty, kid, alg, use, n, e]
+            properties:
+              kty:
+                type: string
+              kid:
+                type: string
+              alg:
+                type: string
+              use:
+                type: string
+              n:
+                type: string
+              e:
+                type: string
