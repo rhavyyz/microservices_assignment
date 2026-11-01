@@ -5,6 +5,7 @@ import type { AuditEntry } from '../../src/audit.ts';
 import { createPool, migrate } from '../../src/db/pool.ts';
 import type { Envelope } from '../../src/messaging/envelope.ts';
 import { createEventService, type ActivityInput, type EventInput, type EventService } from '../../src/services/events.ts';
+import { createSeatService } from '../../src/services/seats.ts';
 import type { AuthedCtx } from '../../src/services/unit-of-work.ts';
 
 export const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -17,7 +18,7 @@ export async function setup() {
   await migrate(pool);
   const audits: AuditEntry[] = [];
   const deps = { pool, topic: TOPIC, audit: (e: AuditEntry) => void audits.push(e) };
-  return { pool, audits, events: createEventService(deps) };
+  return { pool, audits, events: createEventService(deps), seats: createSeatService(deps) };
 }
 
 export async function reset(pool: pg.Pool): Promise<void> {
