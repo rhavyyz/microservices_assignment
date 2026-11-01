@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/main.js",
-    "test": "node --experimental-strip-types --test test/*.test.ts"
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "test:integration": "node --experimental-strip-types --test --test-concurrency=1 test/integration/*.test.ts"
   },
   "dependencies": {
     "@fastify/swagger": "^9.4.0",
