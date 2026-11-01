@@ -52,8 +52,8 @@ export function parseCommand(raw: string): ParseResult {
     if (version !== 1) throw new Error(`unsupported version ${String(version)}`);
     const correlationId = text(json, 'correlation_id', false);
 
-    const kind = KIND_BY_TYPE[type];
     if (!Object.hasOwn(KIND_BY_TYPE, type)) return { ok: true, value: { messageId, type, correlationId, command: null } };
+    const kind = KIND_BY_TYPE[type];
     if (!isObj(json.data)) throw new Error('data must be an object');
 
     const command: SeatCommand = {

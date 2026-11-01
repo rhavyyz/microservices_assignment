@@ -16,7 +16,8 @@ const KIND = 'events';
 const config = loadConfig();
 
 const pool = createPool(config.databaseUrl);
-const app = await buildServer({ pool });
+let migrated = false;
+const app = await buildServer({ pool, isReady: () => migrated });
 const log = app.log;
 pool.on('error', (e) => log.error({ err: e.message }, 'postgres pool error'));
 
@@ -48,8 +49,11 @@ let consumer: Consumer | undefined;
 
 void (async () => {
   await retryForever('migration', () => migrate(pool), retryLog);
-  relay.start(); // the relay itself retries while Kafka is down; messages wait in the outbox
+  migrated = true;
+  // Topics first: otherwise the broker would auto-create them with a single partition on the first send.
+  // Until then (and whenever Kafka is down) the messages simply wait in the outbox.
   await retryForever('kafka topics', () => ensureTopics(kafka, config), retryLog);
+  relay.start();
   await retryForever('kafka consumer', async () => { consumer = await startConsumer(kafka, config, seats, log); }, retryLog);
   log.info({ topic: config.subscriptionTopic }, 'consuming seat requests');
 })();

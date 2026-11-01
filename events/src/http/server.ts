@@ -8,6 +8,8 @@ import { requestIdFrom, toProblem } from './problems.ts';
 
 export type ServerDeps = {
   pool: pg.Pool;
+  /** False until the schema migration ran: the instance must not get traffic before that. */
+  isReady: () => boolean;
   logger?: FastifyServerOptions['logger'];
 };
 
@@ -45,10 +47,11 @@ export async function buildServer(deps: ServerDeps) {
     return reply.code(404).type('application/problem+json').send(problem);
   });
 
-  // Health check API, used by the service-discoverer: healthy only when the database answers.
+  // Health check API, used by the service-discoverer: healthy only when migrated and the database answers.
   // Kafka being down does not make the instance unhealthy (HTTP reads and writes keep working, RQ03).
   app.get('/healthcheck', { schema: { hide: true } }, async (_req, reply) => {
     try {
+      if (!deps.isReady()) throw new Error('not migrated yet');
       await ping(deps.pool);
       return reply.code(200).send({ status: 'ok' });
     } catch {
