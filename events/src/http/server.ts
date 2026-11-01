@@ -30,7 +30,7 @@ export async function buildServer(deps: ServerDeps) {
     },
   });
 
-  app.addHook('onSend', async (req, reply) => {
+  app.addHook('onRequest', async (req, reply) => {
     reply.header('x-request-id', req.id);
   });
 
