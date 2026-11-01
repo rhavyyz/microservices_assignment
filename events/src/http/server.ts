@@ -4,18 +4,14 @@ import swagger from '@fastify/swagger';
 import type pg from 'pg';
 import { ping } from '../db/pool.ts';
 import { AppError } from '../errors.ts';
-import type { EventService } from '../services/events.ts';
-import type { TokenVerifier } from './auth.ts';
 import { requestIdFrom, toProblem } from './problems.ts';
-import { registerRoutes } from './routes.ts';
 
 export type ServerDeps = {
   pool: pg.Pool;
-  events: EventService;
-  verifyToken: TokenVerifier;
   logger?: FastifyServerOptions['logger'];
 };
 
+/** The app with its cross-cutting parts (ids, errors, health, OpenAPI); the API routes come from routes.ts. */
 export async function buildServer(deps: ServerDeps) {
   const app = Fastify({
     logger: deps.logger ?? true,
@@ -62,6 +58,5 @@ export async function buildServer(deps: ServerDeps) {
 
   app.get('/openapi.json', { schema: { hide: true } }, async () => app.swagger());
 
-  registerRoutes(app, deps);
   return app;
 }

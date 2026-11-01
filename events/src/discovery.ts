@@ -4,20 +4,22 @@ import { backoffDelay, sleep } from './retry.ts';
 
 export type DiscoveryOptions = {
   url: string;
+  /** Registration attempts before giving up (default 10, ~2.5 minutes, like the Go/Python/Java libs). */
+  attempts?: number;
   fetchFn?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
   log?: (msg: string) => void;
 };
 
 const TIMEOUT_MS = 5000;
-const ATTEMPTS = 10; // ~2.5 minutes in all, the same policy as the Go/Python/Java libs
 
 /** Registers this instance, retrying with backoff; throws after the last attempt. */
 export async function register(kind: string, host: string, opts: DiscoveryOptions): Promise<void> {
   const doFetch = opts.fetchFn ?? fetch;
   const wait = opts.sleep ?? sleep;
+  const attempts = opts.attempts ?? 10;
   let lastError = 'unknown error';
-  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       const res = await doFetch(`${opts.url}/register`, {
         method: 'POST',
@@ -30,7 +32,7 @@ export async function register(kind: string, host: string, opts: DiscoveryOption
     } catch (e) {
       lastError = (e as Error).message;
     }
-    if (attempt < ATTEMPTS - 1) {
+    if (attempt < attempts - 1) {
       const delay = backoffDelay(attempt);
       opts.log?.(`register as ${kind} failed (${lastError}); retrying in ${delay}ms`);
       await wait(delay);

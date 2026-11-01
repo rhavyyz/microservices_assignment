@@ -99,6 +99,15 @@ export function createTokenVerifier(opts: VerifierOptions) {
 
 export type TokenVerifier = ReturnType<typeof createTokenVerifier>;
 
+/** Downloads a JWKS document (`{"keys": [...]}`). */
+export async function fetchJwks(url: string, fetchFn: typeof fetch = fetch): Promise<Jwk[]> {
+  const res = await fetchFn(url, { signal: AbortSignal.timeout(3000) });
+  if (res.status !== 200) throw new Error(`JWKS answered ${res.status}`);
+  const body = (await res.json()) as { keys?: unknown };
+  if (!Array.isArray(body.keys)) throw new Error('JWKS without keys');
+  return body.keys as Jwk[];
+}
+
 /** Reads `Authorization: Bearer <token>`; null when the header is absent. */
 export function bearerToken(header: string | undefined): string | null {
   if (!header) return null;
