@@ -45,6 +45,9 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/.well-known/jwks.json", "/healthcheck", "/openapi.json")
                         .permitAll()
                         .requestMatchers("/error").permitAll()
+                        // Busca de usuários: dados pessoais de terceiros, somente organizadores (o serviço
+                        // confere o papel no banco de novo, para que um rebaixamento valha antes de o token expirar).
+                        .requestMatchers(HttpMethod.GET, "/api/v1/users").hasRole("ORGANIZER")
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth -> oauth
                         .authenticationEntryPoint(entryPoint)

@@ -12,6 +12,7 @@
 | Login | Válido; senha errada; e-mail inexistente; conta inativa; senha > 72 bytes | `UserServiceTest`, `AuthFlowIT` | respostas idênticas (401 genérico) |
 | Token | Claims exatas, `exp-iat`, `kid`; expirado, adulterado, `alg=none`, outra chave, outro emissor | `TokenServiceTest`, `AuthFlowIT` | 401 `UNAUTHENTICATED` |
 | Perfil | GET/PATCH próprio; sem rota para terceiros; sem hash na resposta | `AuthFlowIT` | 200 / 404 |
+| Busca | Só `ORGANIZER`; rebaixado perde acesso antes do token expirar; filtros id/e-mail/nome, AND, sem diferenciar maiúsculas; `%`/`_` literais; paginação e ordenação; entradas inválidas sem eco; sem hash | `UserServiceTest`, `UserSpecificationsTest`, `UserSearchIT` | 200/400/401/403 conforme |
 | Chaves | PKCS#8 válida; 1024 bits, PKCS#1, lixo, ausente sem vazar conteúdo | `PemKeysTest` | erro claro |
 | JWKS | Somente `n`,`e`,`kid`; sem `d`,`p`,`q`,`dp`,`dq`,`qi` | `TokenServiceTest`, `InfraEndpointsIT` | público apenas |
 | RQ06 | `X-Request-Id` seguro mantido; inseguro substituído; `traceId` do erro igual ao cabeçalho | `CorrelationIdFilterTest`, `AuthFlowIT` | conforme |

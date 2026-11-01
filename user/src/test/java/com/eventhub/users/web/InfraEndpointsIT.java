@@ -29,6 +29,7 @@ class InfraEndpointsIT extends PostgresIT {
         assertThat(r.<Object>json("$.paths['/api/v1/auth/login'].post")).isNotNull();
         assertThat(r.<Object>json("$.paths['/api/v1/users/me'].get")).isNotNull();
         assertThat(r.<Object>json("$.paths['/api/v1/users/me'].patch")).isNotNull();
+        assertThat(r.<Object>json("$.paths['/api/v1/users'].get")).isNotNull();
     }
 
     @Test

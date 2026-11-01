@@ -229,7 +229,8 @@ class AuthFlowIT extends PostgresIT {
 
         // Não existe rota para consultar terceiros pela API comum.
         assertProblem(http().get("/api/v1/users/" + idB, tokenA), 404, "NOT_FOUND");
-        assertThat(http().get("/api/v1/users", tokenA).status()).isEqualTo(404);
+        // A busca existe, mas é só para ORGANIZER: um participante recebe 403.
+        assertProblem(http().get("/api/v1/users?name=Mariana", tokenA), 403, "ACCESS_DENIED");
     }
 
     @Test

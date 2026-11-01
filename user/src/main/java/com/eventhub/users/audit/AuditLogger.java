@@ -19,7 +19,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class AuditLogger {
 
-    public enum Operation { REGISTER, LOGIN, PROFILE_UPDATE, TOKEN_REJECTED, ACCESS_DENIED }
+    public enum Operation { REGISTER, LOGIN, PROFILE_UPDATE, USER_SEARCH, TOKEN_REJECTED, ACCESS_DENIED }
 
     public enum Result { SUCCESS, FAILURE }
 

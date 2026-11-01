@@ -10,6 +10,7 @@ import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 /** Mapeia exceções para o formato de erro único. Detalhes internos só vão para o log, com o traceId. */
 @RestControllerAdvice
@@ -29,6 +30,13 @@ public class ApiExceptionHandler {
                 .map(e -> new Problems.FieldIssue(e.getField(), e.getDefaultMessage()))
                 .toList();
         return Problems.response(400, "Dados inválidos", "Verifique os campos enviados.", "VALIDATION_ERROR", issues);
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    ResponseEntity<String> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        // Parâmetro de consulta com tipo inválido (ex.: id que não é UUID). O valor recebido nunca é ecoado.
+        return Problems.response(400, "Dados inválidos", "Verifique os parâmetros enviados.", "VALIDATION_ERROR",
+                List.of(new Problems.FieldIssue(ex.getName(), "Valor inválido para o parâmetro.")));
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)

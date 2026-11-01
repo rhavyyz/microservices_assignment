@@ -252,6 +252,82 @@ paths:
                   status:
                     type: string
                     enum: [DOWN]
+  /api/v1/users:
+    get:
+      tags: [Perfil]
+      operationId: searchUsers
+      summary: Busca usuários por id, e-mail e nome (somente ORGANIZER)
+      description: |
+        Expõe dados pessoais de terceiros, por isso:
+        - exige o papel `ORGANIZER` (participante recebe `403`; o papel é conferido no banco, não só no token);
+        - exige **ao menos um** filtro (`id`, `email` ou `name`); não existe listagem irrestrita;
+        - os filtros se combinam com **AND**; `id` é igualdade exata, `email` e `name` são "contém", sem diferenciar
+          maiúsculas (`%` e `_` valem como texto literal);
+        - o resultado é sempre paginado (máx. 50 por página) e ordenado por nome;
+        - nunca retorna hash de senha; o valor dos filtros não é gravado nos logs.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+        - name: id
+          in: query
+          required: false
+          description: UUID exato do usuário.
+          schema:
+            type: string
+            format: uuid
+        - name: email
+          in: query
+          required: false
+          description: Trecho do e-mail (3 a 254 caracteres).
+          schema:
+            type: string
+            minLength: 3
+            maxLength: 254
+        - name: name
+          in: query
+          required: false
+          description: Trecho do nome (2 a 120 caracteres).
+          schema:
+            type: string
+            minLength: 2
+            maxLength: 120
+        - name: page
+          in: query
+          required: false
+          description: Página, começando em 0.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: size
+          in: query
+          required: false
+          description: Itens por página.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        "200":
+          description: Página de resultados (pode ser vazia).
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -420,6 +496,42 @@ components:
           description: Validade em segundos (configurável; padrão 1800).
         user:
           $ref: "#/components/schemas/UserSummary"
+    UserListItem:
+      type: object
+      required: [id, name, email, roles, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Role"
+        status:
+          type: string
+          enum: [ACTIVE, INACTIVE]
+    UserPage:
+      type: object
+      required: [items, page, size, totalElements, totalPages]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserListItem"
+        page:
+          type: integer
+        size:
+          type: integer
+        totalElements:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
     Problem:
       type: object
       required: [type, title, status, code, traceId]

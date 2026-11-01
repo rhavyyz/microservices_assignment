@@ -13,6 +13,9 @@ import com.eventhub.users.audit.AuditLogger.Result;
 import com.eventhub.users.web.ApiException;
 
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,6 +31,7 @@ public class UserService {
 
     /** O BCrypt considera apenas os primeiros 72 bytes: senhas maiores são recusadas em vez de truncadas. */
     static final int BCRYPT_MAX_BYTES = 72;
+    static final int MAX_PAGE_SIZE = 50;
     private static final Pattern CONTROL_CHARS = Pattern.compile("\\p{Cntrl}");
 
     private final UserRepository users;
@@ -106,6 +110,45 @@ public class UserService {
         user.rename(normalizeName(rawName), clock.instant());
         audit.record(Operation.PROFILE_UPDATE, Result.SUCCESS, user.getId(), null);
         return user;
+    }
+
+    /**
+     * Busca de usuários para organizadores. Exige ao menos um filtro (não há listagem irrestrita), pagina sempre
+     * (máx. {@value #MAX_PAGE_SIZE} por página) e confere o papel do solicitante no banco, não só no token.
+     * Os valores filtrados nunca vão para o log de auditoria (são dados pessoais).
+     */
+    @Transactional(readOnly = true)
+    public Page<User> search(UUID requesterId, UUID id, String email, String name, int page, int size) {
+        User requester = getActive(requesterId);
+        if (!requester.getRoles().contains(Role.ORGANIZER)) {
+            audit.record(Operation.ACCESS_DENIED, Result.FAILURE, requesterId, null);
+            throw ApiException.forbidden();
+        }
+        String emailTerm = blankToNull(email);
+        String nameTerm = blankToNull(name);
+        if (id == null && emailTerm == null && nameTerm == null) {
+            throw ApiException.validation("filters", "Informe ao menos um filtro: id, email ou name.");
+        }
+        if (emailTerm != null && (emailTerm.length() < 3 || emailTerm.length() > 254)) {
+            throw ApiException.validation("email", "O filtro de e-mail deve ter entre 3 e 254 caracteres.");
+        }
+        if (nameTerm != null && (nameTerm.length() < 2 || nameTerm.length() > 120)) {
+            throw ApiException.validation("name", "O filtro de nome deve ter entre 2 e 120 caracteres.");
+        }
+        if (page < 0) {
+            throw ApiException.validation("page", "A página deve ser maior ou igual a 0.");
+        }
+        if (size < 1 || size > MAX_PAGE_SIZE) {
+            throw ApiException.validation("size", "O tamanho da página deve estar entre 1 e " + MAX_PAGE_SIZE + ".");
+        }
+        Page<User> result = users.findAll(UserSpecifications.matching(id, emailTerm, nameTerm),
+                PageRequest.of(page, size, Sort.by("name").ascending().and(Sort.by("id").ascending())));
+        audit.record(Operation.USER_SEARCH, Result.SUCCESS, requesterId, null);
+        return result;
+    }
+
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s.strip();
     }
 
     private static String normalizeName(String raw) {
