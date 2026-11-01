@@ -90,6 +90,18 @@ services:
       replicas: 1
     build: ./events
     networks: [backbone, events-net]
+    depends_on:
+      kafka:
+        condition: service_healthy
+      events-db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://events:${EVENTS_DB_PASSWORD:-events}@events-db:5432/events
+      KAFKA_BROKERS: kafka:9092
+      # EVENTS_TOPIC: events-events # optional, this is the default: topic the service publishes to (outbox relay)
+      # SUBSCRIPTION_TOPIC: subscription-events # optional, this is the default: seat requests consumed by the service
+      # JWT_ISSUER: eventhub-users # optional, this is the default: issuer of the access tokens (user service)
+      # JWT_JWKS_URL: http://user:8080/.well-known/jwks.json # optional: by default the user service is found via the discoverer
   subscription:
     <<: *app
     deploy:
