@@ -9,7 +9,7 @@ belongs to the subscription service). TypeScript on Node 22, Fastify, PostgreSQL
 - `GET /openapi.json`: generated from the route schemas; the gateway reads it to learn the endpoints.
 - Boots even if PostgreSQL, Kafka or the discoverer are down; migration, topics, relay, consumer and registration retry in the background.
 
-Architecture decisions specific to this service: [`docs/decisions.md`](docs/decisions.md).
+Contracts: [`docs/contracts.md`](docs/contracts.md). Architecture decisions: [`docs/decisions.md`](docs/decisions.md).
 
 ## Data (Database per Service)
 `events` (`DRAFT` → `PUBLISHED` → `CANCELLED`, or `DRAFT` → `CANCELLED`) · `activities` (schedule items: period,
@@ -18,67 +18,22 @@ registration that held a seat) · `processed_messages` (idempotent consumer) · 
 Invariants enforced by the database: `0 <= reserved <= capacity` (no overbooking), capacity immutable (trigger), periods
 valid. Prices are integers in cents of BRL; `paid = price_cents > 0`, `available = capacity - reserved` (generated columns).
 
-## HTTP API (through the gateway: `/events/...`)
-Changes need `Authorization: Bearer <access token>` issued by the user service (RS256, verified here against its JWKS;
-`X-User-Id` is ignored). Reads are public; with a token, an organizer also sees their own drafts.
+## Contracts
+The full HTTP and Kafka contracts, with field rules, error codes and examples, are in [`docs/contracts.md`](docs/contracts.md)
+(`GET /openapi.json` is the executable source of the HTTP part). In short:
 
-| Endpoint | Who | Notes |
-|---|---|---|
-| `GET /events?q=&from=&to=&limit=&offset=` | anyone | Published events; `q` searches title, description, organization, location |
-| `GET /events/{eventId}` | anyone* | Event + schedule with `capacity`/`available` per activity |
-| `GET /events/{eventId}/activities` | anyone* | Schedule only |
-| `GET /activities/{activityId}` | anyone* | One activity |
-| `GET /me/events` | token | Caller's events, any status |
-| `POST /events` | `ORGANIZER` role | Creates a `DRAFT`; 201 |
-| `PATCH /events/{eventId}` | owner | Partial; not when cancelled; activities must stay inside the new period |
-| `POST /events/{eventId}/publish` | owner | Draft with ≥1 activity that has not ended |
-| `POST /events/{eventId}/cancel` | owner | Final |
-| `POST /events/{eventId}/activities` | owner | Inside the event period; `capacity` 1..100000; 201 |
-| `PATCH /activities/{activityId}` | owner | `capacity` is rejected (immutable); `price_cents` only while draft |
-| `DELETE /activities/{activityId}` | owner | Only while draft; 204 |
-
-\* drafts are visible only to their organizer. Someone else's event is a **404**, same as a missing one (RN07).
-`publish`/`cancel` take no body: do not send `Content-Type: application/json` without a body (Fastify answers 400).
-
-Errors are `application/problem+json` (same as the user service): `{type, title, status, detail, code, traceId, errors?}`.
-Codes: `VALIDATION_ERROR` (400, unknown fields included), `UNAUTHENTICATED` (401), `FORBIDDEN` (403), `NOT_FOUND` (404),
-`INVALID_STATUS` / `EVENT_CANCELLED` / `EVENT_NOT_DRAFT` / `EVENT_WITHOUT_ACTIVITIES` / `EVENT_ENDED` (409),
-`INVALID_PERIOD` / `ACTIVITY_OUTSIDE_EVENT` (422), `AUTH_UNAVAILABLE` (503: no token key cached and the user service is
-unreachable), `INTERNAL_ERROR` (500, details only in the log). `traceId` is the request id: the gateway's `X-Request-Id`
-when well formed, echoed in the `X-Request-Id` response header and in the logs.
+- **HTTP** (through the gateway: `/events/...`): public reads `GET /events` (search), `GET /events/{eventId}`,
+  `GET /events/{eventId}/activities`, `GET /activities/{activityId}`; with a token `GET /me/events`; organizer changes
+  `POST /events`, `PATCH /events/{eventId}`, `POST /events/{eventId}/publish|cancel`, `POST /events/{eventId}/activities`,
+  `PATCH|DELETE /activities/{activityId}`. Changes need `Authorization: Bearer <token>` from the user service; someone
+  else's event is a 404 (RN07). Errors are `application/problem+json` with `code` and `traceId`.
+- **Publishes** on `events-events` (transactional outbox): `event.*`, `activity.*` keyed by `event_id`; `seat.reserved`,
+  `seat.rejected`, `seat.released` keyed by `registration_id`.
+- **Consumes** from `subscription-events`: `registration.requested` (takes a seat), `registration.cancelled` /
+  `registration.expired` (frees it), each message applied once.
 
 Rollout: the gateway adds new endpoints as private. Open them once with `events/scripts/register-gateway-routes.sh`
 (instructions in its header).
-
-## Messages
-Same envelope as the rest of the bus (the one the reports service consumes):
-`{"message_id","type","version":1,"occurred_at","correlation_id","data":{...}}`. `message_id` is stable on resend, so
-consumers deduplicate with it; `correlation_id` is the HTTP request id (or the incoming message's), to follow a
-registration across services.
-
-**Published** on `EVENTS_TOPIC` (`events-events`) through the transactional outbox (at-least-once, in commit order):
-
-| `type` | Key | `data` |
-|---|---|---|
-| `event.created` / `updated` / `published` / `cancelled` | `event_id` | `event_id, organizer_id, organization, name, status, starts_at, ends_at` |
-| `activity.created` / `updated` / `deleted` | `event_id` | `activity_id, event_id, name, starts_at, ends_at, capacity, available, price_cents, currency, paid, waitlist_enabled` |
-| `seat.reserved` | `registration_id` | `registration_id, event_id, activity_id, user_id, price_cents, currency, paid, available` |
-| `seat.rejected` | `registration_id` | same ids + `reason` (`FULL`, `ACTIVITY_NOT_FOUND`, `EVENT_NOT_OPEN`, `REGISTRATION_CLOSED`), `waitlist_enabled` |
-| `seat.released` | `registration_id` | same ids + `available`, `waitlist_enabled` |
-
-**Consumed** from `SUBSCRIPTION_TOPIC` (`subscription-events`), consumer group `events-service` (other types are ignored):
-
-| `type` | Effect |
-|---|---|
-| `registration.requested` (`registration_id, event_id, activity_id, user_id?`) | Takes a seat → `seat.reserved`, or `seat.rejected` |
-| `registration.cancelled` / `registration.expired` (same fields) | Frees the seat if the registration held one → `seat.released` |
-
-Seat saga (choreography) as the subscription service is expected to play it: on `seat.reserved` with `paid=false` confirm
-the registration; with `paid=true` start the payment and, on refusal or expiry (RN02/RN03), publish
-`registration.expired`/`cancelled` so the seat is freed. On `seat.rejected` with `FULL` and `waitlist_enabled`, waitlist it;
-on `seat.released` offer the seat to the next waitlisted registration by publishing its `registration.requested` (RN04).
-On `event.cancelled`, cancel the event's registrations. Each registration is answered in order (key = `registration_id`);
-a retried request for a registration that already holds a seat gets `seat.reserved` again without taking a second one.
 
 ## Env
 `PORT` (8080), `DATABASE_URL` (`postgres://events:events@events-db:5432/events`, dev default), `KAFKA_BROKERS` (`kafka:9092`),
