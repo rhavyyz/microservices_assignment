@@ -118,8 +118,14 @@ início, fim e descrição.
 - **Justificativa:** (a) permite se passar por qualquer organizador; (b) acopla cada leitura e escrita à disponibilidade
   de Usuários (RQ03) e adiciona latência no pico (RQ02). O 404 não revela a existência de eventos alheios.
 - **Consequências:** revogação antes do `exp` não é suportada (validade curta do token mitiga). As rotas ficam com
-  `requireAuth=false` no Gateway, pois a autenticação é feita no serviço. Relatórios ainda usa `X-User-Id`: recomenda-se
-  migrar para o mesmo mecanismo.
+  `requireAuth=false` no Gateway, pois a autenticação é feita no serviço.
+- **Atualização (P3, após o merge de Usuários):** a equipe decidiu que o Gateway passará a validar o JWT e a escrever o
+  `X-User-Id` com o `sub` (substituindo o enviado pelo cliente); serviços que só precisam do id do usuário podem depender
+  desse cabeçalho. Eventos **continua validando o Bearer** porque precisa de `roles` (criar evento exige `ORGANIZER`) e o
+  cabeçalho só carrega o id; a validação dupla é barata (chave em cache) e vale como defesa em profundidade. Requisito
+  para o Gateway: **continuar repassando o cabeçalho `Authorization`** (ou passar a injetar também os papéis). Quando a
+  mudança estiver no ar, as rotas de escrita podem ir para `requireAuth=true` e `rateLimitBy=user_or_ip` (ver
+  `scripts/register-gateway-routes.sh`); antes disso, `requireAuth=true` recusaria clientes que só enviam o Bearer.
 
 ## ADR-E5 — TypeScript, Fastify, PostgreSQL e kafkajs
 

@@ -7,9 +7,11 @@
 #   docker run --rm --network <project>_backbone -v "$PWD/events/scripts:/s:ro" \
 #     -e GATEWAY_ADMIN_URL=http://gateway:8080 --entrypoint sh curlimages/curl:8.10.1 /s/register-gateway-routes.sh
 #
-# requireAuth stays false on purpose: the Gateway only checks that an X-User-Id header EXISTS, while the events
+# requireAuth stays false on purpose: today the Gateway only checks that an X-User-Id header EXISTS, while the events
 # service validates the bearer token itself (public reads need no token at all). rateLimitBy=ip because
-# user_or_ip trusts the client-controlled X-User-Id header.
+# user_or_ip trusts the client-controlled X-User-Id header. Once the Gateway validates the JWT and writes X-User-Id
+# itself (team decision on P3), the write routes below can move to requireAuth=true and rateLimitBy=user_or_ip;
+# doing it earlier would reject clients that only send the bearer token.
 set -eu
 : "${GATEWAY_ADMIN_URL:?set GATEWAY_ADMIN_URL, e.g. http://gateway:8080}"
 

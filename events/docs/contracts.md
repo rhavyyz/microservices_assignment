@@ -12,7 +12,7 @@ exemplos; se os dois divergirem, vale o código. Decisões por trás destes cont
 | Formato | JSON, campos em `snake_case`. Datas em ISO 8601 com fuso (`2027-03-10T09:00:00.000Z`); respostas sempre em UTC. |
 | Ids | UUID v4 gerados pelo serviço. Ids de usuário (`organizer_id`, `user_id`) são o `sub` do token do serviço de Usuários. |
 | Dinheiro | `price_cents`: inteiro em centavos de BRL; `0` = gratuita. `paid = price_cents > 0`. |
-| Autenticação | `Authorization: Bearer <access token>` (JWT RS256 do serviço de Usuários). `X-User-Id` é ignorado. |
+| Autenticação | `Authorization: Bearer <access token>` (JWT RS256 do serviço de Usuários), validado pelo próprio serviço porque ele precisa de `roles`. `X-User-Id` é ignorado, inclusive quando o Gateway passar a injetá-lo (P3): o Gateway precisa continuar repassando `Authorization`. |
 | Correlação | `X-Request-Id` do Gateway é reaproveitado se tiver 8–64 caracteres `[A-Za-z0-9._-]`; senão um UUID novo. Sempre devolvido no cabeçalho `X-Request-Id` da resposta. |
 | Campos desconhecidos | Rejeitados com 400 (não são ignorados). |
 | Corpo vazio | `publish`, `cancel` e `DELETE` não têm corpo: não envie `Content-Type: application/json` sem corpo (400). |
@@ -249,5 +249,5 @@ Garantias:
 | Com | Contrato |
 |---|---|
 | Service-discoverer | Registra `{"kind":"events","host":"<SERVICE_HOST>"}` em `POST /register` ao iniciar e a cada 30 s; `GET /healthcheck` responde 200 só com o banco migrado e acessível. |
-| Gateway | Lê `GET /openapi.json`. As rotas da seção 3 são abertas por `events/scripts/register-gateway-routes.sh` com `isPublic=true`, `requireAuth=false` (a autenticação é feita no serviço) e `rateLimitBy=ip`. |
+| Gateway | Lê `GET /openapi.json`. As rotas da seção 3 são abertas por `events/scripts/register-gateway-routes.sh` com `isPublic=true`, `requireAuth=false` (a autenticação é feita no serviço) e `rateLimitBy=ip`. Quando o Gateway validar o JWT e injetar `X-User-Id` (P3), as rotas de escrita podem passar a `requireAuth=true` e `rateLimitBy=user_or_ip`. |
 | Serviço de Usuários | `GET http://<host de consult?kind=user>/.well-known/jwks.json` (ou `JWT_JWKS_URL`); exige `alg=RS256`, `kid`, `iss = JWT_ISSUER` (`eventhub-users`), `exp`, `sub`; lê `roles`. |
