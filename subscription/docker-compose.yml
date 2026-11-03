@@ -5,7 +5,8 @@ services:
     environment:
       POSTGRES_DB: subscription
       POSTGRES_USER: subscription
-      POSTGRES_PASSWORD: ${SUBSCRIPTION_DB_PASSWORD:?Defina SUBSCRIPTION_DB_PASSWORD}
+      # Sem valor padrão: sem esta variável o subscription-db não inicia, em vez de rodar com senha conhecida.
+      POSTGRES_PASSWORD: ${SUBSCRIPTION_DB_PASSWORD:-}
     volumes:
       - subscription-db-data:/var/lib/postgresql/data
     networks: [subscription-net]

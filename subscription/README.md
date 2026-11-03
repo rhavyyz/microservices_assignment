@@ -50,21 +50,21 @@ em [CONTRACTS.md](CONTRACTS.md); Eventos e Pagamentos ainda são placeholders no
 
 ## Execução com o monorepo
 
-Nenhum arquivo fora desta pasta precisa ser editado. O compose raiz inclui o banco privado;
-o overlay nesta pasta injeta configuração no contêiner de aplicação já declarado na raiz.
+O compose raiz inclui o banco privado (`subscription-db`) e já declara a configuração do
+contêiner de aplicação, sem necessidade de arquivos adicionais.
 
-1. Defina as variáveis exemplificadas em `.env.example` no ambiente ou em um arquivo local.
-   Senha e URL devem corresponder; use percent-encoding para caracteres especiais na URL.
+1. Defina `SUBSCRIPTION_DB_PASSWORD` no `.env` da raiz (veja o `.env.example` da raiz). Sem ela o
+   `subscription-db` não inicia. A URL do banco é montada a partir da senha; se ela tiver caracteres
+   reservados de URL, use percent-encoding e defina `SUBSCRIPTION_DATABASE_URL` explicitamente.
 2. Inicie o projeto separado de MongoDB do gateway, conforme README da raiz.
 3. Da raiz, execute:
 
 ```sh
 docker compose -f gateway/docker-compose.yml up -d
-docker compose --env-file subscription/.env -f docker-compose.yml -f subscription/compose.integration.yml up --build
+docker compose up --build
 ```
 
-O arquivo `subscription/.env` também deve incluir as configurações dos demais serviços
-exigidas pelo compose raiz, ou elas devem estar no ambiente. Não versionar segredos.
+Não versionar segredos.
 O gateway deve sincronizar `/openapi.json` depois de Inscrições estar registrado; se já
 estava rodando com outra especificação, reinicie-o para refazer essa sincronização.
 

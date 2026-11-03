@@ -96,6 +96,19 @@ services:
       replicas: 1 # We cant horizontally scalle this service at all
     build: ./subscription
     networks: [backbone, subscription-net]
+    depends_on:
+      subscription-db:
+        condition: service_healthy
+    # Config comes from the root .env (see .env.example). The password has a single source (SUBSCRIPTION_DB_PASSWORD);
+    # if it has URL-reserved characters, percent-encode it, or set SUBSCRIPTION_DATABASE_URL explicitly with the full URL.
+    environment:
+      SUBSCRIPTION_DATABASE_URL: ${SUBSCRIPTION_DATABASE_URL:-postgresql://subscription:${SUBSCRIPTION_DB_PASSWORD:-}@subscription-db:5432/subscription}
+      SUBSCRIPTION_SERVICE_TOKEN: ${SUBSCRIPTION_SERVICE_TOKEN:-}
+      KAFKA_BROKERS: kafka:9092
+      SERVICE_DISCOVERER_URL: http://service-discoverer:8080
+      USERS_JWT_ISSUER: ${USERS_JWT_ISSUER:-eventhub-users}
+      RESERVATION_SECONDS: ${RESERVATION_SECONDS:-900}
+      OFFER_SECONDS: ${OFFER_SECONDS:-600}
   payments:
     <<: *app
     deploy:
