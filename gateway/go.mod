@@ -3,6 +3,7 @@ module gateway
 go 1.24.0
 
 require (
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/twmb/franz-go v1.20.4
 	go.mongodb.org/mongo-driver/v2 v2.0.1

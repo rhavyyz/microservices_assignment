@@ -19,7 +19,7 @@ func env(key, def string) string {
 // newMux wires the admin API, the healthcheck, the websocket entry point and the middleware pipeline (everything
 // else), all wrapped in CORS so that error responses and preflights are covered too. /ws is not a proxied kind, so
 // it skips the endpoint pipeline and is logged here.
-func newMux(store Store, eps *Endpoints, hub *Hub, pipeline http.Handler) http.Handler {
+func newMux(store Store, eps *Endpoints, hub *Hub, verifier *Verifier, pipeline http.Handler) http.Handler {
 	a := &admin{store: store, eps: eps}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /admin/endpoints", a.list)
@@ -27,7 +27,7 @@ func newMux(store Store, eps *Endpoints, hub *Hub, pipeline http.Handler) http.H
 	mux.HandleFunc("GET /healthcheck", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	mux.Handle("GET /ws", Chain(WebSocket(hub), Logging()))
+	mux.Handle("GET /ws", Chain(WebSocket(hub, verifier), Logging()))
 	mux.Handle("/", pipeline)
 	return Chain(mux, Cors())
 }
@@ -41,6 +41,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("TRUSTED_PROXIES must be a comma-separated list of IPs/CIDRs: %v", err)
 	}
+	jwksEvery, err := time.ParseDuration(env("JWKS_REFRESH_EVERY", "10m"))
+	if err != nil || jwksEvery <= 0 {
+		log.Fatal("JWKS_REFRESH_EVERY must be a positive Go duration, e.g. 10m")
+	}
+	jwksCooldown, err := time.ParseDuration(env("JWKS_REFETCH_COOLDOWN", "30s"))
+	if err != nil || jwksCooldown < 0 {
+		log.Fatal("JWKS_REFETCH_COOLDOWN must be a non-negative Go duration, e.g. 30s")
+	}
 	store, err := newMongoStore(env("MONGO_URI", "mongodb://gateway-db:27017"))
 	if err != nil {
 		log.Fatal(err)
@@ -48,17 +56,25 @@ func main() {
 	disc := NewDiscovery(env("SERVICE_DISCOVERER_URL", "http://service-discoverer:8080"))
 	eps := NewEndpoints(store)
 	limiter := NewLimiter(time.Now)
+	jwksFetch := NewDiscoveryJWKS(disc, &http.Client{Timeout: 10 * time.Second})
+	if u := env("USERS_JWKS_URL", ""); u != "" {
+		jwksFetch = NewURLJWKS(u, &http.Client{Timeout: 10 * time.Second})
+	}
+	keys := NewKeyCache(jwksFetch, jwksCooldown, time.Now)
+	verifier := NewVerifier(keys, env("JWT_ISSUER", "eventhub-users"))
 
 	ctx := context.Background()
 	go eps.Run(ctx)
 	go limiter.Run(ctx.Done())
 	go NewSyncer(disc, store, eps, defaultMax).Run(ctx) // never blocks the server start
 
+	go keys.Run(ctx, jwksEvery) // never blocks the server start; the keys are also fetched lazily
+
 	hub := NewHub()
 	push := NewPushConsumer(env("KAFKA_BROKERS", "kafka:9092"), env("NOTIFICATIONS_PUSH_TOPIC", "notifications-push"), hub)
 	go push.Run(ctx) // never blocks the server start
 
-	mux := newMux(store, eps, hub, NewPipeline(eps, limiter, proxies, NewProxy(disc)))
+	mux := newMux(store, eps, hub, verifier, NewPipeline(eps, verifier, limiter, proxies, NewProxy(disc)))
 	port := env("PORT", "8080")
 	log.Printf("gateway listening on :%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, mux))
