@@ -10,37 +10,53 @@ import (
 
 var connectedFrame = []byte(`{"type":"connected"}`)
 
-// wsUserID is the identity of a websocket request: the trimmed X-User-Id header, else the trimmed user_id query
+// wsToken is the JWT of a websocket request: the Authorization bearer header, else the access_token query
 // parameter (browsers cannot set headers on new WebSocket(...)). The header wins when both are present.
-func wsUserID(r *http.Request) string {
-	if id := strings.TrimSpace(r.Header.Get("X-User-Id")); id != "" {
-		return id
+func wsToken(r *http.Request) (string, bool) {
+	if tok, ok := bearer(r); ok {
+		return tok, true
 	}
-	return strings.TrimSpace(r.URL.Query().Get("user_id"))
+	tok := strings.TrimSpace(r.URL.Query().Get("access_token"))
+	return tok, tok != ""
 }
 
-// WebSocket serves GET /ws: it registers the connection in the hub, which forwards the user's pushes to it.
+// WebSocket serves GET /ws: it verifies the JWT (same rules as Auth), registers the connection in the hub under
+// the verified sub, and the hub forwards that user's pushes to it.
 // It is registered directly on the mux, outside the Resolve/Auth/RateLimit endpoint pipeline (it is not a proxied
 // kind), so isPublic, requireAuth and rate limiting do not apply; there is no connection rate limit yet.
 //
-// NOTE: like X-User-Id everywhere else, the identity is NOT verified: whoever connects can claim any user id. The
-// user_id query fallback is a placeholder until real authentication exists; nothing in the URL is a secret.
-func WebSocket(hub *Hub) http.Handler {
+// Authentication happens before the upgrade, so failures are plain HTTP: 401 for a missing or invalid token, 503
+// when no signing key is available. Client-sent X-User-Id / X-User-Roles are dropped; the identity is only ever the
+// verified sub. The token in the query string can end up in proxy/access logs elsewhere (Logging only logs the
+// path), so TLS and a short token lifetime matter.
+func WebSocket(hub *Hub, v *Verifier) http.Handler {
 	up := websocket.Upgrader{
 		// Any origin is allowed, consistent with the "CORS fully permissive for now" decision (see Cors).
 		CheckOrigin: func(*http.Request) bool { return true },
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		userID := wsUserID(r)
-		if userID == "" {
-			http.Error(w, "missing X-User-Id header or user_id query parameter", http.StatusUnauthorized)
+		r.Header.Del("X-User-Id")
+		r.Header.Del("X-User-Roles")
+		tok, ok := wsToken(r)
+		if !ok {
+			unauthorized(w)
 			return
+		}
+		id, err := v.Verify(r.Context(), tok)
+		if err != nil {
+			authFailed(w, err)
+			return
+		}
+		r.Header.Set("X-User-Id", id.Sub) // for Logging
+		if len(id.Roles) > 0 {
+			r.Header.Set("X-User-Roles", strings.Join(id.Roles, ","))
 		}
 		ws, err := up.Upgrade(w, r, nil) // replies to the client itself on failure
 		if err != nil {
 			return
 		}
-		c := newClient(userID, hub.queueSize)
+		// The connection is verified only here: an open connection outlives the token's exp.
+		c := newClient(id.Sub, hub.queueSize)
 		c.enqueue(connectedFrame) // first in the queue, so it precedes any push
 		hub.Register(c)
 		go hub.writeLoop(ws, c)

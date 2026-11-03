@@ -288,17 +288,17 @@ func TestRateLimitMiddleware(t *testing.T) {
 }
 
 // modeHandler builds Resolve+Auth+RateLimit around one endpoint and returns a caller (user, remote ip) -> status.
-func modeHandler(e Endpoint, tp TrustedProxies) func(user, ip string) int {
+func modeHandler(t *testing.T, e Endpoint, tp TrustedProxies) func(user, ip string) int {
 	eps := NewEndpoints(newFakeStore(e))
 	eps.Refresh(context.Background())
 	l := NewLimiter(time.Now)
 	h := Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }),
-		Resolve(eps), Auth(), RateLimit(l, tp))
+		Resolve(eps), Auth(testVerifier(t)), RateLimit(l, tp))
 	return func(user, ip string) int {
 		r := httptest.NewRequest("GET", "/user/x", nil)
 		r.RemoteAddr = ip + ":4000"
 		if user != "" {
-			r.Header.Set("X-User-Id", user)
+			r.Header.Set("Authorization", bearerFor(user))
 		}
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
@@ -308,7 +308,7 @@ func modeHandler(e Endpoint, tp TrustedProxies) func(user, ip string) int {
 
 func TestRateLimitModes(t *testing.T) {
 	t.Run("user_or_ip is the default", func(t *testing.T) {
-		do := modeHandler(ep(User, "GET", "/x", 1), nil) // no rateLimitBy stored
+		do := modeHandler(t, ep(User, "GET", "/x", 1), nil) // no rateLimitBy stored
 		if do("a", "1.1.1.1") != 204 || do("a", "2.2.2.2") != 429 {
 			t.Error("same user must share a budget across IPs")
 		}
@@ -326,7 +326,7 @@ func TestRateLimitModes(t *testing.T) {
 		}
 	})
 	t.Run("ip", func(t *testing.T) {
-		do := modeHandler(epWith(User, "GET", "/x", 2, RateLimitIP, false), nil)
+		do := modeHandler(t, epWith(User, "GET", "/x", 2, RateLimitIP, false), nil)
 		for i, u := range []string{"a", "b", ""} {
 			want := 204
 			if i == 2 {
@@ -341,7 +341,7 @@ func TestRateLimitModes(t *testing.T) {
 		}
 	})
 	t.Run("global", func(t *testing.T) {
-		do := modeHandler(epWith(User, "GET", "/x", 2, RateLimitGlobal, false), nil)
+		do := modeHandler(t, epWith(User, "GET", "/x", 2, RateLimitGlobal, false), nil)
 		if do("a", "1.1.1.1") != 204 || do("b", "2.2.2.2") != 204 || do("", "3.3.3.3") != 429 {
 			t.Error("budget must be shared across users and IPs")
 		}
@@ -356,27 +356,27 @@ func TestAuthMiddleware(t *testing.T) {
 		epWith(User, "GET", "/open", 5, RateLimitGlobal, false)))
 	eps.Refresh(context.Background())
 	h := Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }),
-		Resolve(eps), Auth(), RateLimit(l, nil))
+		Resolve(eps), Auth(testVerifier(t)), RateLimit(l, nil))
 	do := func(path, user string) int {
 		r := httptest.NewRequest("GET", path, nil)
 		if user != "" {
-			r.Header.Set("X-User-Id", user)
+			r.Header.Set("Authorization", bearerFor(user))
 		}
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		return w.Code
 	}
 	if do("/user/open", "") != 204 || do("/user/open", "u") != 204 {
-		t.Error("requireAuth=false must pass with and without header")
+		t.Error("requireAuth=false must pass with and without token")
 	}
 	// Unauthenticated calls are rejected before the limiter: they must not eat the budget of 1.
 	for i := 0; i < 3; i++ {
 		if got := do("/user/secure", ""); got != 401 {
-			t.Fatalf("no header: got %d want 401", got)
+			t.Fatalf("no token: got %d want 401", got)
 		}
 	}
 	if got := do("/user/secure", "u"); got != 204 {
-		t.Errorf("with header: got %d want 204 (budget consumed by 401s?)", got)
+		t.Errorf("with token: got %d want 204 (budget consumed by 401s?)", got)
 	}
 	if got := do("/user/secure", "u"); got != 429 {
 		t.Errorf("second authenticated call: got %d want 429", got)
@@ -494,12 +494,16 @@ func TestDefaultHeaders(t *testing.T) {
 }
 
 func newGateway(t *testing.T, store Store, disc *Discovery) (*httptest.Server, *Endpoints) {
+	return newGatewayAuth(t, store, disc, testVerifier(t))
+}
+
+func newGatewayAuth(t *testing.T, store Store, disc *Discovery, v *Verifier) (*httptest.Server, *Endpoints) {
 	eps := NewEndpoints(store)
 	if err := eps.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	l := NewLimiter(time.Now)
-	srv := httptest.NewServer(newMux(store, eps, NewHub(), NewPipeline(eps, l, nil, NewProxy(disc))))
+	srv := httptest.NewServer(newMux(store, eps, NewHub(), v, NewPipeline(eps, v, l, nil, NewProxy(disc))))
 	t.Cleanup(srv.Close)
 	return srv, eps
 }
@@ -530,7 +534,7 @@ func TestProxyStripsPrefix(t *testing.T) {
 	defer down.Close()
 	ds, _ := fakeDiscoverer(t, map[string][]string{"payments": {hostOf(down)}})
 	gw, _ := newGateway(t, newFakeStore(ep(Payments, "POST", "/charge/{id}", 10)), NewDiscovery(ds.URL))
-	h := map[string]string{"X-User-Id": "u1"}
+	h := authHdr("u1")
 
 	resp, body := get(t, "POST", gw.URL+"/payments/charge/7?a=1&b=x", "hello", h)
 	if resp.StatusCode != 201 || body != "ok" || gotPath != "/charge/7" || gotQuery != "a=1&b=x" ||
@@ -555,7 +559,7 @@ func TestProxyStripsPrefix(t *testing.T) {
 func TestProxyNoInstance(t *testing.T) {
 	ds, _ := fakeDiscoverer(t, nil)
 	gw, _ := newGateway(t, newFakeStore(ep(Payments, "GET", "/x", 10)), NewDiscovery(ds.URL))
-	if resp, _ := get(t, "GET", gw.URL+"/payments/x", "", map[string]string{"X-User-Id": "u"}); resp.StatusCode != 503 {
+	if resp, _ := get(t, "GET", gw.URL+"/payments/x", "", authHdr("u")); resp.StatusCode != 503 {
 		t.Errorf("want 503, got %d", resp.StatusCode)
 	}
 }
@@ -574,7 +578,7 @@ func TestProxyRediscoversOnDialFailure(t *testing.T) {
 
 	ds, calls := fakeDiscoverer(t, map[string][]string{"payments": {deadHost, hostOf(down)}})
 	gw, _ := newGateway(t, newFakeStore(ep(Payments, "POST", "/x", 10)), NewDiscovery(ds.URL))
-	h := map[string]string{"X-User-Id": "u"}
+	h := authHdr("u")
 
 	resp, body := get(t, "POST", gw.URL+"/payments/x", "payload", h)
 	if resp.StatusCode != 200 || body != "alive" || gotBody != "payload" {
@@ -621,7 +625,7 @@ func TestAdmin(t *testing.T) {
 		t.Error("cache not refreshed after PUT")
 	}
 	// maxPerMin 0 blocks the endpoint
-	if resp, _ := get(t, "GET", gw.URL+"/user/users/1", "", map[string]string{"X-User-Id": "u"}); resp.StatusCode != 429 {
+	if resp, _ := get(t, "GET", gw.URL+"/user/users/1", "", authHdr("u")); resp.StatusCode != 429 {
 		t.Errorf("want 429 for maxPerMin 0, got %d", resp.StatusCode)
 	}
 
@@ -885,7 +889,7 @@ func TestCors(t *testing.T) {
 	ds, _ := fakeDiscoverer(t, map[string][]string{"payments": {hostOf(down)}})
 	gw, _ := newGateway(t, newFakeStore(ep(Payments, "GET", "/x", 10), epWith(Payments, "GET", "/secure", 10, RateLimitUserOrIP, true)), NewDiscovery(ds.URL))
 	origin := map[string]string{"Origin": "https://ui.example"}
-	withUser := map[string]string{"Origin": "https://ui.example", "X-User-Id": "u1"}
+	withUser := map[string]string{"Origin": "https://ui.example", "Authorization": bearerFor("u1")}
 
 	checkAllow := func(name string, resp *http.Response) {
 		t.Helper()
@@ -952,7 +956,7 @@ func TestCors(t *testing.T) {
 	checkAllow("healthcheck", resp)
 
 	// No Origin: no CORS headers.
-	resp, _ = get(t, "GET", gw.URL+"/payments/x", "", map[string]string{"X-User-Id": "u1"})
+	resp, _ = get(t, "GET", gw.URL+"/payments/x", "", authHdr("u1"))
 	if v := resp.Header.Get("Access-Control-Allow-Origin"); v != "" {
 		t.Errorf("no Origin but Allow-Origin = %q", v)
 	}
@@ -974,7 +978,7 @@ func TestPrivateEndpoints(t *testing.T) {
 		private(ep(User, "GET", "/files/{name}", 60)),
 		ep(User, "GET", "/files/public", 60))
 	gw, _ := newGateway(t, store, NewDiscovery(ds.URL))
-	h := map[string]string{"X-User-Id": "u1"}
+	h := authHdr("u1")
 
 	ref, refBody := get(t, "GET", gw.URL+"/user/nothing-here", "", h)
 	resp, body := get(t, "GET", gw.URL+"/user/secret", "", h)
