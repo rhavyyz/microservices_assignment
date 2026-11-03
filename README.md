@@ -120,7 +120,16 @@ Registration, login (JWT RS256) and own-profile API (Spring Boot 4.1, Java 21, P
 
     cp .env.example .env                       # set USERS_DB_PASSWORD (the user-db refuses to start without it)
     user/scripts/gen-dev-keys.sh               # dev JWT signing key in user/.keys (git-ignored)
-    docker compose up --build user user-db     # via the Gateway the routes are /user/api/v1/... (see docs/integration)
+    docker compose -f gateway/docker-compose.yml up -d   # gateway-db first (creates the gateway-net network)
+    docker compose --env-file .env up --build            # whole stack; the Gateway is on http://localhost:8080
+
+The Gateway learns the user routes from the service but keeps them private until you open them (needs the `user`
+kind registered, i.e. the service already healthy in the discoverer):
+
+    GATEWAY_ADMIN_URL=http://localhost:8080 sh user/scripts/register-gateway-routes.sh
+
+Then the API is `http://localhost:8080/user/api/v1/...` (register, login, `users/me`, `users` search for organizers).
+Warning: the Gateway admin API (`/admin/...`) has no authentication and shares that port.
 
 Run the tests (needs JDK 21; `*IT` need Docker):
 
