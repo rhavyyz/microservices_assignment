@@ -91,6 +91,9 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: ${CERTIFICATES_DATABASE_URL:-}
+      CERTIFICATE_STORAGE_DIR: /var/lib/certificates
+    volumes:
+      - certificates-pdf-data:/var/lib/certificates
     networks: [backbone, certificates-net]
   events:
     <<: *app

@@ -1,3 +1,4 @@
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -8,6 +9,7 @@ class Settings(BaseSettings):
     service_discoverer_url: str = "http://service-discoverer:8080"
     service_host: str | None = None
     port: int = 8080
+    certificate_storage_dir: str = "certificate_files"
 
 
 settings = Settings()

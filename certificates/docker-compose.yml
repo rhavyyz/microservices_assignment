@@ -24,3 +24,4 @@ networks:
 
 volumes:
   certificates-db-data:
+  certificates-pdf-data:
