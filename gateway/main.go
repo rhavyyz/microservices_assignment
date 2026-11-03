@@ -37,6 +37,10 @@ func main() {
 	if err != nil || defaultMax < 0 {
 		log.Fatal("DEFAULT_MAX_PER_MIN must be an integer >= 0")
 	}
+	pushParts, err := strconv.Atoi(env("NOTIFICATIONS_PUSH_PARTITIONS", "6"))
+	if err != nil || pushParts < 1 {
+		log.Fatal("NOTIFICATIONS_PUSH_PARTITIONS must be an integer >= 1")
+	}
 	proxies, err := ParseTrustedProxies(env("TRUSTED_PROXIES", ""))
 	if err != nil {
 		log.Fatalf("TRUSTED_PROXIES must be a comma-separated list of IPs/CIDRs: %v", err)
@@ -71,7 +75,7 @@ func main() {
 	go keys.Run(ctx, jwksEvery) // never blocks the server start; the keys are also fetched lazily
 
 	hub := NewHub()
-	push := NewPushConsumer(env("KAFKA_BROKERS", "kafka:9092"), env("NOTIFICATIONS_PUSH_TOPIC", "notifications-push"), hub)
+	push := NewPushConsumer(env("KAFKA_BROKERS", "kafka:9092"), env("NOTIFICATIONS_PUSH_TOPIC", "notifications-push"), pushParts, hub)
 	go push.Run(ctx) // never blocks the server start
 
 	mux := newMux(store, eps, hub, verifier, NewPipeline(eps, verifier, limiter, proxies, NewProxy(disc)))

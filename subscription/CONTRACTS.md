@@ -64,7 +64,9 @@ administrativa; o papel `ORGANIZER` sozinho não concede acesso a todos os event
 | `notifications` | Inscrições / outros | Notificações | user_id |
 | `subscription.dlq` | Inscrições | Operação/manual | tópico:partição |
 
-Provisionar os tópicos antes da execução se auto-create estiver desabilitado no broker.
+Na inicialização, Inscrições cria os seis tópicos acima, se ausentes, com
+`SUBSCRIPTION_TOPIC_PARTITIONS` partições (padrão 6) e nunca altera tópicos existentes; se o Kafka
+estiver indisponível, repete em segundo plano até conseguir, antes de consumir ou publicar.
 Cada serviço consumidor usa grupo próprio; Inscrições usa `subscription-service`.
 Não alterar partições durante processamento que dependa da ordenação da chave sem planejar
 a migração. A correção financeira também usa versão, não apenas a ordem Kafka.

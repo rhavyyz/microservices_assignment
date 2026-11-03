@@ -122,6 +122,13 @@ recurso alheio retorna 404, acesso administrativo negado retorna 403.
 
 ## Mensageria e recuperação
 
+Na inicialização, em segundo plano (a API nunca depende do Kafka para subir), o serviço cria, se
+ausentes, todos os tópicos que usa — `payments.events`, `payments.commands`, `events.events`,
+`subscription.events`, `notifications` e `subscription.dlq` — com `SUBSCRIPTION_TOPIC_PARTITIONS`
+partições (padrão 6). Tópicos existentes nunca são alterados. Se o Kafka estiver fora, a criação é
+repetida com espera crescente (2 s a 30 s); publicador e consumer só iniciam depois dela. O consumer
+verifica novos tópicos a cada 10 s.
+
 O consumer confirma offsets apenas depois do commit. Erros transitórios recriam o consumer,
 retomando do offset confirmado. Mensagens inválidas são referenciadas em uma DLQ via outbox;
 não se copiam dados pessoais para logs/DLQ. A DLQ requer operação humana: corrigir e republicar

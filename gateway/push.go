@@ -16,6 +16,8 @@ import (
 const (
 	pushMetadataMaxAge = 30 * time.Second // how soon partitions added to the topic (or the topic itself) are noticed
 	pushLogEvery       = 30 * time.Second // minimum gap between two identical log lines of the consumer
+	pushEnsureMinWait  = time.Second      // first delay before retrying to ensure the topic
+	pushEnsureMaxWait  = 30 * time.Second // cap of the exponential backoff between attempts
 )
 
 // pushIn is the JSON value of a record of the notifications push topic (see the notifications service).
@@ -98,12 +100,16 @@ func (l *logEvery) Printf(format string, args ...any) {
 type PushConsumer struct {
 	brokers []string
 	topic   string
+	parts   int
 	hub     *Hub
 	errLog  *logEvery
 	badLog  *logEvery
+
+	ensure     func(ctx context.Context, cl *kgo.Client, topic string, partitions int) error // EnsureTopic; replaced in tests
+	ensureWait time.Duration                                                                 // first retry delay; doubles up to pushEnsureMaxWait
 }
 
-func NewPushConsumer(brokers, topic string, hub *Hub) *PushConsumer {
+func NewPushConsumer(brokers, topic string, partitions int, hub *Hub) *PushConsumer {
 	var bs []string
 	for _, b := range strings.Split(brokers, ",") {
 		if b = strings.TrimSpace(b); b != "" {
@@ -111,7 +117,8 @@ func NewPushConsumer(brokers, topic string, hub *Hub) *PushConsumer {
 		}
 	}
 	return &PushConsumer{
-		brokers: bs, topic: topic, hub: hub,
+		brokers: bs, topic: topic, parts: partitions, hub: hub,
+		ensure: EnsureTopic, ensureWait: pushEnsureMinWait,
 		errLog: &logEvery{every: pushLogEvery, now: time.Now},
 		badLog: &logEvery{every: pushLogEvery, now: time.Now},
 	}
@@ -137,8 +144,8 @@ func (c *PushConsumer) Handle(value []byte) {
 // same configured offset, whether at startup or after a metadata refresh, so AtEnd would skip what is produced to a
 // new partition before it is noticed. AfterMilli(start time) is the documented answer: partitions that already have
 // data start at their end (nothing older than now is replayed), partitions added later start at their beginning.
-// A topic that does not exist yet is not an error either: the metadata refresh (every pushMetadataMaxAge) keeps
-// looking for it and consumption starts once it is created.
+// Before polling, the topic is created if absent (never altered if it exists), retrying with exponential backoff
+// while Kafka is unreachable; the wait happens here, in the goroutine, so the gateway start is never held back.
 func (c *PushConsumer) Run(ctx context.Context) {
 	cl, err := kgo.NewClient(
 		kgo.SeedBrokers(c.brokers...),
@@ -151,6 +158,25 @@ func (c *PushConsumer) Run(ctx context.Context) {
 		return
 	}
 	defer cl.Close()
+
+	wait := c.ensureWait
+	for {
+		err := c.ensure(ctx, cl, c.topic, c.parts)
+		if err == nil {
+			break
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		c.errLog.Printf("ensuring push topic %s: %v", c.topic, err)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+		wait = min(wait*2, pushEnsureMaxWait)
+	}
+	log.Printf("push topic %s ready", c.topic)
 	log.Printf("consuming push topic %s", c.topic)
 
 	for ctx.Err() == nil {

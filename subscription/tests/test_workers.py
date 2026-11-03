@@ -34,6 +34,7 @@ def test_consumer_commits_only_after_business_commit(service, db, settings, monk
     reg = register(service, activity(amount=100))
     event = payment(service, reg)
     worker = Workers(db, service, None, settings)
+    worker.topics_ready.set()
     msg = Message(settings.payment_topic, event.model_dump_json().encode())
 
     class Consumer:
@@ -59,6 +60,7 @@ def test_consumer_commits_only_after_business_commit(service, db, settings, monk
 
 def test_database_failure_never_commits_offset(service, db, settings, monkeypatch):
     worker = Workers(db, service, None, settings)
+    worker.topics_ready.set()
     committed = []
 
     class Consumer:

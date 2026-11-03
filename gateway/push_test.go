@@ -11,7 +11,7 @@ func TestPushHandleDeliversFrame(t *testing.T) {
 	h := NewHub()
 	c := newClient("alice", 4)
 	h.Register(c)
-	pc := NewPushConsumer("kafka:9092", "t", h)
+	pc := NewPushConsumer("kafka:9092", "t", 1, h)
 	pc.Handle([]byte(`{"id":"n1","user_id":"alice","message":"hi","redirect_url":null,"payload":{"a":1},"payload_type":"x","status":"DEFAULT","created_at":"2026-10-31T04:49:27.555Z"}`))
 	if len(c.send) != 1 {
 		t.Fatalf("queued frames: %d", len(c.send))
@@ -35,7 +35,7 @@ func TestPushHandleNullsAndAbsent(t *testing.T) {
 	h := NewHub()
 	c := newClient("alice", 4)
 	h.Register(c)
-	NewPushConsumer("kafka:9092", "t", h).Handle([]byte(`{"id":"n1","user_id":" alice ","message":"hi","status":"DEFAULT","created_at":"c"}`))
+	NewPushConsumer("kafka:9092", "t", 1, h).Handle([]byte(`{"id":"n1","user_id":" alice ","message":"hi","status":"DEFAULT","created_at":"c"}`))
 	raw := string(<-c.send)
 	for _, f := range []string{`"redirect_url":null`, `"payload":null`, `"payload_type":null`} {
 		if !strings.Contains(raw, f) {
@@ -48,7 +48,7 @@ func TestPushHandleSkipsInvalid(t *testing.T) {
 	h := NewHub()
 	c := newClient("alice", 4)
 	h.Register(c)
-	pc := NewPushConsumer("kafka:9092", "t", h)
+	pc := NewPushConsumer("kafka:9092", "t", 1, h)
 	for _, v := range []string{`not json`, ``, `{"id":"n1","message":"m"}`, `{"id":"n1","user_id":"  ","message":"m"}`, `{"user_id":"alice","message":"m"}`} {
 		pc.Handle([]byte(v))
 	}

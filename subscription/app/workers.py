@@ -8,6 +8,7 @@ from confluent_kafka import Consumer, Producer
 from pydantic import ValidationError
 
 from .contracts import ActivityEvent, DomainError, PaymentEvent
+from .topics import ensure_topics
 
 log = logging.getLogger(__name__)
 
@@ -16,10 +17,11 @@ class Workers:
     def __init__(self, db, service, services, settings):
         self.db, self.service, self.services, self.settings = db, service, services, settings
         self.stop = threading.Event()
+        self.topics_ready = threading.Event()
         self.threads = []
 
     def start(self):
-        for target in (self.publish, self.consume, self.maintain, self.reconcile, self.register):
+        for target in (self.ensure, self.publish, self.consume, self.maintain, self.reconcile, self.register):
             thread = threading.Thread(target=target, name=target.__name__, daemon=True)
             thread.start()
             self.threads.append(thread)
@@ -28,6 +30,31 @@ class Workers:
         self.stop.set()
         for thread in self.threads:
             thread.join(timeout=15)
+
+    def topic_names(self):
+        s = self.settings
+        return [s.payment_topic, s.payment_commands, s.events_topic, s.domain_topic, s.notifications_topic, s.dlq_topic]
+
+    def ensure(self):
+        # Tópicos novos só são vistos pelo librdkafka após o refresh de metadados; criá-los antes evita a espera.
+        delay = 2
+        while not self.stop.is_set():
+            try:
+                ensure_topics(self.settings.brokers, self.topic_names(), self.settings.kafka_topic_partitions)
+            except Exception:
+                log.warning("kafka_topics_ensure_failed")
+                self.stop.wait(delay)
+                delay = min(delay * 2, 30)
+                continue
+            log.info("kafka_topics_ready")
+            self.topics_ready.set()
+            return
+
+    def wait_topics(self):
+        while not self.topics_ready.is_set():
+            if self.stop.wait(0.2):
+                return False
+        return True
 
     def register(self):
         # O registry é volátil; repetir registro recupera reinícios do discoverer.
@@ -74,6 +101,8 @@ class Workers:
                 conn.execute("SELECT pg_advisory_unlock(731906422)")
 
     def publish(self):
+        if not self.wait_topics():
+            return
         producer = Producer(
             {
                 "bootstrap.servers": self.settings.brokers,
@@ -124,7 +153,10 @@ class Workers:
             "enable.auto.commit": False,
             "enable.auto.offset.store": False,
             "max.poll.interval.ms": 300000,
+            "topic.metadata.refresh.interval.ms": 10000,
         }
+        if not self.wait_topics():
+            return
         while not self.stop.is_set():
             consumer = Consumer(config)
             try:
