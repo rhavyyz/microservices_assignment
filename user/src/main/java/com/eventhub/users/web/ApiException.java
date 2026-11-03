@@ -47,6 +47,11 @@ public class ApiException extends RuntimeException {
                 "Você não tem permissão para esta operação.", null);
     }
 
+    public static ApiException forbidden() {
+        return new ApiException(HttpStatus.FORBIDDEN, "ACCESS_DENIED", "Acesso negado",
+                "Você não tem permissão para esta operação.", null);
+    }
+
     public static ApiException userNotFound() {
         return new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Usuário não encontrado",
                 "O usuário da sessão não existe mais.", null);

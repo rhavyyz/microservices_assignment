@@ -39,6 +39,7 @@
 | POST | `/user/api/v1/auth/login` | `/api/v1/auth/login` | sim | 10/min/IP |
 | GET | `/user/api/v1/users/me` | `/api/v1/users/me` | sim | 120/min/IP |
 | PATCH | `/user/api/v1/users/me` | `/api/v1/users/me` | sim | 30/min/IP |
+| GET | `/user/api/v1/users?id=&email=&name=&page=&size=` | `/api/v1/users` | sim | 60/min/IP (somente `ORGANIZER`) |
 | GET | `/.well-known/jwks.json` | — | **não** (servido direto via discoverer) | — |
 | GET | `/healthcheck`, `/openapi.json` | — | **não** (internos) | — |
 
@@ -63,6 +64,7 @@
 | P14 | O Gateway **reflete qualquer `Origin` com `Allow-Credentials: true`**. Hoje é inofensivo (Bearer em memória, sem cookies), mas vira falha se algum serviço passar a usar cookies. | Restringir às origens do frontend por ambiente. | Gateway | Nenhuma em Usuários. |
 | P15 | O Gateway define `X-Request-Id` e o proxy copia o do serviço: o cabeçalho pode chegar duplicado (`a, a`). | Frontend usa o `traceId` do corpo de erro. | Gateway | Cosmético. |
 | P16 | Sem `USERS_DB_PASSWORD` no `.env`, o `user-db` não inicia (de propósito, sem senha padrão) e o `user` fica aguardando; os demais serviços não são afetados. | Copiar `.env.example` para `.env`. | Equipe | Documentado no README. |
+| P18 | **Busca de usuários** (`GET /api/v1/users`) expõe nome e e-mail de terceiros. Padrão adotado: somente `ORGANIZER`, ao menos um filtro, paginada (máx. 50), sem hash/senha, filtros fora dos logs. Um organizador enxerga **todos** os usuários (não só os inscritos em seus eventos). | Se o requisito for "só inscritos nos meus eventos", o filtro deve ficar com Inscrições; ou Usuários expõe consulta interna por lista de ids. | Equipe/docente | Decidir antes de usar em produção. |
 | P17 | Compose raiz: entrada `user:` ganhou `build.additional_contexts`, `depends_on`, `environment` e `volumes` (padrão idêntico ao de `notifications`). | — | Equipe | Revisar o diff. |
 
 ## 5. Dependências por consumidor

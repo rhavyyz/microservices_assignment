@@ -19,7 +19,8 @@ Outros serviços não acessam essas tabelas: usam o JWT e a API.
 3. Senha: 10–72 caracteres e **no máximo 72 bytes UTF-8** (limite do BCrypt; recusada em vez de truncada). Hash BCrypt custo 12.
 4. Login: falhas (e-mail inexistente, senha errada, conta inativa) retornam a mesma resposta; um hash descartável equaliza o tempo quando o e-mail não existe.
 5. `/users/me` usa o `sub` do token; não há `{id}` em nenhuma rota. Só `name` é editável.
-6. `ORGANIZER` só existe via seed de desenvolvimento, desativado por padrão (ADR-002). `ORGANIZER` não dá acesso a todos os eventos: o serviço de Eventos valida a responsabilidade (RN07).
+6. Busca de usuários (`GET /api/v1/users`): somente `ORGANIZER` (conferido no token **e** no banco), ao menos um filtro entre `id` (exato), `email` e `name` (contém, sem diferenciar maiúsculas, `%`/`_` literais), AND entre filtros, paginação obrigatória (máx. 50), ordenação por nome, sem hash de senha. É a única rota que lê dados de terceiros (ver P18).
+7. `ORGANIZER` só existe via seed de desenvolvimento, desativado por padrão (ADR-002). `ORGANIZER` não dá acesso a todos os eventos: o serviço de Eventos valida a responsabilidade (RN07).
 
 ## Segurança
 JWT RS256 com claims `sub`, `roles`, `iss`, `iat`, `exp`, `jti`; validade `USERS_JWT_TTL_SECONDS` (padrão 1800). Chave privada em arquivo montado (mesma em todas as réplicas), chave pública em `/.well-known/jwks.json`. Validação recusa `alg=none`, chave desconhecida, emissor diferente e token expirado. API stateless (sem cookies), logo CSRF desativado. Respostas e logs nunca trazem hash, senha, token ou stack trace.

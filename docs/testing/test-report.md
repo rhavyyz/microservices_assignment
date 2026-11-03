@@ -24,6 +24,9 @@ Na duplicidade de e-mail o Hibernate registrava em WARN `Key (email)=(...) alrea
 - `SpringDoc /openapi.json endpoint is enabled by default`: esperado, pois o Gateway precisa ler esse endpoint; ele não é aberto no Gateway público (nasce privado).
 - Avisos do Mockito/ByteBuddy (agente dinâmico): inofensivos hoje; podem exigir configuração em JDKs futuros.
 
+## Execução 3 — busca de usuários (`GET /api/v1/users`) — **pendente**
+Código e testes escritos (`UserServiceTest` +3, `UserSpecificationsTest`, `UserSearchIT` com 8 casos, `InfraEndpointsIT` e `AuthFlowIT` ajustados), mas **ainda não executados**. Registrar aqui o resultado do próximo `./mvnw verify`. Pontos de atenção na primeira execução: API de `Specification` do Spring Data JPA 4.x, `like(..., escape)` no PostgreSQL e o tratamento de `MethodArgumentTypeMismatchException`.
+
 ## Execução 1 — sandbox sem Maven Central (2026-10-31, antes da execução 2)
 Verificações parciais, todas aprovadas: migração e 11 cenários de constraint no PostgreSQL 16 (`src/test/sql/constraints.sql`), `PemKeys` com chaves do `openssl` (5 cenários), OpenAPI estático válido (`swagger-parser`), YAML dos composes e scripts. Substituída pela execução 2, que cobre compilação e testes completos.
 

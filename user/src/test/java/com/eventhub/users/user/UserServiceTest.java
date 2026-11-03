@@ -11,6 +11,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.EnumSet;
+import java.util.UUID;
 import java.util.Optional;
 
 import com.eventhub.users.audit.AuditLogger;
@@ -136,6 +137,52 @@ class UserServiceTest {
             assertThat(e.getMessage()).isEqualTo(a.getMessage());
             assertThat(e.status().value()).isEqualTo(401);
         }
+    }
+
+    // ---------- busca de usuários ----------
+
+    private User requester(Role... roles) {
+        User u = User.create("Solicitante", "solicitante@example.com", "$2a$04$x", EnumSet.copyOf(java.util.List.of(roles)), NOW);
+        ReflectionTestUtils.setField(u, "id", UUID.randomUUID());
+        when(repo.findById(u.getId())).thenReturn(Optional.of(u));
+        return u;
+    }
+
+    @Test
+    void searchIsForbiddenToParticipantsEvenWithValidFilters() {
+        User participant = requester(Role.PARTICIPANT);
+        assertThatThrownBy(() -> service.search(participant.getId(), null, null, "maria", 0, 20))
+                .satisfies(t -> assertApi(t, "ACCESS_DENIED"));
+        verify(repo, never()).findAll(any(org.springframework.data.jpa.domain.Specification.class),
+                any(org.springframework.data.domain.Pageable.class));
+    }
+
+    @Test
+    void searchValidatesFiltersAndPaging() {
+        User org = requester(Role.ORGANIZER);
+        UUID id = org.getId();
+        assertThatThrownBy(() -> service.search(id, null, null, null, 0, 20))
+                .satisfies(t -> assertApi(t, "VALIDATION_ERROR"));          // sem filtro
+        assertThatThrownBy(() -> service.search(id, null, "  ", " ", 0, 20))
+                .satisfies(t -> assertApi(t, "VALIDATION_ERROR"));          // filtros em branco
+        assertThatThrownBy(() -> service.search(id, null, "ab", null, 0, 20))
+                .satisfies(t -> assertApi(t, "VALIDATION_ERROR"));          // e-mail curto
+        assertThatThrownBy(() -> service.search(id, null, null, "a", 0, 20))
+                .satisfies(t -> assertApi(t, "VALIDATION_ERROR"));          // nome curto
+        assertThatThrownBy(() -> service.search(id, null, null, "maria", -1, 20))
+                .satisfies(t -> assertApi(t, "VALIDATION_ERROR"));          // página negativa
+        assertThatThrownBy(() -> service.search(id, null, null, "maria", 0, 0))
+                .satisfies(t -> assertApi(t, "VALIDATION_ERROR"));          // tamanho 0
+        assertThatThrownBy(() -> service.search(id, null, null, "maria", 0, 51))
+                .satisfies(t -> assertApi(t, "VALIDATION_ERROR"));          // acima do máximo
+    }
+
+    @Test
+    void searchRejectsInactiveRequester() {
+        User org = requester(Role.ORGANIZER);
+        ReflectionTestUtils.setField(org, "status", UserStatus.INACTIVE);
+        assertThatThrownBy(() -> service.search(org.getId(), null, null, "maria", 0, 20))
+                .satisfies(t -> assertApi(t, "ACCESS_DENIED"));
     }
 
     private static ApiException catchApi(Runnable r) {
