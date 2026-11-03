@@ -67,6 +67,22 @@
 | P18 | **Busca de usuários** (`GET /api/v1/users`) expõe nome e e-mail de terceiros. Padrão adotado: somente `ORGANIZER`, ao menos um filtro, paginada (máx. 50), sem hash/senha, filtros fora dos logs. Um organizador enxerga **todos** os usuários (não só os inscritos em seus eventos). | Se o requisito for "só inscritos nos meus eventos", o filtro deve ficar com Inscrições; ou Usuários expõe consulta interna por lista de ids. | Equipe/docente | Decidir antes de usar em produção. |
 | P17 | Compose raiz: entrada `user:` ganhou `build.additional_contexts`, `depends_on`, `environment` e `volumes` (padrão idêntico ao de `notifications`). | — | Equipe | Revisar o diff. |
 
+## 4b. Tópicos Kafka (Aprovado — ADR-005)
+
+Quem usa o tópico garante que ele existe antes de consumir ou publicar (cria se ausente; nunca altera um existente; 6 partições por padrão).
+
+| Tópico | Produz | Consome | Garantem a criação (hoje) |
+|---|---|---|---|
+| `notifications` | Inscrições (outros serviços) | Notificações | Notificações, Inscrições |
+| `notifications-push` | Notificações | Gateway (`/ws`) | Notificações, Gateway |
+| `payments.commands` | Inscrições | Pagamentos | Inscrições |
+| `payments.events` | Pagamentos | Inscrições | Inscrições |
+| `events.events` | Eventos | Inscrições | Inscrições |
+| `subscription.events` | Inscrições | Certificados / Relatórios | Inscrições |
+| `subscription.dlq` | Inscrições | Operação (manual) | Inscrições |
+
+Eventos, Pagamentos, Certificados e Relatórios ainda não têm código: ao passarem a usar Kafka devem criar os tópicos que produzem ou consomem do mesmo modo.
+
 ## 5. Dependências por consumidor
 
 | Consumidor | O que recebe de Usuários | Estado |
