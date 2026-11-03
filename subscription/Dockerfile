@@ -1,5 +1,10 @@
-# PLACEHOLDER Dockerfile for the subscription service.
-# The subscription developer must replace this with the real stack (base image, deps, entrypoint).
-# It only idles so the container stays up in docker compose.
-FROM alpine:3.20
-CMD ["sleep", "infinity"]
+FROM python:3.13-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+WORKDIR /app
+COPY pyproject.toml requirements.lock ./
+RUN pip install --no-cache-dir -r requirements.lock
+COPY app ./app
+RUN useradd --create-home --uid 10001 subscription
+USER subscription
+EXPOSE 8080
+CMD ["python", "-m", "app"]

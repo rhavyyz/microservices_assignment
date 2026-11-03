@@ -31,7 +31,7 @@ O repositório define um `service-discoverer` (Go) com libs cliente e exige `GET
 - **Re-registro:** o registry do discoverer é em memória e descarta hosts sem saúde; a instância chama `register` a cada 30 s (idempotente), sem bloquear o início.
 
 ## Atualização: o Gateway autentica o JWT (2026-11-01)
-> Estado: **implementado na branch `feat/gateway-jwt-auth`, ainda não mesclado no `main`.** Resolve P3 em `contracts-with-team.md`.
+> Estado: **implementado e mesclado no `main`** (PR #7). Resolve P3 em `contracts-with-team.md`.
 
 ### Contexto
 O Gateway só conferia a presença de `X-User-Id`, um cabeçalho controlado pelo cliente. Qualquer um podia se passar por outro usuário no rate limit, nos serviços que confiam no cabeçalho e no `/ws` (que ainda aceitava `?user_id=`).
@@ -44,7 +44,7 @@ O Gateway só conferia a presença de `X-User-Id`, um cabeçalho controlado pelo
 5. **Resposta por tipo de rota:**
    - `requireAuth=true`: sem token ou token inválido → `401` com `WWW-Authenticate: Bearer`; sem chave disponível (JWKS fora do ar e nada em cache) → `503`.
    - `requireAuth=false`: token ausente ou inválido não rejeita; a requisição segue **anônima** (sem cabeçalhos de identidade) e o serviço decide. Assim login e cadastro funcionam mesmo com um token vencido no navegador.
-6. **`Authorization` é repassado sem alteração**, porque Usuários continua validando o próprio JWT (defesa em profundidade; ver "Não decidido").
+6. **`Authorization` é repassado sem alteração**, porque Usuários continua validando o próprio JWT (defesa em profundidade; ver "Não decidido") e porque alguns serviços o reencaminham (Inscrições → Eventos).
 7. **Rate limit `user_or_ip`** passa a usar a identidade verificada: um `X-User-Id` forjado não escolhe o balde.
 8. **`/ws`** segue as mesmas regras: o token vem em `Authorization: Bearer` ou, para navegadores (que não definem cabeçalhos em `new WebSocket(...)`), em `?access_token=`; o cabeçalho tem precedência. O `?user_id=` deixou de existir; a identidade do hub é somente o `sub` verificado. Falhas respondem `401`/`503` **antes** do upgrade.
 
@@ -66,3 +66,33 @@ O Gateway só conferia a presença de `X-User-Id`, um cabeçalho controlado pelo
 - Se `requireAuth` deve passar a `true` em `GET/PATCH /user/api/v1/users/me`.
 - Rotação de chaves em Usuários (publicar duas chaves no JWKS) e claim `aud`.
 - Refresh token e logout.
+
+## Atualização: Inscrições confia nos cabeçalhos do Gateway (2026-11-03)
+> Estado: **implementado na branch `feat/subscription-gateway-identity`, ainda não mesclado.** Vale para serviços que não emitem tokens; Usuários não muda e o Gateway não muda.
+
+### Contexto
+Inscrições validava o JWT por conta própria (PyJWT + JWKS). Medido em teste de integração com a pilha real:
+- **Dependência do discoverer a cada requisição.** Sem `USERS_JWKS_URL`, o serviço pergunta ao discoverer onde está Usuários antes de verificar cada token. Com o discoverer pausado, um token válido recebeu `503` após 5 s (contra 14 ms normalmente), embora a chave estivesse em cache.
+- **Rotação de chave.** A biblioteca não rebusca o JWKS ao ver um `kid` desconhecido; tokens assinados com a chave nova são recusados até o cache expirar (300 s).
+Verificar de novo o que o Gateway já verificou duplica a lógica e cria dois pontos de divergência (relógio, algoritmo, chaves).
+
+### Decisão
+1. **Modelo de rede fechada.** O Gateway é a única porta publicada no host; os demais serviços não publicam portas e só são alcançáveis de dentro da rede. Quem não faz parte da rede só fala com o sistema pelo Gateway.
+2. Serviços atrás do Gateway que **não emitem tokens** confiam em `X-User-Id` (UUID, obrigatório; ausente ou inválido → `401 UNAUTHENTICATED`) e `X-User-Roles` (separadas por vírgula). O Gateway já descarta os valores enviados pelo cliente e define esses cabeçalhos a partir do JWT verificado (decisões 1 e 2 acima). Usuários continua validando o próprio JWT por ser o emissor.
+3. **Propagação de identidade nas chamadas de saída.** Nas chamadas feitas em nome de um usuário (ex.: Inscrições → Eventos para ler a atividade e checar `permissions/me`), Inscrições envia `X-User-Id`, `X-User-Roles` (quando houver) e `X-Request-Id` (rastreio) e continua repassando o `Authorization`, **sem verificá-lo**. Chamadas em segundo plano (reação a `events.events`, reconciliação de pagamentos) não têm usuário e não enviam identidade. Não há segredo entre serviços: o `SUBSCRIPTION_SERVICE_TOKEN`/`X-Service-Token` previsto no PR #8 foi removido, e os endpoints `/internal/...` dependem do isolamento de rede.
+4. As rotas de Inscrições passam a ser registradas no Gateway com `requireAuth=true` e `rateLimitBy=user_or_ip` (o Gateway verifica o token; o identificador agora é confiável).
+
+### Alternativas
+- **Segredo compartilhado Gateway → serviços** (`X-Gateway-Token`): avaliado e **descartado** pelo time. Protegeria contra um contêiner interno forjando `X-User-Id`, mas a decisão é tratar a rede interna como confiável e proteger a borda.
+- **Manter a validação local e só eliminar a ida ao discoverer** (definir `USERS_JWKS_URL` ou guardar o host de Usuários em cache): resolve a falha do primeiro item do contexto, mas não a rotação de chave nem a duplicação. Continua válida como contingência.
+- **mTLS entre Gateway e serviços:** mais forte, porém mais trabalho; fora do escopo desta fase.
+- **`X-Service-Token` nas chamadas de Inscrições a Eventos/Pagamentos:** removido pelo mesmo motivo do `X-Gateway-Token` (rede interna confiável).
+
+### Consequências
+- **Quem está dentro da rede é confiável.** Qualquer contêiner na rede `backbone` pode chamar Inscrições diretamente com um `X-User-Id` arbitrário e se passar por qualquer usuário. Isso é aceito pelo modelo; vale enquanto só serviços da própria equipe estiverem na rede e nenhum serviço (exceto o Gateway) publicar porta no host.
+- Qualquer nova porta publicada em outro serviço (por exemplo `ports:` em um compose) **anula** essa proteção para ele e precisa de revisão.
+- Os testes de token forjado/expirado de Inscrições saem do serviço; essa responsabilidade é do Gateway (`gateway/auth_test.go`).
+
+### Não decidido
+- Se o `Authorization` deve continuar sendo reencaminhado ao Eventos, agora que ele também recebe `X-User-Id`/`X-User-Roles`.
+- Se os demais serviços (Eventos, Pagamentos, Notificações) adotam o mesmo modelo de cabeçalhos.

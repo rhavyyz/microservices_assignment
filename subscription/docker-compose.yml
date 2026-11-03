@@ -1,17 +1,21 @@
-# Shared architecture of the subscription service (its own backing infra: DB, cache, queue...).
-# Shared by all horizontally scaled copies of the app; the app container is defined in the root compose file.
-# Included from the root docker-compose.yml via `include:`. Keep names prefixed with "subscription-" to stay unique.
-# services:
-#   subscription-db:
-#     image: postgres:16-alpine
-#     environment:
-#       POSTGRES_PASSWORD: ${SUBSCRIPTION_DB_PASSWORD:-change-me}
-#     volumes:
-#       - subscription-db-data:/var/lib/postgresql/data
-#     networks: [subscription-net]
-
+# Infra privada incluída pelo compose raiz. Nenhuma porta do banco é publicada.
+services:
+  subscription-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: subscription
+      POSTGRES_USER: subscription
+      # Sem valor padrão: sem esta variável o subscription-db não inicia, em vez de rodar com senha conhecida.
+      POSTGRES_PASSWORD: ${SUBSCRIPTION_DB_PASSWORD:-}
+    volumes:
+      - subscription-db-data:/var/lib/postgresql/data
+    networks: [subscription-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U subscription -d subscription"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 networks:
   subscription-net:
-
-# volumes:
-#   subscription-db-data:
+volumes:
+  subscription-db-data:
