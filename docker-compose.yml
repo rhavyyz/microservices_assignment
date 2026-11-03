@@ -82,7 +82,15 @@ services:
     <<: *app
     deploy:
       replicas: 1
-    build: ./certificates
+    build:
+      context: ./certificates
+      additional_contexts:
+        discovery: ./service-discoverer/Libs/python
+    depends_on:
+      certificates-db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${CERTIFICATES_DATABASE_URL:-}
     networks: [backbone, certificates-net]
   events:
     <<: *app
