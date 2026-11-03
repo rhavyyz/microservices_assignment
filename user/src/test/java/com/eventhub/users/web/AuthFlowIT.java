@@ -234,6 +234,15 @@ class AuthFlowIT extends PostgresIT {
     }
 
     @Test
+    void timestampsAreIdenticalInRegisterAndProfileResponses() {
+        String email = uniqueEmail();
+        Http.Result created = register(email);
+        Http.Result me = http().get("/api/v1/users/me", loginToken(email));
+        assertThat(me.<String>json("$.createdAt")).isEqualTo(created.<String>json("$.createdAt"));
+        assertThat(me.<String>json("$.updatedAt")).isEqualTo(created.<String>json("$.updatedAt"));
+    }
+
+    @Test
     void patchUpdatesOnlyNameAndRejectsEverythingElse() {
         String email = uniqueEmail();
         register(email);
