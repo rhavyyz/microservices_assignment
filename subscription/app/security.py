@@ -1,11 +1,7 @@
-"""Validação RS256 independente do X-User-Id não verificado pelo gateway atual."""
+"""Identidade por cabeçalhos confiáveis: o gateway verifica o JWT e injeta X-User-Id/X-User-Roles."""
 
-import threading
 from dataclasses import dataclass
 from uuid import UUID
-
-import httpx
-import jwt
 
 from .contracts import DomainError
 
@@ -14,37 +10,32 @@ from .contracts import DomainError
 class Principal:
     user_id: str
     roles: tuple[str, ...]
-    bearer: str
+    bearer: str | None
+
+    def identity_headers(self):
+        """Cabeçalhos de identidade para chamadas feitas em nome deste usuário."""
+        headers = {"X-User-Id": self.user_id}
+        if self.roles:
+            headers["X-User-Roles"] = ",".join(self.roles)
+        # Bearer repassado sem verificação (o gateway já o verificou); Eventos o usa nas próprias checagens.
+        if self.bearer:
+            headers["Authorization"] = "Bearer " + self.bearer
+        return headers
 
 
 class Authenticator:
-    def __init__(self, settings, services):
-        self.settings, self.services = settings, services
-        self.clients = {}
-        self.lock = threading.Lock()
+    def __init__(self, settings):
+        self.settings = settings
 
-    def authenticate(self, authorization):
-        if not authorization or not authorization.startswith("Bearer "):
-            raise DomainError(401, "INVALID_TOKEN")
-        token = authorization[7:]
+    def authenticate(self, headers):
+        # Código único: nunca revelar qual verificação falhou.
         try:
-            # A URL é configuração confiável ou descoberta, nunca vem do cabeçalho JWT.
-            url = self.settings.jwks_url or self.services.resolve("user") + "/.well-known/jwks.json"
-            with self.lock:
-                client = self.clients.setdefault(url, jwt.PyJWKClient(url, timeout=5, lifespan=300))
-            key = client.get_signing_key_from_jwt(token).key
-            claims = jwt.decode(
-                token,
-                key,
-                algorithms=["RS256"],
-                issuer=self.settings.jwt_issuer,
-                options={"require": ["sub", "exp", "iat", "iss"], "verify_aud": False},
-            )
-            roles = claims.get("roles", [])
-            if not isinstance(roles, list) or not all(isinstance(role, str) for role in roles):
-                raise ValueError("roles inválido")
-            return Principal(str(UUID(claims["sub"])), tuple(roles), token)
-        except (jwt.PyJWKClientConnectionError, httpx.HTTPError) as exc:
-            raise DomainError(503, "IDENTITY_UNAVAILABLE") from exc
-        except (jwt.PyJWTError, ValueError, KeyError, TypeError) as exc:
-            raise DomainError(401, "INVALID_TOKEN") from exc
+            user_id = str(UUID(headers.get("X-User-Id", "").strip()))
+        except ValueError as exc:
+            raise DomainError(401, "UNAUTHENTICATED") from exc
+        roles = tuple(r for r in (part.strip() for part in headers.get("X-User-Roles", "").split(",")) if r)
+        # O Bearer NÃO é verificado aqui (o gateway já o fez); é só repassado a Eventos,
+        # que o usa nas próprias checagens de permissão.
+        authorization = headers.get("Authorization", "")
+        bearer = authorization[7:].strip() or None if authorization.startswith("Bearer ") else None
+        return Principal(user_id, roles, bearer)

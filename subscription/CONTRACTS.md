@@ -10,12 +10,13 @@ monorepo. Usuários, Gateway, Discoverer e o formato de Notificações seguem o 
   com `{"kind":"subscription","host":"host:8080"}`.
 - Resolução: `GET /consult?kind=events|payments|user` → `{"host":"host:8080"}`.
 - HTTP externo tem timeout de 5 segundos, sem retry de mutações HTTP.
-- JWT: `Authorization: Bearer ...`, RS256, `iss=eventhub-users` (configurável), `sub` UUID,
-  `exp`, `iat`; `roles` é uma lista. Não há audience no contrato atual de Usuários.
-- JWKS: `USERS_JWKS_URL` ou descoberta de `user` + `/.well-known/jwks.json`.
-- Chamadas em nome de usuário encaminham seu Bearer; chamadas internas podem enviar
-  `X-Service-Token` configurado por `SUBSCRIPTION_SERVICE_TOKEN`. Eventos/Pagamentos devem
-  validar essa identidade interna e restringir os endpoints internos.
+- Identidade: o gateway verifica o JWT e envia `X-User-Id` (UUID do `sub`) e `X-User-Roles`
+  (separados por vírgula; ausente sem papéis). Inscrições não valida JWT e só aceita a
+  identidade desses cabeçalhos (401 `UNAUTHENTICATED` se `X-User-Id` faltar ou for inválido).
+- Chamadas a Eventos feitas em nome de um usuário enviam `X-User-Id`, `X-User-Roles` (somente
+  se houver papéis), `X-Request-Id` e o `Authorization` do usuário (repassado sem verificação).
+  Chamadas de fundo (reação a `events.events`, reconciliação de pagamentos) não carregam identidade.
+  Os endpoints `/internal/...` são protegidos por isolamento de rede, não por token.
 - O broker atual é PLAINTEXT em rede compartilhada. Resultados financeiros só são confiáveis
   se clientes públicos não puderem produzir nesses tópicos; ACLs/credenciais no broker são
   responsabilidade da infraestrutura e não foram adicionadas aos outros serviços.

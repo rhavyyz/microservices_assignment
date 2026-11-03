@@ -10,9 +10,6 @@ class Settings:
     brokers: str = "kafka:9092"
     discoverer_url: str = "http://service-discoverer:8080"
     service_host: str = ""
-    service_token: str = ""
-    jwt_issuer: str = "eventhub-users"
-    jwks_url: str = ""
     payment_topic: str = "payments.events"
     payment_commands: str = "payments.commands"
     events_topic: str = "events.events"
@@ -34,9 +31,6 @@ class Settings:
             brokers=os.getenv("KAFKA_BROKERS", "kafka:9092"),
             discoverer_url=os.getenv("SERVICE_DISCOVERER_URL", "http://service-discoverer:8080"),
             service_host=os.getenv("SERVICE_HOST", ""),
-            service_token=os.getenv("SUBSCRIPTION_SERVICE_TOKEN", ""),
-            jwt_issuer=os.getenv("USERS_JWT_ISSUER", "eventhub-users"),
-            jwks_url=os.getenv("USERS_JWKS_URL", ""),
             reservation_seconds=int(os.getenv("RESERVATION_SECONDS", "900")),
             offer_seconds=int(os.getenv("OFFER_SECONDS", "600")),
             reconcile_seconds=int(os.getenv("RECONCILE_SECONDS", "60")),

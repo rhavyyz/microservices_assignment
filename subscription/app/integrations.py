@@ -31,14 +31,10 @@ class Services:
             self.settings.discoverer_url + "/register", json={"kind": "subscription", "host": host}
         ).raise_for_status()
 
-    def get(self, kind, path, bearer=None):
-        headers = {}
-        if bearer:
-            headers["Authorization"] = "Bearer " + bearer
-        if self.settings.service_token:
-            headers["X-Service-Token"] = self.settings.service_token
+    def get(self, kind, path, headers=None):
+        # Envia apenas o que o chamador informar; chamadas de fundo (workers) não levam identidade.
         try:
-            response = self.http.get(self.resolve(kind) + path, headers=headers)
+            response = self.http.get(self.resolve(kind) + path, headers=headers or {})
             if response.status_code == 404:
                 raise DomainError(404, "RESOURCE_NOT_FOUND")
             if response.status_code in (401, 403):
@@ -48,10 +44,10 @@ class Services:
         except (httpx.HTTPError, ValueError, KeyError) as exc:
             raise DomainError(503, "DEPENDENCY_UNAVAILABLE") from exc
 
-    def activity(self, activity_id, bearer=None):
+    def activity(self, activity_id, headers=None):
         try:
             activity = Activity.model_validate(
-                self.get("events", f"/api/v1/activities/{activity_id}", bearer)
+                self.get("events", f"/api/v1/activities/{activity_id}", headers)
             )
             if str(activity.activity_id) != str(activity_id):
                 raise ValueError("Atividade divergente")
@@ -59,9 +55,9 @@ class Services:
         except ValueError as exc:
             raise DomainError(503, "INVALID_EVENTS_CONTRACT") from exc
 
-    def authorize_organizer(self, activity_id, bearer):
-        # Eventos decide a propriedade atual. Não confiamos apenas no papel do JWT.
-        result = self.get("events", f"/api/v1/activities/{activity_id}/permissions/me", bearer)
+    def authorize_organizer(self, activity_id, headers):
+        # Eventos decide a propriedade atual. Não confiamos apenas no papel informado pelo gateway.
+        result = self.get("events", f"/api/v1/activities/{activity_id}/permissions/me", headers)
         if result.get("can_manage") is not True:
             raise DomainError(403, "FORBIDDEN")
 

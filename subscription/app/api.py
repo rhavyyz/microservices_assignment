@@ -1,11 +1,11 @@
-"""API pública: identidade pelo JWT, autorização por recurso e OpenAPI para o gateway."""
+"""API pública: identidade pelos cabeçalhos do gateway, autorização por recurso e OpenAPI para o gateway."""
 
 import logging
 import re
 from contextlib import asynccontextmanager
 from uuid import UUID, uuid4
 
-from fastapi import Depends, FastAPI, Header, Query, Request
+from fastapi import Depends, FastAPI, Query, Request, Response
 from fastapi.responses import JSONResponse
 from psycopg import Error as DatabaseError
 from psycopg_pool import PoolTimeout
@@ -32,7 +32,7 @@ def create_app(settings=None, database=None, services=None, authenticator=None):
     db = database or Database(settings.database_url)
     external = services or Services(settings)
     service = SubscriptionService(db, settings)
-    auth = authenticator or Authenticator(settings, external)
+    auth = authenticator or Authenticator(settings)
     workers = Workers(db, service, external, settings)
 
     @asynccontextmanager
@@ -88,13 +88,17 @@ def create_app(settings=None, database=None, services=None, authenticator=None):
         log.error("database_operation_failed", extra={"trace_id": request.state.trace_id})
         return problem(request, 503, "DATABASE_UNAVAILABLE")
 
-    def principal(authorization: str | None = Header(default=None)):
-        return auth.authenticate(authorization)
+    def principal(request: Request):
+        # Lido do Request (não de Header()) para manter a identidade fora do OpenAPI.
+        return auth.authenticate(request.headers)
 
-    def organizer(activity_id, who):
+    def outbound(request, who):
+        return {**who.identity_headers(), "X-Request-Id": request.state.trace_id}
+
+    def organizer(activity_id, request, who):
         if "ORGANIZER" not in who.roles:
             raise DomainError(403, "FORBIDDEN")
-        external.authorize_organizer(activity_id, who.bearer)
+        external.authorize_organizer(activity_id, outbound(request, who))
 
     @app.get("/healthcheck")
     def healthcheck():
@@ -106,18 +110,21 @@ def create_app(settings=None, database=None, services=None, authenticator=None):
     def create(
         activity_id: UUID,
         body: CreateRegistration,
-        idempotency_key: str = Header(min_length=1, max_length=128),
+        request: Request,
+        response: Response,
         who=Depends(principal),
     ):
-        replay = service.replay(who.user_id, idempotency_key, activity_id, body.join_waitlist)
-        if replay is not None:
-            return replay
-        activity = external.activity(activity_id, who.bearer)
-        return service.create(who.user_id, idempotency_key, activity, body.join_waitlist)
+        # Idempotente por (pessoa, atividade): repetir devolve a inscrição viva, sem consultar Eventos.
+        existing = service.active_registration(who.user_id, activity_id)
+        if existing is not None:
+            response.status_code = 200
+            return existing
+        activity = external.activity(activity_id, outbound(request, who))
+        return service.create(who.user_id, activity, body.join_waitlist)
 
     @app.get("/api/v1/activities/{activity_id}/availability")
-    def availability(activity_id: UUID, who=Depends(principal)):
-        return service.availability(external.activity(activity_id, who.bearer))
+    def availability(activity_id: UUID, request: Request, who=Depends(principal)):
+        return service.availability(external.activity(activity_id, outbound(request, who)))
 
     # Rotas literais precisam preceder o parâmetro {registration_id}.
     @app.get("/api/v1/registrations/me")
@@ -133,28 +140,31 @@ def create_app(settings=None, database=None, services=None, authenticator=None):
         return service.cancel(registration_id, who.user_id)
 
     @app.post("/api/v1/registrations/{registration_id}/accept-offer")
-    def accept(registration_id: UUID, who=Depends(principal)):
+    def accept(registration_id: UUID, request: Request, who=Depends(principal)):
         reg = service.get(registration_id, who.user_id)
-        return service.accept(registration_id, who.user_id, external.activity(reg["activity_id"], who.bearer))
+        return service.accept(
+            registration_id, who.user_id, external.activity(reg["activity_id"], outbound(request, who))
+        )
 
     @app.get("/api/v1/activities/{activity_id}/registrations")
     def participants(
         activity_id: UUID,
+        request: Request,
         limit: int = Query(50, ge=1, le=100),
         offset: int = Query(0, ge=0),
         who=Depends(principal),
     ):
-        organizer(activity_id, who)
+        organizer(activity_id, request, who)
         return {"registrations": service.list(activity_id=activity_id, limit=limit, offset=offset)}
 
     @app.post("/api/v1/registrations/{registration_id}/check-in")
-    def check_in(registration_id: UUID, who=Depends(principal)):
+    def check_in(registration_id: UUID, request: Request, who=Depends(principal)):
         if "ORGANIZER" not in who.roles:
             raise DomainError(403, "FORBIDDEN")
         reg = service.get(registration_id)
-        organizer(reg["activity_id"], who)
+        organizer(reg["activity_id"], request, who)
         return service.check_in(
-            registration_id, who.user_id, external.activity(reg["activity_id"], who.bearer)
+            registration_id, who.user_id, external.activity(reg["activity_id"], outbound(request, who))
         )
 
     return app

@@ -15,11 +15,11 @@ em [CONTRACTS.md](CONTRACTS.md); Eventos e Pagamentos ainda são placeholders no
 | `app/api.py` | Rotas, autenticação, autorização por recurso, erros e correlação |
 | `app/service.py` | Casos de uso, estados e transações locais |
 | `app/contracts.py` | Validação estrita das respostas e eventos externos |
-| `app/security.py` | JWT RS256, issuer, expiração e sujeito UUID |
+| `app/security.py` | Identidade pelos cabeçalhos `X-User-Id`/`X-User-Roles` do gateway |
 | `app/integrations.py` | HTTP com timeout e protocolo do discoverer |
 | `app/workers.py` | Expiração, outbox, consumo Kafka, reconciliação e registro |
 | `app/db.py` e `app/migrations/` | Pool, transações e migrações versionadas |
-| `tests/` | Concorrência em PostgreSQL real, API, JWT e falhas de mensageria |
+| `tests/` | Concorrência em PostgreSQL real, API, identidade por cabeçalhos e falhas de mensageria |
 
 ## Regras implementadas
 
@@ -30,8 +30,8 @@ em [CONTRACTS.md](CONTRACTS.md); Eventos e Pagamentos ainda são placeholders no
 - Capacidade é copiada da API confiável de Eventos. Um trigger proíbe sua alteração.
 - Atividade gratuita confirma imediatamente; paga reserva e solicita cobrança assíncrona.
   O valor/moeda são fotografados na inscrição e preservados inclusive durante a fila.
-- `Idempotency-Key` é obrigatório na criação, escopado ao usuário e validado contra o pedido.
-  Uma repetição devolve a resposta original; consultar o GET para o estado atual.
+- A inscrição é idempotente por pessoa e atividade: repeti-la devolve a inscrição existente
+  com 200 (sem consultar Eventos); uma nova é 201. Após cancelar ou expirar, nova inscrição é permitida.
 - Estados: `WAITLISTED`, `OFFERED`, `PENDING_PAYMENT`, `CONFIRMED`, `CANCELLED`, `EXPIRED`, `REJECTED`.
   `OFFERED` e `PENDING_PAYMENT` ocupam reserva; `WAITLISTED` não ocupa vaga.
 - Fila FIFO por sequência no banco. Liberação e promoção ocorrem sob o mesmo lock,
@@ -74,9 +74,10 @@ As rotas nascem privadas no gateway. Para abri-las explicitamente:
 python subscription/scripts/register_gateway.py --gateway http://localhost:8080
 ```
 
-`requireAuth=false` no gateway é intencional: ele só verifica a presença de `X-User-Id`.
-**Todas as rotas de negócio de Inscrições exigem JWT válido**, independentemente desse header.
-`rateLimitBy=ip` evita confiar no identificador não verificado. `/healthcheck` e `/openapi.json`
+O gateway verifica o JWT (`requireAuth=true`) e injeta `X-User-Id` (UUID do `sub`) e `X-User-Roles`
+(separados por vírgula); Inscrições **não valida JWT**: a identidade vem somente desses cabeçalhos,
+nunca do corpo. Sem `X-User-Id` válido a resposta é 401 `UNAUTHENTICATED`. Nas chamadas a Eventos em nome do usuário, o serviço repassa `X-User-Id`, `X-User-Roles`, `X-Request-Id` e o `Authorization` (sem verificá-lo); chamadas de fundo (Kafka, reconciliação) não levam identidade.
+O Gateway é a única porta publicada; os serviços internos não têm porta no host e confiam nos cabeçalhos `X-User-Id`/`X-User-Roles` que somente o Gateway define (ele descarta os enviados pelo cliente). `/healthcheck` e `/openapi.json`
 não são publicados pelo script. A execução do script altera apenas os registros dessas rotas.
 
 ## Desenvolvimento local
@@ -86,7 +87,7 @@ python -m venv .venv
 # Ative o ambiente conforme seu shell.
 python -m pip install -r requirements.lock
 python -m pip install -e '.[test]'
-# Configure SUBSCRIPTION_DATABASE_URL, URLs de descoberta/JWKS e Kafka acessíveis localmente.
+# Configure SUBSCRIPTION_DATABASE_URL, URL de descoberta e Kafka acessíveis localmente.
 python -m app
 ```
 
@@ -104,7 +105,7 @@ Prefixo pelo gateway: `/subscription`. Exemplos abaixo são caminhos internos.
 
 | Método | Rota | Acesso |
 |---|---|---|
-| POST | `/api/v1/activities/{id}/registrations` | Participante autenticado; `Idempotency-Key`; corpo `{"join_waitlist": true}` |
+| POST | `/api/v1/activities/{id}/registrations` | Participante autenticado; 201 se nova, 200 se já existe inscrição viva; corpo `{"join_waitlist": true}` |
 | GET | `/api/v1/activities/{id}/availability` | Autenticado; disponibilidade informativa, não concede vaga |
 | GET | `/api/v1/registrations/me` | Próprias inscrições |
 | GET | `/api/v1/registrations/{id}` | Proprietário; inclui estado financeiro |

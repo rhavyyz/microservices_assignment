@@ -27,8 +27,8 @@ def activity(capacity=1, amount=0):
     )
 
 
-def register(service, act, user=None, key=None):
-    return service.create(user or uuid4(), key or str(uuid4()), act)
+def register(service, act, user=None):
+    return service.create(user or uuid4(), act)
 
 
 def payment(service, reg, kind="PaymentApproved", version=1, event_id=None):
@@ -81,22 +81,47 @@ def test_hundred_concurrent_requests_ten_seats(service, db, settings, amount):
     invariant(db, act.activity_id)
 
 
-def test_idempotent_concurrent_requests(service, db):
+def test_concurrent_requests_same_user_single_registration(service, db):
     act, user = activity(), uuid4()
     with ThreadPoolExecutor(max_workers=10) as pool:
-        results = list(pool.map(lambda _: register(service, act, user, "same-key"), range(20)))
+        results = list(pool.map(lambda _: register(service, act, user), range(20)))
     assert len({r["id"] for r in results}) == 1
     assert invariant(db, act.activity_id)["confirmed"] == 1
-    with pytest.raises(DomainError, match="IDEMPOTENCY_CONFLICT"):
-        service.create(user, "same-key", activity())
+    with db.transaction() as conn:
+        count = conn.execute("SELECT count(*) AS n FROM registrations WHERE activity_id=%s", (act.activity_id,)).fetchone()
+    assert count["n"] == 1
 
 
-def test_different_keys_cannot_duplicate_participant(service, db):
+def test_second_signup_returns_same_registration(service, db):
     act, user = activity(10), uuid4()
-    register(service, act, user)
-    with pytest.raises(DomainError, match="ALREADY_REGISTERED"):
-        register(service, act, user)
+    first = register(service, act, user)
+    assert register(service, act, user) == first
+    assert service.active_registration(user, act.activity_id) == first
+    assert service.active_registration(uuid4(), act.activity_id) is None
     assert invariant(db, act.activity_id)["confirmed"] == 1
+
+
+def test_signup_after_cancel_creates_new_registration(service, db):
+    act, user = activity(1), uuid4()
+    first = register(service, act, user)
+    service.cancel(first["id"], user)
+    assert service.active_registration(user, act.activity_id) is None
+    second = register(service, act, user)
+    assert second["id"] != first["id"]
+    assert second["status"] == "CONFIRMED"
+    assert invariant(db, act.activity_id)["confirmed"] == 1
+
+
+@pytest.mark.parametrize("kind,final", [("PaymentDeclined", "REJECTED"), ("PaymentExpired", "EXPIRED")])
+def test_signup_after_rejected_or_expired_creates_new_registration(service, db, kind, final):
+    act, user = activity(1, amount=100), uuid4()
+    first = register(service, act, user)
+    service.payment_event(payment(service, first, kind))
+    assert service.get(first["id"])["status"] == final
+    second = register(service, act, user)
+    assert second["id"] != first["id"]
+    assert second["status"] == "PENDING_PAYMENT"
+    assert invariant(db, act.activity_id)["reserved"] == 1
 
 
 def test_payment_confirmation_duplicate_and_stale(service, db):
@@ -282,6 +307,22 @@ def test_outbox_survives_kafka_failure(service, db, settings):
             conn.execute("SELECT count(*) AS n FROM outbox WHERE published_at IS NULL").fetchone()["n"] == 2
         )
     assert workers.publish_once(Producer(None))
+
+
+@pytest.mark.parametrize("kind", ["ActivityEnded", "ActivityCancelled"])
+def test_activity_event_fetch_carries_no_identity(service, db, settings, kind):
+    act = activity().model_copy(update={"ends_at": datetime.now(timezone.utc) - timedelta(minutes=1)})
+    calls = []
+
+    class FakeServices:
+        def activity(self, *args, **kwargs):
+            calls.append((args, kwargs))
+            return act
+
+    workers = Workers(db, service, FakeServices(), settings)
+    payload = {"event_id": str(uuid4()), "schema_version": 1, "type": kind, "activity_id": str(act.activity_id)}
+    workers.process(settings.events_topic, payload)
+    assert calls == [((act.activity_id,), {})]
 
 
 def test_ownership_and_payment_amount_validation(service):

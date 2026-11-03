@@ -4,7 +4,6 @@ O bloqueio vive no PostgreSQL, portanto protege threads, processos e réplicas.
 Nenhuma chamada HTTP ou Kafka acontece dentro das transações deste módulo.
 """
 
-import hashlib
 import json
 from datetime import timedelta
 from uuid import uuid4
@@ -18,7 +17,7 @@ HELD = ("OFFERED", "PENDING_PAYMENT")
 
 
 def serializable(value):
-    """Converte UUIDs e datas para o contrato JSON, inclusive respostas idempotentes."""
+    """Converte UUIDs e datas para o contrato JSON."""
     return json.loads(json.dumps(value, default=str))
 
 
@@ -26,21 +25,14 @@ class SubscriptionService:
     def __init__(self, db, settings):
         self.db, self.settings = db, settings
 
-    @staticmethod
-    def fingerprint(activity_id, join_waitlist):
-        return hashlib.sha256(f"{activity_id}:{join_waitlist}".encode()).hexdigest()
-
-    def replay(self, user_id, key, activity_id, join_waitlist):
-        """Uma repetição concluída não depende de Eventos estar disponível novamente."""
+    def active_registration(self, user_id, activity_id):
+        """Inscrição viva da pessoa na atividade, sem depender de Eventos."""
         with self.db.transaction() as conn:
-            cached = conn.execute(
-                "SELECT * FROM idempotency_keys WHERE user_id=%s AND key=%s", (user_id, key)
+            row = conn.execute(
+                "SELECT * FROM registrations WHERE activity_id=%s AND user_id=%s AND status = ANY(%s)",
+                (activity_id, user_id, list(ACTIVE)),
             ).fetchone()
-            if cached:
-                if cached["fingerprint"] != self.fingerprint(activity_id, join_waitlist):
-                    raise DomainError(409, "IDEMPOTENCY_CONFLICT")
-                return cached["response"]
-        return None
+            return serializable(row) if row else None
 
     def availability(self, activity):
         """Leitura informativa; só a transação de criação concede a vaga de fato."""
@@ -225,20 +217,8 @@ class SubscriptionService:
             self.emit(conn, updated, "RegistrationExpired")
         self.promote(conn, activity_id)
 
-    def create(self, user_id, key, activity, join_waitlist=True):
-        if not key or len(key) > 128:
-            raise DomainError(400, "INVALID_IDEMPOTENCY_KEY")
-        fingerprint = self.fingerprint(activity.activity_id, join_waitlist)
+    def create(self, user_id, activity, join_waitlist=True):
         with self.db.transaction() as conn:
-            # Serializa a chave mesmo quando duas chamadas usam atividades diferentes.
-            conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))", (f"{user_id}:{key}",))
-            cached = conn.execute(
-                "SELECT * FROM idempotency_keys WHERE user_id=%s AND key=%s", (user_id, key)
-            ).fetchone()
-            if cached:
-                if cached["fingerprint"] != fingerprint:
-                    raise DomainError(409, "IDEMPOTENCY_CONFLICT")
-                return cached["response"]
             if not activity.registration_open or activity.starts_at <= self.now(conn):
                 raise DomainError(409, "REGISTRATION_CLOSED")
             conn.execute(
@@ -253,11 +233,13 @@ class SubscriptionService:
                 raise DomainError(409, "REGISTRATION_CLOSED")
             self.expire_locked(conn, activity.activity_id)
             inv = self.inventory(conn, activity.activity_id)
-            if conn.execute(
-                "SELECT 1 FROM registrations WHERE activity_id=%s AND user_id=%s AND status = ANY(%s)",
+            # Com o lock da atividade, uma inscrição viva é de um pedido duplicado: devolve a mesma.
+            existing = conn.execute(
+                "SELECT * FROM registrations WHERE activity_id=%s AND user_id=%s AND status = ANY(%s)",
                 (activity.activity_id, user_id, list(ACTIVE)),
-            ).fetchone():
-                raise DomainError(409, "ALREADY_REGISTERED")
+            ).fetchone()
+            if existing:
+                return serializable(existing)
             available = inv["reserved"] + inv["confirmed"] < inv["capacity"]
             if not available and not (join_waitlist and activity.waitlist_enabled):
                 raise DomainError(409, "ACTIVITY_FULL")
@@ -290,12 +272,7 @@ class SubscriptionService:
                     (reg["id"], activity.activity_id, position["next_position"]),
                 )
                 self.emit(conn, reg, "RegistrationWaitlisted")
-            response = serializable(reg)
-            conn.execute(
-                "INSERT INTO idempotency_keys VALUES (%s,%s,%s,%s)",
-                (user_id, key, fingerprint, Jsonb(response)),
-            )
-            return response
+            return serializable(reg)
 
     def cancel(self, registration_id, user_id):
         with self.db.transaction() as conn:

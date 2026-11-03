@@ -33,12 +33,12 @@ def main():
                     "method": method,
                     "path": path,
                     "isPublic": True,
-                    "requireAuth": False,
-                    "rateLimitBy": "ip",
+                    "requireAuth": True,
+                    "rateLimitBy": "user_or_ip",
                     "maxPerMin": limit,
                 },
             )
-            # requireAuth=False evita exigir X-User-Id forjável. A API exige Bearer JWT.
+            # O gateway verifica o JWT e injeta X-User-Id/X-User-Roles; Inscrições confia nesses cabeçalhos.
             response.raise_for_status()
             print(method, path, response.status_code)
 
