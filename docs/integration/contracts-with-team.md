@@ -100,3 +100,14 @@ Um serviço que só recebe tráfego pelo Gateway **não precisa validar o JWT**:
 
 ### Como um consumidor valida o token (Proposto)
 RS256; chave pública em `GET /consult?kind=user` → `http://<host>/.well-known/jwks.json` (`kid` na assinatura); exigir `iss`, `exp` e assinatura. Claims: `sub` (UUID), `roles` (`PARTICIPANT`/`ORGANIZER`), `iss`, `iat`, `exp`, `jti`.
+
+## 6. Frontend como consumidor (Proposto, implementado em `frontend/`)
+| Item | Como o frontend se comporta |
+|---|---|
+| Endereço | só o Gateway, em `VITE_API_BASE_URL`; caminhos `/user/api/v1/...` em `src/config.ts` |
+| Rotas usadas | `POST auth/register`, `POST auth/login`, `GET/PATCH users/me`, `GET users` (busca, só organizador) |
+| Token | em memória; enviado como `Authorization: Bearer`; descartado no logout, na expiração e em qualquer 401 autenticado (ADR-006) |
+| Erros do Gateway em texto puro | 401, 404, 429 e 503 são tratados sem exibir o corpo (relevante se `requireAuth` for ligado, ver P-itens de Gateway) |
+| `X-Request-Id` duplicado (P15) | usa o primeiro valor; as mensagens usam o `traceId` do corpo |
+| CORS | depende do Gateway (reflete a origem; P14). Em dev o Vite roda em `http://localhost:5173` sem proxy |
+| Onde servir (P10) | dev: Vite; produção: `npm run build` gera `frontend/dist` estático. Nenhum serviço novo no compose raiz |

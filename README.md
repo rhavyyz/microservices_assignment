@@ -132,3 +132,15 @@ Run outside Docker: publish the database with `docker compose --env-file .env -f
 After the Gateway synced the `user` kind, open the routes with `user/scripts/register-gateway-routes.sh` (instructions in the script header).
 
 > Status: `./mvnw verify` compiles and passes all 26 unit tests and 22 of 23 integration tests (the failing one was a test bug, fixed; re-run pending); Docker/Gateway end-to-end is not tested yet. See `docs/testing/test-report.md`.
+
+## Frontend (`frontend/`)
+React 19 + TypeScript + Vite: cadastro, login, perfil e (para organizadores) busca de usuários. Fala só com o Gateway. Docs: `docs/architecture/frontend.md`, `docs/decisions/ADR-006-frontend-session-and-stack.md`.
+
+    cd frontend
+    cp .env.example .env     # VITE_API_BASE_URL = URL do Gateway (http://localhost:8080 com o docker compose)
+    npm ci
+    npm run dev              # http://localhost:5173
+
+Scripts: `npm run lint`, `npm run typecheck`, `npm run format:check`, `npm run test:run` (89 testes), `npm run build` (saída em `frontend/dist`). Requer Node `^20.19` ou `>=22.12`.
+
+O token de acesso fica só em memória: recarregar a página exige novo login (ADR-006). Antes de usar contra o backend, abra as rotas no Gateway com `user/scripts/register-gateway-routes.sh`.

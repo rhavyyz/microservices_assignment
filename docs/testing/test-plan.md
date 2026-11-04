@@ -24,3 +24,24 @@
 | Contrato | OpenAPI estático válido | `swagger-parser` | válido |
 
 Não coberto: carga/pico, rate limit (Gateway), `register-gateway-routes.sh` e Docker Compose (sem Docker no ambiente de desenvolvimento).
+
+---
+
+# Plano de testes — frontend
+
+`cd frontend && npm run test:run`. Vitest + Testing Library em jsdom; o `fetch` é substituído por um falso baseado em rotas (rota imprevista falha o teste).
+
+| Requisito | Caso | Arquivo | Esperado |
+|---|---|---|---|
+| Validação | cadastro, login, perfil, busca (obrigatórios, e-mail, senha 10–72 e bytes, confirmação, nome, ao menos um filtro) | `schemas/forms.test.ts`, páginas | mensagens em pt-BR; nenhuma chamada à API |
+| Cadastro | sucesso (envia só nome/e-mail/senha), 409, erros do servidor por campo, rede, 500 sem detalhes, envio duplicado | `RegisterPage.test.tsx` | conforme |
+| Login | 401 sem redirecionar nem repetir, sucesso, retorno ao destino original, 429/503 em texto puro, resposta fora do contrato | `LoginPage.test.tsx` | conforme |
+| Rotas | protegida sem sessão, organizador x participante, visitante com sessão, logout limpa o token, 404, redirecionamento seguro | `routing.test.tsx` | conforme |
+| Perfil | carregando, dados, PATCH só com `name`, erro de campo, 401 (sem laço) na consulta e ao salvar, 403 mantém sessão, rede + tentar novamente, 503 | `ProfilePage.test.tsx` | conforme |
+| Busca | filtro obrigatório, parâmetros e Bearer corretos, vazio, paginação, 403 e 400 do servidor | `UsersSearchPage.test.tsx` | conforme |
+| Cliente HTTP | URL do Gateway, Bearer só quando autenticado e nunca na URL, `credentials: omit`, problem+json, texto puro do Gateway, `X-Request-Id` duplicado, rede, timeout, cancelamento, resposta inválida | `api/client.test.ts` | conforme |
+| Contrato | schemas e rotas == `docs/api/users.openapi.yaml` | `api/contract.test.ts` | conforme |
+| Configuração | `VITE_API_BASE_URL` ausente/inválida | `config.test.ts` | erro claro |
+| Segurança | sem `localStorage`/`sessionStorage`/cookies, sem `console`, sem IP/localhost/URL fixa, `Authorization` só no cliente; senha/token fora de console e DOM | `security.test.ts` | conforme |
+
+Não coberto: navegador real (E2E), CORS contra o Gateway real, leitor de tela, desempenho. Ver `test-report.md`.

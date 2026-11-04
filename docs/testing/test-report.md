@@ -42,3 +42,37 @@ Verificações parciais, todas aprovadas: migração e 11 cenários de constrain
 cd user && ./mvnw verify          # *Test + *IT (exige Docker)
 ./mvnw test                       # só *Test
 ```
+
+---
+
+# Relatório de testes — frontend
+
+## Execução (2026-11-04, sandbox Linux, Node 22.22, npm registry acessível)
+| Verificação | Comando | Resultado |
+|---|---|---|
+| Formatação | `npx prettier --check .` | **OK** |
+| Lint (ESLint 10, regras de hooks e sem console/localStorage) | `npx eslint .` | **0 problemas** |
+| Tipos (TypeScript 6.0.3, `strict` + `noUncheckedIndexedAccess`) | `npx tsc --noEmit` | **OK** |
+| Testes | `npx vitest run` | **89/89 aprovados** em 10 arquivos |
+| Build de produção | `npm run build` | **OK**: 401 kB de JS (125 kB gzip), 4 kB de CSS |
+| Segredos no bundle | `grep` por senha/token de teste e `password_hash` | nenhum |
+
+### Verificação de que os testes pegam defeitos (mutação manual)
+Cada falha foi introduzida isoladamente e revertida:
+| Falha introduzida | Testes que quebraram |
+|---|---|
+| 401 deixa de encerrar a sessão | 2 |
+| `Authorization` não é enviado | 5 |
+| rota protegida deixa passar visitante | 6 |
+| token gravado em `localStorage` | 1 (varredura estática) |
+| `console.log` do token | 2 |
+Depois de reverter: 89/89.
+
+### Achados durante o desenvolvimento
+- O lint do React (hooks 7) recusou um `useRef` lido durante a renderização na busca; refatorado para o padrão de efeito com cancelamento.
+- A varredura estática inicial acusava comentários que apenas citavam `localStorage`/`console`; passou a ignorar comentários.
+- O teste de contrato encontrou que `UserProfile` usa `allOf` no OpenAPI; o teste agora resolve `$ref`/`allOf`.
+
+## Não executado (a validar na máquina da equipe)
+- **Navegador real / E2E** e o fluxo contra o Gateway e o backend reais: não há navegador nem Docker no ambiente. O CORS foi conferido só pela leitura de `gateway/mw_cors.go` (preflight aceita `PATCH`, `Authorization` e `Content-Type`).
+- Leitor de tela, contraste medido por ferramenta, desempenho.
