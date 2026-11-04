@@ -10,6 +10,7 @@ import com.eventhub.users.user.UserRepository;
 import com.eventhub.users.user.UserService;
 
 import java.time.Clock;
+import java.time.temporal.ChronoUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,7 +53,7 @@ class DevSeed implements ApplicationRunner {
             return;
         }
         users.save(User.create(seed.name().strip(), email, encoder.encode(seed.password()),
-                EnumSet.of(Role.PARTICIPANT, Role.ORGANIZER), clock.instant()));
+                EnumSet.of(Role.PARTICIPANT, Role.ORGANIZER), clock.instant().truncatedTo(ChronoUnit.MICROS)));
         LOG.warn("DEV SEED ativo: organizador de demonstração criado (emailFingerprint={}). Não use em produção.",
                 AuditLogger.fingerprint(email));
     }

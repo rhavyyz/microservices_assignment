@@ -2,6 +2,8 @@ package com.eventhub.users.user;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.EnumSet;
 import java.util.Locale;
 import java.util.UUID;
@@ -49,6 +51,11 @@ public class UserService {
         this.dummyHash = encoder.encode(UUID.randomUUID().toString());
     }
 
+    /** O PostgreSQL guarda microssegundos: truncar aqui evita devolver no cadastro um valor que o banco não guarda. */
+    private Instant now() {
+        return clock.instant().truncatedTo(ChronoUnit.MICROS);
+    }
+
     public static String normalizeEmail(String raw) {
         return raw.strip().toLowerCase(Locale.ROOT);
     }
@@ -63,7 +70,7 @@ public class UserService {
             audit.record(Operation.REGISTER, Result.FAILURE, null, AuditLogger.fingerprint(email));
             throw ApiException.emailAlreadyRegistered();
         }
-        User user = User.create(name, email, encoder.encode(password), EnumSet.of(Role.PARTICIPANT), clock.instant());
+        User user = User.create(name, email, encoder.encode(password), EnumSet.of(Role.PARTICIPANT), now());
         try {
             user = users.saveAndFlush(user);
         } catch (DataIntegrityViolationException e) {
@@ -107,7 +114,7 @@ public class UserService {
     @Transactional
     public User updateName(UUID id, String rawName) {
         User user = getActive(id);
-        user.rename(normalizeName(rawName), clock.instant());
+        user.rename(normalizeName(rawName), now());
         audit.record(Operation.PROFILE_UPDATE, Result.SUCCESS, user.getId(), null);
         return user;
     }

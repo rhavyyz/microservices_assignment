@@ -14,7 +14,7 @@
 | `notifications/` (Go) | Implementado (Kafka → MongoDB, API de listagem). | Não consome Usuários; usa `X-User-Id` (ver P13). |
 | `user/` | **Serviço implementado** (Spring Boot 4.1, Java 21, PostgreSQL). | Esta entrega. |
 | `events/`, `subscription/`, `payments/`, `reports/`, `certificates/` | Apenas placeholders. | Nenhum contrato disponível; nada foi simulado. |
-| `docker-compose.yml` raiz | Kafka KRaft; sem portas publicadas no host. Entrada `user:` editada (única alteração). | **Não há porta pública do Gateway** (P1). |
+| `docker-compose.yml` raiz | Kafka KRaft; o **Gateway publica `8080:8080`** (única porta do host). Entrada `user:` editada por Usuários. | URL de desenvolvimento: `http://localhost:8080` (P1 resolvida). |
 
 ## 2. Contrato do Gateway (Aprovado — lido do código)
 
@@ -37,9 +37,9 @@
 |---|---|---|---|---|
 | POST | `/user/api/v1/auth/register` | `/api/v1/auth/register` | sim | 10/min/IP |
 | POST | `/user/api/v1/auth/login` | `/api/v1/auth/login` | sim | 10/min/IP |
-| GET | `/user/api/v1/users/me` | `/api/v1/users/me` | sim | 120/min/IP |
-| PATCH | `/user/api/v1/users/me` | `/api/v1/users/me` | sim | 30/min/IP |
-| GET | `/user/api/v1/users?id=&email=&name=&page=&size=` | `/api/v1/users` | sim | 60/min/IP (somente `ORGANIZER`) |
+| GET | `/user/api/v1/users/me` | `/api/v1/users/me` | sim | 120/min por usuário (IP se anônimo) |
+| PATCH | `/user/api/v1/users/me` | `/api/v1/users/me` | sim | 30/min por usuário (IP se anônimo) |
+| GET | `/user/api/v1/users?id=&email=&name=&page=&size=` | `/api/v1/users` | sim | 60/min por usuário (IP se anônimo); somente `ORGANIZER` |
 | GET | `/.well-known/jwks.json` | — | **não** (servido direto via discoverer) | — |
 | GET | `/healthcheck`, `/openapi.json` | — | **não** (internos) | — |
 
@@ -51,7 +51,7 @@
 
 | # | Pergunta concreta | Proposta provisória | Quem confirma | Efeito |
 |---|---|---|---|---|
-| P1 | O Gateway não publica porta no host. Qual será a URL pública em dev? | Frontend lê `VITE_API_BASE_URL`, sem valor fixo no código. | Gateway | Só configuração; **bloqueia teste fim a fim**. |
+| P1 | URL pública do Gateway em dev. | **Resolvida:** o compose publica `8080:8080`; o frontend usa `VITE_API_BASE_URL=http://localhost:8080` (sem valor fixo no código). | Gateway | Nenhum. |
 | P3 | **Quem valida o JWT e define `X-User-Id`?** **Resolvido: o Gateway (ADR-003, mesclado no `main`, PR #7).** Antes, ninguém: o Gateway só conferia a presença do cabeçalho e Notificações confiava nele (e no `user_id` da URL do `/ws`). | **O Gateway** valida o JWT (JWKS de Usuários), **remove** o `X-User-Id`/`X-User-Roles` recebidos e injeta `sub`/`roles`; o `/ws` segue a mesma regra. Restam em aberto: (a) `requireAuth=true` em `/users/me` (hoje `false`; o script de rotas de Usuários não foi alterado); (b) **os serviços só podem confiar em `X-User-Id` se forem alcançáveis apenas pelo Gateway**: o modelo adotado é de rede fechada, em que o Gateway é a única porta publicada no host e os serviços internos são confiáveis entre si (um contêiner dentro da rede pode forjar o cabeçalho; ver ADR-003); (c) Usuários continua **sem** confiar em `X-User-Id` e valida o próprio JWT. | Gateway + Notificações | Nenhuma em Usuários. Futuros clientes do `/ws` devem enviar o JWT (ver seção 2). |
 | P5 | Como os serviços obtêm a chave pública? | `GET /.well-known/jwks.json` via `GET /consult?kind=user`. O Gateway faz isso com cache em memória, atualização a cada 10 min e nova busca (no máximo 1 por 30 s) quando chega um `kid` desconhecido. | Todos | Endpoint já existe. |
 | P6 | `iss` e `aud`. | `iss=eventhub-users` (configurável; o Gateway lê `JWT_ISSUER`), sem `aud`. | Todos | Validação nos consumidores. |
@@ -66,6 +66,8 @@
 | P16 | Sem `USERS_DB_PASSWORD` no `.env`, o `user-db` não inicia (de propósito, sem senha padrão) e o `user` fica aguardando; os demais serviços não são afetados. | Copiar `.env.example` para `.env`. | Equipe | Documentado no README. |
 | P18 | **Busca de usuários** (`GET /api/v1/users`) expõe nome e e-mail de terceiros. Padrão adotado: somente `ORGANIZER`, ao menos um filtro, paginada (máx. 50), sem hash/senha, filtros fora dos logs. Um organizador enxerga **todos** os usuários (não só os inscritos em seus eventos). | Se o requisito for "só inscritos nos meus eventos", o filtro deve ficar com Inscrições; ou Usuários expõe consulta interna por lista de ids. | Equipe/docente | Decidir antes de usar em produção. |
 | P17 | Compose raiz: entrada `user:` ganhou `build.additional_contexts`, `depends_on`, `environment` e `volumes` (padrão idêntico ao de `notifications`). | — | Equipe | Revisar o diff. |
+| P19 | **A API de admin do Gateway (`/admin/endpoints`) não tem autenticação e agora está na porta publicada `8080`** (o código já avisa para não expô-la). Quem alcança a porta consegue abrir rotas privadas, desligar `requireAuth` e alterar limites; o `docker-compose` publica em todas as interfaces (`0.0.0.0`). | Em dev: publicar só em loopback (`127.0.0.1:8080:8080`) ou proteger `/admin` (token no cabeçalho ou outra porta interna). | Gateway | Nenhuma em Usuários; risco de segurança. |
+| P20 | O Gateway valida `iss` com `JWT_ISSUER` (padrão `eventhub-users`), mas o compose **não o repassa**. Se `USERS_JWT_ISSUER` for alterado no `.env`, o Gateway passa a recusar todos os tokens (rotas `requireAuth`) ou a tratá-los como anônimos. | No serviço `gateway` do compose: `JWT_ISSUER: ${USERS_JWT_ISSUER:-eventhub-users}`. Enquanto isso, não alterar o emissor (comentário no `.env.example`). | Gateway | Nenhuma em Usuários. |
 
 ## 4b. Tópicos Kafka (Aprovado — ADR-005)
 
