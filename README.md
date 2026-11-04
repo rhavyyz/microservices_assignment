@@ -104,6 +104,12 @@ Consumes user notifications from Kafka and always stores them in its own MongoDB
   The same idea works for Python (`COPY --from=discovery` then `pip install`) and Java (`COPY --from=discovery` then a Maven install of the lib).
 - Env: `PORT` (8080), `KAFKA_BROKERS` (`kafka:9092`, comma-separated), `NOTIFICATIONS_TOPIC` (`notifications`), `NOTIFICATIONS_PARTITIONS` (6), `NOTIFICATIONS_PUSH_TOPIC` (`notifications-push`), `NOTIFICATIONS_PUSH_PARTITIONS` (6), `MONGO_URI` (`mongodb://notifications-db:27017`), `SERVICE_DISCOVERER_URL` (`http://service-discoverer:8080`) and `SERVICE_HOST` (`<hostname>:<PORT>`) read by the lib, `RETENTION_DAYS` (30). The three integers (`RETENTION_DAYS` and the two partition counts) must be positive; an invalid value stops the service at startup.
 
+## Events
+Events, their schedule (activities) and seat capacity (TypeScript, Fastify, its own PostgreSQL `events-db`). Full docs in `events/README.md`; architecture decisions in `events/docs/decisions.md`.
+- Public reads (search of published events, schedule with available seats); changes need the user service's access token (`Authorization: Bearer`, verified against its JWKS), and only the event's organizer can change it.
+- Publishes `event.*`, `activity.*` and `seat.*` on `events-events` through a transactional outbox; consumes `registration.requested/cancelled/expired` from `subscription-events` to take and free seats without overbooking.
+- After the gateway synced the `events` kind, open the routes with `events/scripts/register-gateway-routes.sh`.
+
 ## Run
 Two steps, in this order (the gateway's private MongoDB is its own compose project and creates the `gateway-net` network):
 
