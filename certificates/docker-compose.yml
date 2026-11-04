@@ -1,17 +1,27 @@
-# Shared architecture of the certificates service (its own backing infra: DB, cache, queue...).
+# Shared architecture of the certificates service.
 # Shared by all horizontally scaled copies of the app; the app container is defined in the root compose file.
 # Included from the root docker-compose.yml via `include:`. Keep names prefixed with "certificates-" to stay unique.
-# services:
-#   certificates-db:
-#     image: postgres:16-alpine
-#     environment:
-#       POSTGRES_PASSWORD: ${CERTIFICATES_DB_PASSWORD:-change-me}
-#     volumes:
-#       - certificates-db-data:/var/lib/postgresql/data
-#     networks: [certificates-net]
+services:
+  certificates-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: certificates
+      POSTGRES_USER: ${CERTIFICATES_DB_USER:-certificates}
+      POSTGRES_PASSWORD: ${CERTIFICATES_DB_PASSWORD:-}
+    volumes:
+      - certificates-db-data:/var/lib/postgresql/data
+    networks: [certificates-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d certificates"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
 networks:
   certificates-net:
 
-# volumes:
-#   certificates-db-data:
+volumes:
+  certificates-db-data:
+  certificates-pdf-data:
