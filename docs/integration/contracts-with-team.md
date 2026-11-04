@@ -69,6 +69,18 @@
 | P17 | Compose raiz: entrada `user:` ganhou `build.additional_contexts`, `depends_on`, `environment` e `volumes` (padrão idêntico ao de `notifications`). | — | Equipe | Revisar o diff. |
 | P19 | **A API de admin do Gateway (`/admin/endpoints`) não tem autenticação e agora está na porta publicada `8080`** (o código já avisa para não expô-la). Quem alcança a porta consegue abrir rotas privadas, desligar `requireAuth` e alterar limites; o `docker-compose` publica em todas as interfaces (`0.0.0.0`). | Em dev: publicar só em loopback (`127.0.0.1:8080:8080`) ou proteger `/admin` (token no cabeçalho ou outra porta interna). | Gateway | Nenhuma em Usuários; risco de segurança. |
 | P20 | O Gateway valida `iss` com `JWT_ISSUER` (padrão `eventhub-users`), mas o compose **não o repassa**. Se `USERS_JWT_ISSUER` for alterado no `.env`, o Gateway passa a recusar todos os tokens (rotas `requireAuth`) ou a tratá-los como anônimos. | No serviço `gateway` do compose: `JWT_ISSUER: ${USERS_JWT_ISSUER:-eventhub-users}`. Enquanto isso, não alterar o emissor (comentário no `.env.example`). | Gateway | Nenhuma em Usuários. |
+| P21 | **Resolvida no código:** Eventos passou a implementar o contrato que Inscrições consome (`/api/v1/activities/{id}`, `/permissions/me`, `amount_minor`, `currency`, `registration_open`). | Validar de ponta a ponta com os serviços de pé: criar uma inscrição pela interface e conferir `201`. O frontend foi escrito contra o contrato novo; antes dessa mudança ele quebraria. | Eventos + Inscrições | Verificação pendente (sem Docker no ambiente de desenvolvimento). |
+| P22 | Inscrições serializa datas com `str(datetime)` do Python (`2026-11-03 23:25:45+00:00`, com espaço), e não com ISO 8601 como os demais serviços. | Usar ISO 8601 (`...T...Z`). O frontend normaliza enquanto isso. | Inscrições | Safari e outros motores estritos falhariam sem a normalização. |
+| P23 | Erros de Inscrições vêm com `title` igual ao `code` e sem `detail`; os de Eventos vêm com `detail` em inglês. | O frontend traduz pelo código (`CODE_MESSAGES`). Manter os códigos estáveis e avisar ao criar novos. | Eventos + Inscrições | Código novo sem tradução cai numa mensagem genérica. |
+| P24 | Os serviços declaram `x-gateway` no OpenAPI, **mas o Gateway só semeia endpoints novos** (`SyncKind` nunca altera `isPublic`, `requireAuth` ou limites de rotas existentes). Com um banco do Gateway antigo, rotas criadas antes do `x-gateway` seguem privadas e respondem `404` direto do Gateway (µs, sem chegar ao serviço). Alguns READMEs de serviço ainda mandam rodar scripts de registro. | Em desenvolvimento: `docker compose down` e `docker compose -f gateway/docker-compose.yml down -v`, depois subir de novo; ou `PUT /admin/endpoints` por rota. Idealmente o Gateway deveria reconciliar as rotas declaradas (ou avisar quando o `x-gateway` divergir do armazenado). | Gateway | Média: causa um `404` difícil de diagnosticar. |
+| P25 | A lista de participantes (`GET /activities/{id}/registrations`) traz só `user_id`, e **não informa quem já fez check-in**. O frontend busca nome/e-mail com uma chamada de busca de usuários **por participante** (até 50 por página). | Usuários poderia oferecer busca em lote por ids (`ids=a,b,c`); Inscrições poderia incluir `checked_in_at` (ou um flag) na listagem. Enquanto isso o check-in é idempotente e a tela avisa que não mostra presenças anteriores. | Usuários + Inscrições | Pode esbarrar no limite de taxa do Gateway numa página cheia; nesse caso a tela mostra o id curto em vez do nome. |
+| P26 | O WebSocket `/ws` do Gateway só aceita o token no cabeçalho `Authorization` ou em `?access_token=`. O navegador **não consegue** enviar cabeçalho, então o frontend usa a query, que pode aparecer em logs de proxies e do navegador. O Gateway registra só o caminho. | Aceitar um ticket de uso único (emitido por uma rota autenticada) ou o token via subprotocolo (`Sec-WebSocket-Protocol`); manter TLS obrigatório e token de vida curta. | Gateway | Média em produção sem TLS. |
+| P27 | O `redirect_url` das notificações não é preenchido por nenhum serviço (Pagamentos e Inscrições mandam só `payload` + `payload_type`). O frontend monta o destino pelo tipo. | Se um dia for usado, definir que é um caminho interno relativo (não URL absoluta). O frontend não o segue. | Notificações + produtores | Baixa. |
+| P28 | O contador de não lidas é uma consulta (`limit=100`, status `DEFAULT,RECEIVED`): o serviço não oferece contagem. | Um campo/rota `unread_count`. | Notificações | Baixa: acima de 100 a interface mostra "100+". |
+| P29 | Pagamentos não devolve o `activity_id` de pagamentos antigos (nulo) e o nome da atividade não vem na resposta; a tela mostra só valor, situação e prazo. | Opcional: incluir título da atividade/evento na resposta. | Pagamentos | Baixa. |
+
+| P30 | Relatórios e Certificados não informam o fuso/atraso do modelo de leitura: o frontend avisa que os números podem atrasar e oferece "Atualizar", mas não há campo "atualizado em". | Incluir `generated_at`/`as_of` no `summary`. | Relatórios | Baixa. |
+| P31 | `GET /certificates/me` não devolve total; o frontend só oferece "Próxima" quando a página vem cheia (pode abrir uma página vazia se o total for múltiplo de 50). Certificados antigos têm `event_id` nulo e aparecem sem título do evento. | Incluir `total` e, se possível, o título do evento. | Certificados | Baixa. |
 
 ## 4b. Tópicos Kafka (Aprovado — ADR-005)
 
@@ -132,3 +144,48 @@ Um serviço que só recebe tráfego pelo Gateway **não precisa validar o JWT**:
 
 ### Como um consumidor valida o token (Proposto)
 RS256; chave pública em `GET /consult?kind=user` → `http://<host>/.well-known/jwks.json` (`kid` na assinatura); exigir `iss`, `exp` e assinatura. Claims: `sub` (UUID), `roles` (`PARTICIPANT`/`ORGANIZER`), `iss`, `iat`, `exp`, `jti`.
+
+## 6. Frontend como consumidor (Proposto, implementado em `frontend/`)
+| Item | Como o frontend se comporta |
+|---|---|
+| Endereço | só o Gateway, em `VITE_API_BASE_URL`; caminhos `/user/api/v1/...` em `src/config.ts` |
+| Rotas usadas | `POST auth/register`, `POST auth/login`, `GET/PATCH users/me`, `GET users` (busca, só organizador) |
+| Token | em memória; enviado como `Authorization: Bearer`; descartado no logout, na expiração e em qualquer 401 autenticado (ADR-006) |
+| Erros do Gateway em texto puro | 401, 404, 429 e 503 são tratados sem exibir o corpo (relevante se `requireAuth` for ligado, ver P-itens de Gateway) |
+| `X-Request-Id` duplicado (P15) | usa o primeiro valor; as mensagens usam o `traceId` do corpo |
+| CORS | depende do Gateway (reflete a origem; P14). Em dev o Vite roda em `http://localhost:5173` sem proxy |
+| Onde servir (P10) | dev: Vite; produção: `npm run build` gera `frontend/dist` estático. Nenhum serviço novo no compose raiz |
+
+### Fase C do frontend: Relatórios e Certificados
+| Item | Como o frontend se comporta |
+|---|---|
+| Relatórios (token, só o dono) | `GET /reports/events/{id}/summary` e `GET /reports/events/{id}/activities?limit&offset` (`{items,total,limit,offset}`). 404 `EVENT_NOT_FOUND` para inexistente ou alheio. Dinheiro em unidades menores por moeda, nunca somado; taxas 0–1 ou `null` |
+| Certificados (token) | `GET /certificates/api/v1/certificates/me?limit&offset` e `GET …/{id}` (PDF anexo, `application/pdf`; 404 `NOT_FOUND`; 503 se o arquivo faltar). Sem rota de criação: emissão vem do Kafka (evento encerrado e ≥ 75% de presença) |
+| Download | por `fetch` com Bearer e `Accept: application/pdf`; resposta com outro `Content-Type` é rejeitada |
+
+### Fase B do frontend: Pagamentos e Notificações
+| Item | Como o frontend se comporta |
+|---|---|
+| Pagamentos (token) | `POST /payments/payments` (corpo só `registration_id`; 201 novo, 200 existente), `GET /payments/payments/{id}`, `POST /payments/payments/{id}/simulate` (`approve`/`decline`/`expire`). Erros por código: `REGISTRATION_NOT_PAYABLE`, `PAYMENT_NOT_FOUND`, `PAYMENT_NOT_APPLIED`, `UPSTREAM_UNAVAILABLE` |
+| Notificações (token) | `GET /notifications/list` (`status` repetível/por vírgula, `limit` 1–100, `base_notification_id`), `PUT /notifications/update-state` (lote ≤ 100). Erros em texto puro |
+| Tempo real | `GET /ws?access_token=<JWT>` no Gateway; quadros `{"type":"connected"}` e `{"type":"notification","notification":{…}}`; fechamento `4000` = substituída por outra conexão (P26) |
+| Destino | só pelo `payload_type` (P27) |
+
+### Fase A2 do frontend: área do organizador
+| Item | Como o frontend se comporta |
+|---|---|
+| Eventos (token) | `GET /events/api/v1/me/events`, `POST /events`, `PATCH /events/{id}`, `POST /events/{id}/publish`, `POST /events/{id}/cancel`, `POST /events/{id}/activities`, `PATCH /activities/{id}`, `POST /activities/{id}/end`, `DELETE /activities/{id}` (204) |
+| Inscrições (token) | `GET /subscription/api/v1/activities/{id}/registrations`, `POST /subscription/api/v1/registrations/{id}/check-in` (resposta: `registration_id`, `checked_in_at`, `recorded_by`, `eligible_emitted`) |
+| Rascunho | `GET /events/{id}` com token: só o dono enxerga rascunho |
+| Regras | capacidade imutável (nunca enviada no PATCH); preço só em rascunho; erros por código em `CODE_MESSAGES` (`EVENT_NOT_DRAFT`, `EVENT_WITHOUT_ACTIVITIES`, `ACTIVITY_OUTSIDE_EVENT`, `INVALID_PERIOD`, `OUTSIDE_CHECK_IN_WINDOW`…) |
+| Limite conhecido | P25 (nome dos participantes e presença) |
+
+### Fase A1 do frontend: Eventos e Inscrições
+| Item | Como o frontend se comporta |
+|---|---|
+| Eventos (público, sem token) | `GET /events/api/v1/events`, `/events/api/v1/events/{event_id}`, `/events/api/v1/activities/{activity_id}`; campos `event_id`, `activity_id`, `amount_minor`, `currency`, `registration_open`, `lifecycle` |
+| Inscrições (autenticado) | `POST /subscription/api/v1/activities/{id}/registrations` (`join_waitlist`), `GET .../activities/{id}/availability`, `GET .../registrations/me`, `POST .../registrations/{id}/cancel`, `POST .../registrations/{id}/accept-offer` |
+| Vagas | só Inscrições conta; visitante vê só a capacidade (a rota exige login) |
+| Erros | traduzidos pelo código (P23); Gateway em texto puro (401/404/429/503) tratado sem exibir o corpo |
+| Datas | ISO (Eventos) e `str(datetime)` (Inscrições, P22) |
+| Rastreio | `X-Trace-Id` (antes `X-Request-Id`, aceito como fallback) |

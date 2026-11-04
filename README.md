@@ -146,10 +146,19 @@ Registration, login (JWT RS256) and own-profile API (Spring Boot 4.1, Java 21, P
     docker compose -f gateway/docker-compose.yml up -d   # gateway-db first (creates the gateway-net network)
     docker compose --env-file .env up --build            # whole stack; the Gateway is on http://localhost:8080
 
-The Gateway learns the user routes from the service but keeps them private until you open them (needs the `user`
-kind registered, i.e. the service already healthy in the discoverer):
+Every service declares its Gateway settings (`x-gateway`: public or not, `requireAuth`) in its own OpenAPI document, and the
+Gateway applies them when it syncs the kind, so no manual route registration is needed for the user service. The scripts
+under `*/scripts/register-*` are only for overriding limits by hand (they use the unauthenticated admin API).
 
-    GATEWAY_ADMIN_URL=http://localhost:8080 sh user/scripts/register-gateway-routes.sh
+Caveat: the Gateway only *seeds* endpoints it does not know yet; it never changes `isPublic`, `requireAuth` or the limits of an
+existing one. With an old Gateway database (routes created before `x-gateway` existed) those routes stay private and the Gateway
+answers `404` in microseconds, without reaching the service. Reset it (stop the stack first, then drop the Gateway volume):
+
+    docker compose --env-file .env down
+    docker compose -f gateway/docker-compose.yml down -v
+    docker compose -f gateway/docker-compose.yml up -d && docker compose --env-file .env up -d
+
+or fix single routes with `PUT /admin/endpoints`. Check with `curl -s localhost:8080/admin/endpoints | tr '{' '\n' | grep subscription`.
 
 Then the API is `http://localhost:8080/user/api/v1/...` (register, login, `users/me`, `users` search for organizers).
 Warning: the Gateway admin API (`/admin/...`) has no authentication and shares that port.
@@ -161,6 +170,16 @@ Run the tests (needs JDK 21; `*IT` need Docker):
 
 Run outside Docker: publish the database with `docker compose --env-file .env -f user/docker-compose.yml -f user/docker-compose.dev.yml up -d user-db`, then export `USERS_DB_URL=jdbc:postgresql://localhost:5433/users`, `USERS_DB_USER`, `USERS_DB_PASSWORD`, `USERS_JWT_PRIVATE_KEY_FILE=$PWD/user/.keys/jwt-private.pem`, `USERS_DISCOVERY_ENABLED=false` and run `./mvnw spring-boot:run` in `user/`.
 
-After the Gateway synced the `user` kind, open the routes with `user/scripts/register-gateway-routes.sh` (instructions in the script header).
+> Status: the backend test suite is `cd user && ./mvnw verify` (needs Docker); run it after pulling, since other teams changed the service (trace id, access log, OpenAPI gateway settings). See `docs/testing/test-report.md` for the last recorded results.
 
-> Status: `./mvnw verify` compiles and passes all 26 unit tests and 22 of 23 integration tests (the failing one was a test bug, fixed; re-run pending); Docker/Gateway end-to-end is not tested yet. See `docs/testing/test-report.md`.
+## Frontend (`frontend/`)
+React 19 + TypeScript + Vite: catálogo público de eventos, inscrição por atividade, minhas inscrições, cadastro, login, perfil e, para organizadores, busca de usuários e a área do organizador (criar, editar, publicar e cancelar eventos, atividades, participantes e check-in). Também: pagamento das inscrições (provedor simulado) e notificações em tempo real (WebSocket do Gateway, com consulta periódica como reserva). Fala só com o Gateway. Docs: `docs/architecture/frontend.md`, `docs/decisions/ADR-006-frontend-session-and-stack.md`, `docs/decisions/ADR-007-frontend-scope-and-phases.md`.
+
+    cd frontend
+    cp .env.example .env     # VITE_API_BASE_URL = URL do Gateway (http://localhost:8080 com o docker compose)
+    npm ci
+    npm run dev              # http://localhost:5173
+
+Scripts: `npm run lint`, `npm run typecheck`, `npm run format:check`, `npm run test:run` (274 testes), `npm run build` (saída em `frontend/dist`). Requer Node `^20.19` ou `>=22.12`.
+
+O token de acesso fica só em memória: recarregar a página exige novo login (ADR-006). As rotas dos serviços são abertas no Gateway pelo `x-gateway` de cada OpenAPI, sem scripts, mas só em um banco do Gateway novo: o Gateway não altera rotas que já existiam (veja a observação acima sobre `down -v`). O catálogo de eventos funciona sem login; inscrever-se exige login. O contrato de Eventos mudou no `main` (rotas em `/api/v1`, vagas vindas de Inscrições): o frontend segue o contrato atual, e os testes leem as rotas direto do código dos serviços para acusar qualquer divergência.
