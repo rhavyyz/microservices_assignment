@@ -57,7 +57,7 @@
 | P6 | `iss` e `aud`. | `iss=eventhub-users` (configurável; o Gateway lê `JWT_ISSUER`), sem `aud`. | Todos | Validação nos consumidores. |
 | P7 | Fluxo aprovado para criar `ORGANIZER` em produção. | Nenhum endpoint; somente seed de dev (desligado por padrão). | Equipe/docente | Sem área de organizador real até decidir. |
 | P8 | Usuários publica evento Kafka? | **Não.** Nenhum tópico criado. | Notificações | Sem Kafka no serviço. |
-| P9 | Certificados: nome do participante por snapshot em Inscrições ou endpoint interno? | Nenhum endpoint criado. | Certificados + Inscrições | Nenhuma. |
+| P9 | Certificados: nome do participante por snapshot em Inscrições ou endpoint interno? **Resolvido (ADR-006):** endpoint interno de Usuários `GET /internal/users/{id}`, sem autenticação, devolvendo **somente `id` e `name`**, protegido pelo isolamento de rede e nunca registrado no Gateway. Certificados só emite ao consumir `AttendanceEligible`. | Ver ADR-006. | Certificados + Usuários | Usuários expõe o endpoint interno; Certificados o consome. |
 | P10 | Onde o frontend é servido? | Pasta `frontend/` com build estático; compose raiz não alterado. | Equipe | Próxima etapa. |
 | P12 | Força bruta no login. | Limite por IP no Gateway (script). Usuários não limita. IPs compartilhados (campus/NAT) podem ser bloqueados juntos. | Gateway | Limitação conhecida. |
 | P13 | O cadastro retorna `409` para e-mail existente (exigido), o que permite enumerar e-mails. | Mitigar com o rate limit do Gateway. | Equipe | Aceito conscientemente. |
@@ -80,10 +80,24 @@ Quem usa o tópico garante que ele existe antes de consumir ou publicar (cria se
 | `payments.commands` | Inscrições | Pagamentos | Inscrições |
 | `payments.events` | Pagamentos | Inscrições | Inscrições |
 | `events.events` | Eventos | Inscrições | Inscrições |
-| `subscription.events` | Inscrições | Certificados / Relatórios | Inscrições |
+| `subscription.events` | Inscrições | Certificados (grupo `certificates-service`) / Relatórios | Inscrições, Certificados |
 | `subscription.dlq` | Inscrições | Operação (manual) | Inscrições |
+| `certificates.dlq` | Certificados | Operação (manual) | Certificados |
 
-Eventos, Pagamentos, Certificados e Relatórios ainda não têm código: ao passarem a usar Kafka devem criar os tópicos que produzem ou consomem do mesmo modo.
+Certificados já usa Kafka e cria os tópicos que consome/produz (ADR-006). Eventos, Pagamentos e Relatórios ainda não têm código: ao passarem a usar Kafka devem criar os tópicos que produzem ou consomem do mesmo modo.
+
+## 4c. Certificados (Aprovado — ADR-006)
+
+| Direção | Contraparte | Contrato |
+|---|---|---|
+| Consome | Inscrições, tópico `subscription.events` | Grupo `certificates-service`. Envelope: `event_id`, `schema_version=1`, `type`, `registration_id`, `activity_id`, `user_id`, `aggregate_version`, `occurred_at`, `status`. Só `AttendanceEligible` é tratado; os demais tipos são ignorados. |
+| Produz | Operação, tópico `certificates.dlq` | Somente referência (`source_topic`, `partition`, `offset`, `reason`) de mensagens venenosas. |
+| Chama | Eventos, `GET /activities/{id}` | JSON com `id`, `event_id`, `title`, `starts_at`, `ends_at` (ISO com fuso). `404` = mensagem venenosa; outro erro = nova tentativa. |
+| Chama | Eventos, `GET /events/{id}` | JSON com `title` (nome do evento no certificado; se `404`, usa o título da atividade). |
+| Chama | Usuários, `GET /internal/users/{id}` | `200 {"id","name"}`, sem autenticação, rede interna. `404` = mensagem venenosa. |
+| Expõe (Gateway) | Frontend | `GET /certificates/api/v1/certificates/me` e `GET /certificates/api/v1/certificates/{id}` (PDF, só do dono), `requireAuth=true`, abertos por `certificates/scripts/register_gateway.sh`. `/healthcheck` e `/openapi.json` ficam privados. |
+
+Todas as chamadas de saída levam `X-Request-Id`. A presença enviada à regra de elegibilidade é fixa em 100, porque o critério de Inscrições é "ao menos um check-in válido".
 
 ## 5. Dependências por consumidor
 
@@ -94,7 +108,7 @@ Eventos, Pagamentos, Certificados e Relatórios ainda não têm código: ao pass
 | Pagamentos | Referência via Inscrições; sem acesso ao banco de Usuários | Proposto |
 | Notificações | Contrato de mensagem a definir (P8); identifica por `X-User-Id`, que agora é definido pelo Gateway após verificar o JWT (P3) | Pendente |
 | Check-in | Valida inscrição no domínio proprietário | Proposto |
-| Certificados | Ver P9 | Pendente |
+| Certificados | `id` e `name` por `GET /internal/users/{id}` (sem autenticação, rede interna; P9, ADR-006) | Aprovado (ADR-006) |
 | Relatórios | Sem dados pessoais de Usuários | Proposto |
 
 ### Serviços atrás do Gateway
