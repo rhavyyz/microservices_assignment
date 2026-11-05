@@ -157,11 +157,12 @@ forwards to the connected user's socket, best-effort.
 one. A host failing 5 retries leaves rotation and is rechecked every `RECHECK_INTERVAL` (5 s); it returns on its first
 success (or by re-registering) and is dropped after `RECHECK_MAX_FAILURES` (12) failed rechecks (about 1 minute).
 
-**Client libs** (`Libs/python` stdlib only, `Libs/go`, `Libs/java`): `register(kind)` (retries 10 times, 1 s doubling to
-30 s, blocks: call from a thread), `request(method, kind, path, {headers, body})` (caches the host per kind;
+**Client libs** (`Libs/python` stdlib only, `Libs/go`, `Libs/java`, `Libs/typescript` Node 22+ with no dependencies):
+`register(kind)` (retries 10 times, 1 s doubling to 30 s, blocks: call from a thread; in TypeScript it is async, so do not
+await it before listening), `request(method, kind, path, {headers, body})` (caches the host per kind;
 rediscovers and retries once if the cached host is unreachable; HTTP error statuses are returned, not raised), `consult(kind)`
 (no cache). Env: `SERVICE_DISCOVERER_URL`, `SERVICE_HOST` (default `<hostname>:<PORT or 8080>`), `PORT`.
-Because the registry is in memory, **re-register periodically**. Docker builds receive the Python lib through a named
+Because the registry is in memory, **re-register periodically**. Docker builds receive the lib (Python or TypeScript) through a named
 `discovery` build context (`additional_contexts` in the root compose). See `service-discoverer/Libs/README.md`.
 
 ## 6. Users (`user/`, Java 21, Spring Boot, PostgreSQL)
