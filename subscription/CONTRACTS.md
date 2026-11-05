@@ -96,6 +96,7 @@ autoridade sobre a vaga.
 ```json
 {
   "registration_id": "55555555-5555-4555-8555-555555555555",
+  "activity_id": "11111111-1111-4111-8111-111111111111",
   "user_id": "66666666-6666-4666-8666-666666666666",
   "status": "PENDING_PAYMENT",
   "amount_minor": 2500,
@@ -105,7 +106,7 @@ autoridade sobre a vaga.
 }
 ```
 
-`status` é o estado da inscrição (`PENDING_PAYMENT`, `CONFIRMED`, ...). `expires_at` é null fora de
+`activity_id` é a atividade da inscrição (sempre presente). `status` é o estado da inscrição (`PENDING_PAYMENT`, `CONFIRMED`, ...). `expires_at` é null fora de
 `OFFERED`/`PENDING_PAYMENT`. `event_id` é o id do evento de Eventos ao qual a atividade pertence
 (`event_id` da atividade, gravado na criação da inscrição); é null em inscrições anteriores à migração
 `004` (a coluna se chamava `parent_event_id` até a migração `006`). Id desconhecido ou que não seja UUID → 404 `REGISTRATION_NOT_FOUND` (`application/problem+json`).

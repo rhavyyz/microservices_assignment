@@ -9,7 +9,7 @@ const OTHER = '22222222-2222-4222-8222-222222222222';
 const PID = '33333333-3333-4333-8333-333333333333';
 
 const row = (over: object = {}) => ({
-  payment_id: PID, registration_id: 'r1', user_id: USER, event_id: 'e1',
+  payment_id: PID, registration_id: 'r1', user_id: USER, event_id: 'e1', activity_id: 'act-1',
   amount_minor: '2500', currency: 'BRL', status: 'APPROVED',
   expires_at: new Date('2030-01-01T00:00:00Z'), created_at: new Date('2026-01-01T00:00:00Z'), ...over,
 });
@@ -100,7 +100,7 @@ test('unknown route is a problem+json 404', async () => {
 const REG = '44444444-4444-4444-8444-444444444444';
 const registration = (over: object = {}): Registration => ({
   registration_id: REG, user_id: USER, status: 'PENDING_PAYMENT', amount_minor: 4200, currency: 'USD',
-  expires_at: '2999-01-01T00:00:00Z', event_id: 'ev-9', ...over,
+  expires_at: '2999-01-01T00:00:00Z', event_id: 'ev-9', activity_id: 'act-7', ...over,
 });
 const found = (over: object = {}): FetchRegistration => async () => ({ kind: 'found', registration: registration(over) });
 
@@ -110,7 +110,7 @@ function createPool(existing: object[] = [], inserted: { params?: unknown[] } = 
     if (/^(BEGIN|COMMIT|ROLLBACK)/.test(sql)) return { rows: [], rowCount: 0 };
     if (/^\s*INSERT INTO payments/.test(sql)) {
       inserted.params = params;
-      const r = [row({ registration_id: REG, status: 'PENDING', amount_minor: String(params![4]), currency: params![5], user_id: params![2], event_id: params![3], expires_at: params![6] })];
+      const r = [row({ registration_id: REG, status: 'PENDING', amount_minor: String(params![5]), currency: params![6], user_id: params![2], event_id: params![3], activity_id: params![4], expires_at: params![7] })];
       return { rows: r, rowCount: 1 };
     }
     if (/^\s*SELECT/.test(sql)) return { rows: existing, rowCount: existing.length };
@@ -122,14 +122,14 @@ function createPool(existing: object[] = [], inserted: { params?: unknown[] } = 
 const post = (a: Awaited<ReturnType<typeof app>>, payload: unknown, headers: Record<string, string> = { 'x-user-id': USER }) =>
   a.inject({ method: 'POST', url: '/payments', headers, payload: payload as object });
 
-test('POST /payments: 201, amount/currency/user/event_id come from Subscription, own TTL, client body ignored', async () => {
+test('POST /payments: 201, amount/currency/user/event_id/activity_id come from Subscription, own TTL, client body ignored', async () => {
   const inserted: { params?: unknown[] } = {};
   let seen: { id: string; rid: string } | undefined;
   const lookup: FetchRegistration = async (id, rid) => { seen = { id, rid }; return { kind: 'found', registration: registration() }; };
   const before = Date.now();
   const a = await buildServer(createPool([], inserted), lookup);
   a.log.level = 'silent';
-  const res = await post(a, { registration_id: REG, user_id: OTHER, amount_minor: 1, currency: 'EUR', event_id: 'x', expires_at: '2000-01-01T00:00:00Z' },
+  const res = await post(a, { registration_id: REG, user_id: OTHER, amount_minor: 1, currency: 'EUR', event_id: 'x', activity_id: 'client-act', expires_at: '2000-01-01T00:00:00Z' },
     { 'x-user-id': USER, 'x-trace-id': 'req-abcdef12' });
   assert.equal(res.statusCode, 201);
   const b = res.json();
@@ -138,6 +138,8 @@ test('POST /payments: 201, amount/currency/user/event_id come from Subscription,
   assert.equal(b.amount_minor, 4200);
   assert.equal(b.currency, 'USD');
   assert.equal(b.event_id, 'ev-9');
+  assert.equal(b.activity_id, 'act-7');
+  assert.equal(inserted.params![4], 'act-7');
   assert.deepEqual(seen, { id: REG, rid: 'req-abcdef12' });
   const exp = new Date(b.expires_at).getTime();
   assert.ok(exp >= before + 900_000 - 1000 && exp <= Date.now() + 900_000 + 1000);
@@ -151,6 +153,17 @@ test('POST /payments: null event_id is stored as NULL', async () => {
   assert.equal(res.statusCode, 201);
   assert.equal(inserted.params![3], null);
   assert.equal(res.json().event_id, null);
+});
+
+test('POST /payments: a lookup without activity_id is an invalid upstream body, 503', async () => {
+  const { createSubscriptionClient } = await import('../src/subscription.ts');
+  const body = { registration_id: REG, user_id: USER, status: 'PENDING_PAYMENT', amount_minor: 100, currency: 'USD', expires_at: '2999-01-01T00:00:00Z', event_id: null };
+  const fn = (async (url: string) => String(url).includes('/consult')
+    ? new Response(JSON.stringify({ host: 'h:1' }), { status: 200 })
+    : new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch;
+  const a = await buildServer(createPool(), createSubscriptionClient({ discovererUrl: 'http://d:1', fetchFn: fn }));
+  a.log.level = 'silent';
+  assertProblem(await post(a, { registration_id: REG }), 503, 'UPSTREAM_UNAVAILABLE');
 });
 
 test('POST /payments: 404 REGISTRATION_NOT_FOUND for unknown and for someone else\'s registration', async () => {
@@ -186,7 +199,7 @@ test('POST /payments: 409 (not 503) for non-pending registrations with null expi
 
 test('POST /payments: end to end through the client, null expires_at is 409 when CONFIRMED, 503 when PENDING_PAYMENT or garbage', async () => {
   const { createSubscriptionClient } = await import('../src/subscription.ts');
-  const body = { registration_id: REG, user_id: USER, status: 'PENDING_PAYMENT', amount_minor: 100, currency: 'USD', event_id: null };
+  const body = { registration_id: REG, user_id: USER, status: 'PENDING_PAYMENT', amount_minor: 100, currency: 'USD', event_id: null, activity_id: 'act-1' };
   const cases: [object, number, string][] = [
     [{ status: 'CONFIRMED', expires_at: null }, 409, 'REGISTRATION_NOT_PAYABLE'],
     [{ status: 'CANCELLED', expires_at: null, amount_minor: 0 }, 409, 'REGISTRATION_NOT_PAYABLE'],

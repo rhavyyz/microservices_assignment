@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createSubscriptionClient } from '../src/subscription.ts';
 
-const reg = { registration_id: 'r1', user_id: 'u1', status: 'PENDING_PAYMENT', amount_minor: 2500, currency: 'brl', expires_at: '2030-01-01T00:00:00Z', event_id: null };
+const reg = { registration_id: 'r1', user_id: 'u1', status: 'PENDING_PAYMENT', amount_minor: 2500, currency: 'brl', expires_at: '2030-01-01T00:00:00Z', event_id: null, activity_id: 'act-1' };
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 type Call = { url: string; headers: Record<string, string> };
@@ -26,6 +26,7 @@ test('consults the discoverer for kind subscription, forwards X-Trace-Id, caches
   const r = await lookup('r1', 'req-12345678');
   assert.equal(r.kind, 'found');
   assert.ok(r.kind === 'found' && r.registration.currency === 'BRL');
+  assert.ok(r.kind === 'found' && r.registration.activity_id === 'act-1');
   assert.equal(f.calls[0].url, 'http://disc:1/consult?kind=subscription');
   assert.equal(f.calls[1].url, 'http://sub-1:8000/internal/registrations/r1');
   assert.equal(f.calls[1].headers['x-trace-id'], 'req-12345678');
@@ -38,6 +39,8 @@ test('404 is not_found; 5xx, odd statuses and invalid bodies are unavailable', a
     [json(404, { code: 'X' }), 'not_found'], [json(500, {}), 'unavailable'], [json(403, {}), 'unavailable'],
     [json(200, { ...reg, amount_minor: '2500' }), 'unavailable'], [json(200, { nope: 1 }), 'unavailable'],
     [json(200, { ...reg, event_id: 5 }), 'unavailable'],
+    [json(200, { ...reg, activity_id: undefined }), 'unavailable'], [json(200, { ...reg, activity_id: '' }), 'unavailable'],
+    [json(200, { ...reg, activity_id: 7 }), 'unavailable'], [json(200, { ...reg, status: 'CONFIRMED', expires_at: null, activity_id: undefined }), 'unavailable'],
     [json(200, { ...reg, expires_at: 'soon' }), 'unavailable'], [json(200, { ...reg, expires_at: '2030-13-45T00:00:00Z' }), 'unavailable'],
     [json(200, { ...reg, expires_at: '2030-01-01T00:00:00' }), 'unavailable'], [json(200, { ...reg, expires_at: 1893456000 }), 'unavailable'],
   ];

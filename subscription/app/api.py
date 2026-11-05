@@ -32,6 +32,7 @@ class InternalRegistration(BaseModel):
     """Fatos da inscrição lidos por Pagamentos; sem identidade nem dados de contato."""
 
     registration_id: UUID
+    activity_id: UUID
     user_id: UUID
     status: str
     amount_minor: int

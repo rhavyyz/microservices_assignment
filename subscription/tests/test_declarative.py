@@ -327,6 +327,7 @@ def test_internal_registration_returns_contract_shape_without_auth():
     expires = now() + timedelta(minutes=15)
     row = {
         "registration_id": uuid4(),
+        "activity_id": uuid4(),
         "user_id": uuid4(),
         "status": "PENDING_PAYMENT",
         "amount_minor": 2500,
@@ -341,6 +342,7 @@ def test_internal_registration_returns_contract_shape_without_auth():
     body = response.json()
     assert set(body) == {
         "registration_id",
+        "activity_id",
         "user_id",
         "status",
         "amount_minor",
@@ -350,6 +352,7 @@ def test_internal_registration_returns_contract_shape_without_auth():
     }
     assert body["registration_id"] == str(row["registration_id"]) and body["status"] == "PENDING_PAYMENT"
     assert body["amount_minor"] == 2500 and body["event_id"] == str(row["event_id"])
+    assert body["activity_id"] == str(row["activity_id"])
     assert datetime.fromisoformat(body["expires_at"]) == expires
     assert str(fake.asked[0]) == str(row["registration_id"])
 
@@ -357,6 +360,7 @@ def test_internal_registration_returns_contract_shape_without_auth():
 def test_internal_registration_nullable_fields():
     row = {
         "registration_id": uuid4(),
+        "activity_id": uuid4(),
         "user_id": uuid4(),
         "status": "CONFIRMED",
         "amount_minor": 0,
