@@ -161,23 +161,7 @@ Envelope: `event_id`, `schema_version=1`, `type`, `registration_id`, `activity_i
 - `RegistrationConfirmed`, `RegistrationCancelled`, `RegistrationExpired`, `RegistrationRejected`;
 - `AttendanceRecorded`, `AttendanceEligible`.
 
-`AttendanceEligible` (RN06) é por pessoa e **evento** e só é emitido quando a regra é atendida:
-percentual de presença >= `ATTENDANCE_MIN_PERCENT` (padrão 75; número em (0, 100]), onde
-percentual = atividades do evento com inscrição confirmada e check-in ÷ atividades do evento com
-inscrição confirmada. É avaliado quando a última atividade confirmada da pessoa no evento encerra
-(`ActivityEnded`) ou é cancelada (`ActivityCancelled`; a cancelada não entra na conta e, sem atividades
-restantes, nada é emitido);
-abaixo do mínimo nada é publicado. Emitido no máximo uma vez por (pessoa, evento)
-(`event_attendance_emitted`): a primeira conclusão vence, e inscrição confirmada tardiamente em
-outra atividade do mesmo evento não gera segunda emissão (limitação conhecida). Atividades
-encerradas antes da migração 003 não são reavaliadas.
-
-Campos adicionais (somente neste tipo; mudança aditiva, `schema_version` continua 1):
-`parent_event_id` (id do evento no serviço de Eventos, uuid), `attended_activities` (int),
-`total_activities` (int), `attendance_percentage` (número, até 2 casas). `event_id` continua sendo o
-uuid da mensagem, nunca o id do evento de Eventos. `registration_id`/`activity_id`/`aggregate_version`
-referem-se à inscrição da atividade cujo encerramento disparou a avaliação; a chave Kafka segue
-`registration_id`.
+`AttendanceEligible` significa atividade encerrada, inscrição confirmada e check-in válido.
 Certificados permanece responsável pela emissão, idempotência e regras adicionais próprias.
 Relatórios pode reconstruir projeções por esses eventos; nunca deve escrever no banco de Inscrições.
 Consumidores deduplicam por event_id e usam aggregate_version para rejeitar estados antigos.

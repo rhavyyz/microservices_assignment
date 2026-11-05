@@ -110,12 +110,6 @@ public class UserService {
         return user;
     }
 
-    /** Consulta interna por id: qualquer usuário existente (ativo ou não) é devolvido; nada é gravado no log. */
-    @Transactional(readOnly = true)
-    public User getName(UUID id) {
-        return users.findById(id).orElseThrow(ApiException::internalUserNotFound);
-    }
-
     /** Atualiza somente o nome. O id vem do token validado, nunca do corpo da requisição. */
     @Transactional
     public User updateName(UUID id, String rawName) {

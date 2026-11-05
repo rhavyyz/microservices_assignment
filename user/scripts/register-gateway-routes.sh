@@ -30,4 +30,3 @@ open_endpoint PATCH /api/v1/users/me      30  user_or_ip
 open_endpoint GET   /api/v1/users         60  user_or_ip   # search; ORGANIZER only (the service checks the role)
 # Not opened on purpose: /healthcheck and /openapi.json (internal) and /.well-known/jwks.json (other services
 # fetch it directly through the service-discoverer, see docs/integration/contracts-with-team.md).
-# Also not opened, never: GET /internal/users/{id} (unauthenticated id+name lookup for other services; network only).

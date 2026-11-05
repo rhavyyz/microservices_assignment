@@ -57,11 +57,6 @@ public class ApiException extends RuntimeException {
                 "O usuário da sessão não existe mais.", null);
     }
 
-    public static ApiException internalUserNotFound() {
-        return new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Usuário não encontrado",
-                "O usuário solicitado não existe.", null);
-    }
-
     public HttpStatus status() {
         return status;
     }

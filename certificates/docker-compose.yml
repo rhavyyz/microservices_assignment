@@ -19,38 +19,9 @@ services:
       retries: 10
       start_period: 10s
 
-  # S3-compatible blob store (SeaweedFS: master + volume + filer + S3 gateway in one container) for the generated PDFs.
-  # Private: no host ports; reached as certificates-s3:8333 (path-style). Credentials have no default (like the db password):
-  # the entrypoint writes the S3 identities file from them at start and exits if either is empty, so the gateway never
-  # runs anonymous or with a known key. Unsigned and wrongly signed requests are rejected by the gateway.
-  certificates-s3:
-    image: chrislusf/seaweedfs:3.97
-    restart: unless-stopped
-    entrypoint:
-      - sh
-      - -c
-      - |
-        set -eu
-        [ -n "$${S3_ACCESS_KEY:-}" ] && [ -n "$${S3_SECRET_KEY:-}" ] || { echo "CERTIFICATES_S3_ACCESS_KEY and CERTIFICATES_S3_SECRET_KEY must be set" >&2; exit 1; }
-        umask 077
-        printf '{"identities":[{"name":"certificates","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write","List","Tagging"]}]}' "$$S3_ACCESS_KEY" "$$S3_SECRET_KEY" > /tmp/s3.json
-        exec weed server -dir=/data -s3 -s3.port=8333 -s3.config=/tmp/s3.json -master.volumeSizeLimitMB=256
-    environment:
-      S3_ACCESS_KEY: ${CERTIFICATES_S3_ACCESS_KEY:-}
-      S3_SECRET_KEY: ${CERTIFICATES_S3_SECRET_KEY:-}
-    volumes:
-      - certificates-s3-data:/data
-    networks: [certificates-net]
-    healthcheck:
-      test: ["CMD-SHELL", "H=$$(hostname -i) && wget -qO- http://$$H:9333/cluster/status >/dev/null && wget -qO- http://$$H:8333/status >/dev/null"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 15s
-
 networks:
   certificates-net:
 
 volumes:
   certificates-db-data:
-  certificates-s3-data:
+  certificates-pdf-data:

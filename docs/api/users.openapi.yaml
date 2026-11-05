@@ -26,7 +26,6 @@ tags:
   - name: Autenticação
   - name: Perfil
   - name: Infraestrutura
-  - name: Interno
 paths:
   /api/v1/auth/register:
     post:
@@ -328,49 +327,6 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "500":
           $ref: "#/components/responses/InternalError"
-  /internal/users/{id}:
-    get:
-      tags: [Interno]
-      operationId: getUserName
-      summary: Consulta o nome de exibição de um usuário (uso interno)
-      description: |
-        **Interno — não é exposto pelo Gateway** (protegido por isolamento de rede, não por token). Permite que
-        outros serviços (ex.: Certificados, em consumidores de fila sem token de usuário) obtenham o nome de um
-        participante pelo id. Retorna **somente** `id` e `name` (nunca e-mail, papéis, status, datas ou hash).
-        Qualquer usuário existente é devolvido, ativo ou não. O nome não é gravado nos logs.
-      security: []
-      parameters:
-        - $ref: "#/components/parameters/RequestId"
-        - name: id
-          in: path
-          required: true
-          description: UUID do usuário.
-          schema:
-            type: string
-            format: uuid
-      responses:
-        "200":
-          description: Id e nome do usuário.
-          headers:
-            X-Request-Id:
-              $ref: "#/components/headers/RequestId"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/UserName"
-              example:
-                id: 7b1a9b7d-045e-4d58-85b3-345a6f78a101
-                name: Mariana Costa
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "404":
-          description: Usuário inexistente (`NOT_FOUND`).
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Problem"
-        "500":
-          $ref: "#/components/responses/InternalError"
 
 components:
   securitySchemes:
@@ -559,15 +515,6 @@ components:
         status:
           type: string
           enum: [ACTIVE, INACTIVE]
-    UserName:
-      type: object
-      required: [id, name]
-      properties:
-        id:
-          type: string
-          format: uuid
-        name:
-          type: string
     UserPage:
       type: object
       required: [items, page, size, totalElements, totalPages]

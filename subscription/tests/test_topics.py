@@ -68,19 +68,6 @@ def test_settings_partitions(monkeypatch):
             Settings.from_env()
 
 
-def test_settings_attendance_min_percent(monkeypatch):
-    monkeypatch.setenv("SUBSCRIPTION_DATABASE_URL", "postgresql://x")
-    monkeypatch.delenv("ATTENDANCE_MIN_PERCENT", raising=False)
-    assert Settings.from_env().attendance_min_percent == 75
-    for good, value in (("100", 100), ("0.5", 0.5), ("80", 80)):
-        monkeypatch.setenv("ATTENDANCE_MIN_PERCENT", good)
-        assert Settings.from_env().attendance_min_percent == value
-    for bad in ("0", "-1", "100.1", "abc", "", "nan"):
-        monkeypatch.setenv("ATTENDANCE_MIN_PERCENT", bad)
-        with pytest.raises(ValueError, match="ATTENDANCE_MIN_PERCENT"):
-            Settings.from_env()
-
-
 def test_clients_wait_for_topics_then_proceed(db, service, settings, monkeypatch):
     events = []
     attempts = []

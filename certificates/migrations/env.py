@@ -12,8 +12,7 @@ from app.models.certificate import Certificate  # noqa: F401
 config = context.config
 
 if config.config_file_name is not None:
-    # Do not silence the application's loggers when migrations run in-process (app.migrate).
-    fileConfig(config.config_file_name, disable_existing_loggers=False)
+    fileConfig(config.config_file_name)
 
 # Read the database URL from the application's configuration.
 if not settings.database_url:
