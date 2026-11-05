@@ -96,3 +96,21 @@ Verificar de novo o que o Gateway já verificou duplica a lógica e cria dois po
 ### Não decidido
 - Se o `Authorization` deve continuar sendo reencaminhado ao Eventos, agora que ele também recebe `X-User-Id`/`X-User-Roles`.
 - Se os demais serviços (Eventos, Pagamentos, Notificações) adotam o mesmo modelo de cabeçalhos.
+
+## Atualização: configurações do endpoint declaradas pelo serviço, `x-gateway` (2026-11-05)
+
+### Contexto
+O Gateway cadastrava todo endpoint novo como privado, com os padrões, e cada serviço precisava de um script (`PUT /admin/endpoints`) para abrir suas rotas. A descrição do endpoint (OpenAPI) já é lida na sincronização, mas só trazia método e caminho.
+
+### Decisão
+1. Cada operação do `GET /openapi.json` pode declarar `x-gateway` (extensão de fornecedor) com `isPublic`, `requireAuth`, `maxPerMin` e `rateLimitBy`, os mesmos nomes da API admin. Todas as chaves são opcionais; o que faltar (ou for inválido) usa o padrão de hoje: privado, `requireAuth=false`, `DEFAULT_MAX_PER_MIN`, `user_or_ip`.
+2. A declaração vale **apenas na primeira inserção** do endpoint. Endpoint já armazenado nunca é sobrescrito pela especificação: o `PUT /admin/endpoints` continua sendo a autoridade em tempo de execução, e mudar a declaração depois não altera um endpoint já armazenado. Para reaplicar, o admin faz `PUT` com os valores ou apaga o documento do endpoint.
+3. Valor inválido em uma chave é ignorado só naquela chave e registrado no log; `x-gateway` que não é objeto é ignorado. Nunca falha a sincronização.
+
+### Alternativas
+- **A especificação como fonte contínua da verdade** (reaplicar a declaração a cada sincronização): **descartada**, pois desfaria as edições feitas pelo admin em produção e tiraria dele o controle em tempo de execução.
+
+### Consequências
+- **Risco aceito:** um serviço agora pode declarar a si mesmo como público. Mitigação: rede confiável, os serviços são da própria equipe e a API admin segue como controle em tempo de execução (pode fechar o endpoint a qualquer momento).
+- Só a primeira inserção honra a declaração; endpoints já existentes no banco continuam como estão até um `PUT` ou até o documento ser apagado.
+- Os scripts de registro existentes continuam válidos e não foram alterados.
