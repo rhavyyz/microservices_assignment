@@ -4,9 +4,8 @@ export type PaymentView = {
   payment_id: string;
   registration_id: string;
   user_id: string;
-  event_id: string;
-  activity_id: string;
-  amount: number;
+  event_id: string | null;
+  amount_minor: number;
   currency: string;
   status: string;
 };
@@ -14,11 +13,12 @@ export type PaymentView = {
 export type Outgoing = { key: string; value: string };
 
 const TYPES: Record<string, string> = {
-  PENDING: 'payment.created',
-  CONFIRMED: 'payment.confirmed',
-  REFUSED: 'payment.refused',
-  EXPIRED: 'payment.expired',
-  CANCELLED: 'payment.cancelled',
+  PENDING: 'PaymentCreated',
+  APPROVED: 'PaymentApproved',
+  DECLINED: 'PaymentDeclined',
+  EXPIRED: 'PaymentExpired',
+  CANCELLED: 'PaymentCancelled',
+  REFUNDED: 'PaymentRefunded',
 };
 
 export function eventTypeFor(status: string): string {
@@ -27,49 +27,57 @@ export function eventTypeFor(status: string): string {
   return t;
 }
 
-/** Envelope consumed by the reports service (and anyone else): see README, "Events published". */
+/**
+ * Flat envelope in Subscription's naming (see subscription/CONTRACTS.md): `event_id` is this message's unique id,
+ * so the payment's Events-service event is published as `parent_event_id`. See README, "Events published".
+ */
 export function buildPaymentEvent(
   p: PaymentView,
   reason: string | null,
-  correlationId: string | null,
-  messageId: string,
+  requestId: string | null,
+  eventId: string,
   occurredAt: Date,
 ): Outgoing {
   return {
     key: p.registration_id,
     value: JSON.stringify({
-      message_id: messageId,
+      event_id: eventId,
+      schema_version: 1,
       type: eventTypeFor(p.status),
-      version: 1,
       occurred_at: occurredAt.toISOString(),
-      correlation_id: correlationId,
-      data: {
-        payment_id: p.payment_id,
-        registration_id: p.registration_id,
-        user_id: p.user_id,
-        event_id: p.event_id,
-        activity_id: p.activity_id,
-        amount: p.amount,
-        currency: p.currency,
-        status: p.status,
-        reason,
-      },
+      request_id: requestId,
+      payment_id: p.payment_id,
+      registration_id: p.registration_id,
+      user_id: p.user_id,
+      parent_event_id: p.event_id,
+      amount_minor: p.amount_minor,
+      currency: p.currency,
+      status: p.status,
+      reason,
     }),
   };
+}
+
+/** Human amount from minor units (2 decimals), e.g. `BRL 25.00`. */
+export function formatAmount(amountMinor: number, currency: string): string {
+  return `${currency} ${(amountMinor / 100).toFixed(2)}`;
 }
 
 /** Message for the notifications topic (format in the monorepo README); null when the user needs no notice. */
 export function buildNotification(p: PaymentView): Outgoing | null {
   let message: string;
   switch (p.status) {
-    case 'CONFIRMED':
-      message = `Pagamento de ${p.currency} ${p.amount.toFixed(2)} confirmado. Sua inscrição está garantida.`;
+    case 'APPROVED':
+      message = `Pagamento de ${formatAmount(p.amount_minor, p.currency)} confirmado. Sua inscrição está garantida.`;
       break;
-    case 'REFUSED':
+    case 'DECLINED':
       message = 'Seu pagamento foi recusado. A vaga reservada foi liberada.';
       break;
     case 'EXPIRED':
       message = 'O prazo do pagamento expirou. A vaga reservada foi liberada.';
+      break;
+    case 'REFUNDED':
+      message = `Seu pagamento de ${formatAmount(p.amount_minor, p.currency)} foi reembolsado.`;
       break;
     default:
       return null; // PENDING and CANCELLED (the user themselves cancelled) are not notified

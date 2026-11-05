@@ -1,16 +1,15 @@
-import { Kafka, logLevel } from 'kafkajs';
+import { Kafka, logLevel, type Admin } from 'kafkajs';
 import { config } from './config.ts';
 
 export const kafka = new Kafka({ clientId: 'payments', brokers: config.kafkaBrokers, logLevel: logLevel.WARN });
 
 /** Creates the topics we use if missing (idempotent), so the service can boot before any other. */
-export async function ensureTopics(): Promise<void> {
-  const admin = kafka.admin();
+export async function ensureTopics(admin: Pick<Admin, 'connect' | 'createTopics' | 'disconnect'> = kafka.admin()): Promise<void> {
   await admin.connect();
   try {
     await admin.createTopics({
       waitForLeaders: true,
-      topics: [config.paymentsTopic, config.subscriptionTopic, config.notificationsTopic].map((topic) => ({
+      topics: [config.paymentEventsTopic, config.notificationsTopic, config.subscriptionTopic].map((topic) => ({
         topic,
         numPartitions: config.topicPartitions,
         replicationFactor: 1,

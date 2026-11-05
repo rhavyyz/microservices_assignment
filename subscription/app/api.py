@@ -3,6 +3,7 @@
 import logging
 import re
 from contextlib import asynccontextmanager
+from datetime import datetime
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, Query, Request, Response
@@ -25,6 +26,18 @@ log = logging.getLogger(__name__)
 class CreateRegistration(BaseModel):
     model_config = ConfigDict(extra="forbid")
     join_waitlist: bool = True
+
+
+class InternalRegistration(BaseModel):
+    """Fatos da inscrição lidos por Pagamentos; sem identidade nem dados de contato."""
+
+    registration_id: UUID
+    user_id: UUID
+    status: str
+    amount_minor: int
+    currency: str
+    expires_at: datetime | None
+    parent_event_id: UUID | None
 
 
 def create_app(settings=None, database=None, services=None, authenticator=None):
@@ -106,6 +119,17 @@ def create_app(settings=None, database=None, services=None, authenticator=None):
             conn.execute("SELECT 1")
         return {"status": "UP"}
 
+    # Rota interna (isolamento de rede, sem autenticação): fora do OpenAPI e do register_gateway.
+    @app.get(
+        "/internal/registrations/{registration_id}", response_model=InternalRegistration, include_in_schema=False
+    )
+    def internal_registration(registration_id: str):
+        try:
+            parsed = UUID(registration_id)
+        except ValueError:
+            raise DomainError(404, "REGISTRATION_NOT_FOUND") from None
+        return service.internal_registration(parsed)
+
     @app.post("/api/v1/activities/{activity_id}/registrations", status_code=201)
     def create(
         activity_id: UUID,
@@ -120,7 +144,7 @@ def create_app(settings=None, database=None, services=None, authenticator=None):
             response.status_code = 200
             return existing
         activity = external.activity(activity_id, outbound(request, who))
-        return service.create(who.user_id, activity, body.join_waitlist)
+        return service.create(who.user_id, activity, body.join_waitlist, request.state.trace_id)
 
     @app.get("/api/v1/activities/{activity_id}/availability")
     def availability(activity_id: UUID, request: Request, who=Depends(principal)):
@@ -136,14 +160,17 @@ def create_app(settings=None, database=None, services=None, authenticator=None):
         return service.get(registration_id, who.user_id)
 
     @app.post("/api/v1/registrations/{registration_id}/cancel")
-    def cancel(registration_id: UUID, who=Depends(principal)):
-        return service.cancel(registration_id, who.user_id)
+    def cancel(registration_id: UUID, request: Request, who=Depends(principal)):
+        return service.cancel(registration_id, who.user_id, request.state.trace_id)
 
     @app.post("/api/v1/registrations/{registration_id}/accept-offer")
     def accept(registration_id: UUID, request: Request, who=Depends(principal)):
         reg = service.get(registration_id, who.user_id)
         return service.accept(
-            registration_id, who.user_id, external.activity(reg["activity_id"], outbound(request, who))
+            registration_id,
+            who.user_id,
+            external.activity(reg["activity_id"], outbound(request, who)),
+            request.state.trace_id,
         )
 
     @app.get("/api/v1/activities/{activity_id}/registrations")
@@ -164,7 +191,10 @@ def create_app(settings=None, database=None, services=None, authenticator=None):
         reg = service.get(registration_id)
         organizer(reg["activity_id"], request, who)
         return service.check_in(
-            registration_id, who.user_id, external.activity(reg["activity_id"], outbound(request, who))
+            registration_id,
+            who.user_id,
+            external.activity(reg["activity_id"], outbound(request, who)),
+            request.state.trace_id,
         )
 
     return app

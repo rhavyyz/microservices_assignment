@@ -141,7 +141,7 @@ def test_clients_wait_for_topics_then_proceed(db, service, settings, monkeypatch
         t.join(5)
     assert events[0] == "ensured"
     assert sorted(events[1:]) == ["consumer", "producer"]
-    assert len(attempts) == 3 and len(set(attempts[0])) == 6
+    assert len(attempts) == 3 and len(set(attempts[0])) == 5
     assert waits == [2, 4]
 
 

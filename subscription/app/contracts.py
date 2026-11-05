@@ -29,19 +29,24 @@ class Activity(BaseModel):
 
 
 class PaymentEvent(BaseModel):
-    """Snapshot financeiro versionado: eventos e reconciliação usam o mesmo contrato."""
+    """Resultado publicado por Pagamentos; campos adicionais são ignorados."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     event_id: UUID
     schema_version: Literal[1]
     type: Literal[
-        "PaymentApproved", "PaymentDeclined", "PaymentExpired", "PaymentCancelled", "PaymentRefunded"
+        "PaymentCreated",
+        "PaymentApproved",
+        "PaymentDeclined",
+        "PaymentExpired",
+        "PaymentCancelled",
+        "PaymentRefunded",
     ]
     registration_id: UUID
-    payment_attempt_id: UUID
-    provider_version: int = Field(gt=0, strict=True)
     amount_minor: int = Field(ge=0, strict=True)
-    currency: str = Field(pattern=r"^[A-Z]{3}$")
+    currency: str
+    # Eco do request_id que originou o pagamento; nulo/ausente quando a origem foi trabalho de fundo.
+    request_id: str | None = None
 
 
 class ActivityEvent(BaseModel):

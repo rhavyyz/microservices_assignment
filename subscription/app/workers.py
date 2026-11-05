@@ -21,7 +21,7 @@ class Workers:
         self.threads = []
 
     def start(self):
-        for target in (self.ensure, self.publish, self.consume, self.maintain, self.reconcile, self.register):
+        for target in (self.ensure, self.publish, self.consume, self.maintain, self.register):
             thread = threading.Thread(target=target, name=target.__name__, daemon=True)
             thread.start()
             self.threads.append(thread)
@@ -33,7 +33,7 @@ class Workers:
 
     def topic_names(self):
         s = self.settings
-        return [s.payment_topic, s.payment_commands, s.events_topic, s.domain_topic, s.notifications_topic, s.dlq_topic]
+        return [s.payment_topic, s.events_topic, s.domain_topic, s.notifications_topic, s.dlq_topic]
 
     def ensure(self):
         # Tópicos novos só são vistos pelo librdkafka após o refresh de metadados; criá-los antes evita a espera.
@@ -187,24 +187,10 @@ class Workers:
                 consumer.close()
 
     def maintain(self):
-        """Expiração não espera pelas consultas HTTP de reconciliação financeira."""
+        """A expiração das reservas é a autoridade sobre a vaga; não depende de eventos de Pagamentos."""
         while not self.stop.is_set():
             try:
                 self.service.expire()
             except Exception:
                 log.warning("expiration_failed")
             self.stop.wait(2)
-
-    def reconcile(self):
-        while not self.stop.is_set():
-            try:
-                for attempt in self.service.reconciliation_candidates():
-                    if self.stop.is_set():
-                        break
-                    try:
-                        self.service.reconcile(attempt["id"], self.services.payment(attempt["id"]))
-                    except Exception:
-                        log.warning("payment_reconciliation_failed", extra={"attempt_id": str(attempt["id"])})
-            except Exception:
-                log.warning("reconciliation_failed")
-            self.stop.wait(self.settings.reconcile_seconds)

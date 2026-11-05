@@ -31,7 +31,7 @@ def test_outbox_real_client_roundtrip(service, db, settings):
         }
     )
     try:
-        consumer.subscribe([settings.payment_commands])
+        consumer.subscribe([settings.domain_topic])
         deadline = time.monotonic() + 15
         message = None
         while time.monotonic() < deadline:
@@ -41,7 +41,7 @@ def test_outbox_real_client_roundtrip(service, db, settings):
                 break
         assert message is not None
         payload = json.loads(message.value())
-        assert payload["type"] == "PaymentRequested"
+        assert payload["type"] == "RegistrationPendingPayment"
         assert payload["registration_id"] == reg["id"]
         assert message.key().decode() == reg["id"]
         consumer.commit(message=message, asynchronous=False)

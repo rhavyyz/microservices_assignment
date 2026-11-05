@@ -17,7 +17,7 @@ em [CONTRACTS.md](CONTRACTS.md); Eventos e Pagamentos ainda são placeholders no
 | `app/contracts.py` | Validação estrita das respostas e eventos externos |
 | `app/security.py` | Identidade pelos cabeçalhos `X-User-Id`/`X-User-Roles` do gateway |
 | `app/integrations.py` | HTTP com timeout e protocolo do discoverer |
-| `app/workers.py` | Expiração, outbox, consumo Kafka, reconciliação e registro |
+| `app/workers.py` | Expiração, outbox, consumo Kafka e registro |
 | `app/db.py` e `app/migrations/` | Pool, transações e migrações versionadas |
 | `tests/` | Concorrência em PostgreSQL real, API, identidade por cabeçalhos e falhas de mensageria |
 
@@ -28,7 +28,7 @@ em [CONTRACTS.md](CONTRACTS.md); Eventos e Pagamentos ainda são placeholders no
 - Contadores, inscrição e mensagens da outbox são confirmados juntos. Constraints impõem
   `reserved + confirmed <= capacity`, não negatividade e uma inscrição ativa por pessoa/atividade.
 - Capacidade é copiada da API confiável de Eventos. Um trigger proíbe sua alteração.
-- Atividade gratuita confirma imediatamente; paga reserva e solicita cobrança assíncrona.
+- Atividade gratuita confirma imediatamente; paga reserva (`PENDING_PAYMENT`) e emite `RegistrationPendingPayment`; Pagamentos reage a esse evento.
   O valor/moeda são fotografados na inscrição e preservados inclusive durante a fila.
 - A inscrição é idempotente por pessoa e atividade: repeti-la devolve a inscrição existente
   com 200 (sem consultar Eventos); uma nova é 201. Após cancelar ou expirar, nova inscrição é permitida.
@@ -37,11 +37,12 @@ em [CONTRACTS.md](CONTRACTS.md); Eventos e Pagamentos ainda são placeholders no
 - Fila FIFO por sequência no banco. Liberação e promoção ocorrem sob o mesmo lock,
   impedindo que uma inscrição nova passe na frente. Oferta possui reserva e prazo.
 - Expiração usa relógio do banco após aquisição do lock. Pagamento recebido após vencimento
-  não confirma, mesmo que tenha ocorrido anteriormente no provedor: solicita estorno.
-- Cancelamento libera a vaga imediatamente em transação local. Compensação financeira
-  é assíncrona e seu estado aparece separadamente em `payment.status` no GET individual.
-- Pagamento aprovado após cancelamento/expiração gera `PaymentRefundRequested`.
-  Cancelamento de tentativa ainda pendente gera `PaymentCancelRequested`.
+  não confirma, mesmo que tenha ocorrido anteriormente no provedor: é ignorado e Pagamentos estorna.
+- Cancelamento libera a vaga imediatamente em transação local. Inscrições é declarativa: não
+  envia comandos nem chama Pagamentos; cancelamento/expiração são só eventos de domínio e
+  Pagamentos cancela ou estorna por conta própria. O prazo da reserva é a autoridade sobre a vaga.
+- `PaymentApproved` confirma só uma inscrição `PENDING_PAYMENT` dentro do prazo e com o mesmo
+  valor/moeda; `PaymentDeclined` rejeita e promove a fila; os demais resultados são informativos.
 - Check-in exige inscrição confirmada, período da atividade e organizador responsável.
   Critério de presença (RN06): o certificado é por **evento**, não por atividade. Percentual =
   atividades do evento com inscrição `CONFIRMED` **e** check-in ÷ atividades do evento com inscrição
@@ -84,7 +85,7 @@ python subscription/scripts/register_gateway.py --gateway http://localhost:8080
 
 O gateway verifica o JWT (`requireAuth=true`) e injeta `X-User-Id` (UUID do `sub`) e `X-User-Roles`
 (separados por vírgula); Inscrições **não valida JWT**: a identidade vem somente desses cabeçalhos,
-nunca do corpo. Sem `X-User-Id` válido a resposta é 401 `UNAUTHENTICATED`. Nas chamadas a Eventos em nome do usuário, o serviço repassa `X-User-Id`, `X-User-Roles`, `X-Request-Id` e o `Authorization` (sem verificá-lo); chamadas de fundo (Kafka, reconciliação) não levam identidade.
+nunca do corpo. Sem `X-User-Id` válido a resposta é 401 `UNAUTHENTICATED`. Nas chamadas a Eventos em nome do usuário, o serviço repassa `X-User-Id`, `X-User-Roles`, `X-Request-Id` e o `Authorization` (sem verificá-lo); chamadas de fundo (Kafka) não levam identidade.
 O Gateway é a única porta publicada; os serviços internos não têm porta no host e confiam nos cabeçalhos `X-User-Id`/`X-User-Roles` que somente o Gateway define (ele descarta os enviados pelo cliente). `/healthcheck` e `/openapi.json`
 não são publicados pelo script. A execução do script altera apenas os registros dessas rotas.
 
@@ -131,7 +132,7 @@ recurso alheio retorna 404, acesso administrativo negado retorna 403.
 ## Mensageria e recuperação
 
 Na inicialização, em segundo plano (a API nunca depende do Kafka para subir), o serviço cria, se
-ausentes, todos os tópicos que usa — `payments.events`, `payments.commands`, `events.events`,
+ausentes, todos os tópicos que usa — `payments.events`, `events.events`,
 `subscription.events`, `notifications` e `subscription.dlq` — com `SUBSCRIPTION_TOPIC_PARTITIONS`
 partições (padrão 6). Tópicos existentes nunca são alterados. Se o Kafka estiver fora, a criação é
 repetida com espera crescente (2 s a 30 s); publicador e consumer só iniciam depois dela. O consumer
@@ -151,8 +152,9 @@ Notificações atual deduplica por offset, não por evento de negócio; republic
 pode produzir duas notificações. O `payload.event_id` é estável, mas deduplicá-lo exigiria
 alteração naquele serviço, deliberadamente fora deste trabalho.
 
-Reconciliação consulta snapshots de tentativas financeiras pendentes e repete compensações
-com chave estável. Snapshot inexistente/serviço indisponível não é interpretado como recusa.
+Não há reconciliação financeira nem tabela de tentativas de pagamento (migração `004`): Pagamentos lê
+os fatos de uma inscrição em `GET /internal/registrations/{id}` (rota interna, sem autenticação, fora do
+OpenAPI e do gateway) e decide sozinho cobrança, expiração e estorno.
 Inbox, histórico e outbox não têm limpeza automática nesta versão, evitando apagar evidências
 necessárias à deduplicação. Defina retenção operacional antes de uso prolongado.
 
