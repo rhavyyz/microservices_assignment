@@ -9,7 +9,7 @@ from app.models.certificate import Certificate
 
 
 class CertificateAlreadyExistsError(RuntimeError):
-    """A certificate already exists for this registration."""
+    """A certificate already exists for this registration, or for this user and event."""
 
 
 class CertificateRepository:
@@ -22,6 +22,18 @@ class CertificateRepository:
     ) -> Certificate | None:
         statement = select(Certificate).where(
             Certificate.registration_id == registration_id
+        )
+
+        return self.session.scalar(statement)
+
+    def get_by_user_and_event(
+        self,
+        user_id: uuid.UUID,
+        event_id: uuid.UUID,
+    ) -> Certificate | None:
+        statement = select(Certificate).where(
+            Certificate.user_id == user_id,
+            Certificate.event_id == event_id,
         )
 
         return self.session.scalar(statement)
@@ -55,12 +67,14 @@ class CertificateRepository:
         registration_id: uuid.UUID,
         user_id: uuid.UUID,
         activity_id: uuid.UUID,
+        event_id: uuid.UUID,
         file_path: str,
     ) -> Certificate:
         certificate = Certificate(
             registration_id=registration_id,
             user_id=user_id,
             activity_id=activity_id,
+            event_id=event_id,
             file_path=file_path,
         )
 
@@ -71,11 +85,14 @@ class CertificateRepository:
             self.session.refresh(certificate)
         except IntegrityError as exc:
             self.session.rollback()
-            # Lost a race on the unique registration_id; any other violation is a real error.
-            if self.get_by_registration_id(registration_id) is None:
+            # Lost a race on a unique key (registration_id or user + event); any other violation is a real error.
+            if (
+                self.get_by_registration_id(registration_id) is None
+                and self.get_by_user_and_event(user_id, event_id) is None
+            ):
                 raise
             raise CertificateAlreadyExistsError(
-                "A certificate already exists for this registration"
+                "A certificate already exists for this registration or for this user and event"
             ) from exc
         except Exception:
             self.session.rollback()

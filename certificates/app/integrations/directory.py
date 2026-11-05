@@ -1,6 +1,6 @@
 """Lookups the consumer makes before issuing a certificate (Events and Users, through the discoverer).
 
-The event is not trusted on its own: the activity, the event title and the participant's name are
+The event is not trusted on its own: the event (title and dates) and the participant's name are
 fetched from their owners. Nothing here logs response bodies (the name is personal data).
 """
 
@@ -24,9 +24,8 @@ class TransientError(Exception):
 
 
 @dataclass(frozen=True)
-class Activity:
+class Event:
     id: uuid.UUID
-    event_id: uuid.UUID
     title: str
     starts_at: datetime
     ends_at: datetime
@@ -65,28 +64,20 @@ def _aware(value: object) -> datetime:
 class Directory:
     """Thin client for the other services. Tests replace it with a fake."""
 
-    def get_activity(self, activity_id: uuid.UUID, request_id: str) -> Activity:
-        body = _get_json(Kind.EVENTS, f"/activities/{activity_id}", request_id, missing_reason="ACTIVITY_NOT_FOUND")
+    def get_event(self, event_id: uuid.UUID, request_id: str) -> Event:
+        body = _get_json(Kind.EVENTS, f"/events/{event_id}", request_id, missing_reason="EVENT_NOT_FOUND")
         try:
-            return Activity(
+            title = body["title"]
+            if not isinstance(title, str) or not title.strip():
+                raise ValueError("invalid title")
+            return Event(
                 id=uuid.UUID(str(body["id"])),
-                event_id=uuid.UUID(str(body["event_id"])),
-                title=str(body["title"]),
+                title=title,
                 starts_at=_aware(body["starts_at"]),
                 ends_at=_aware(body["ends_at"]),
             )
         except (KeyError, ValueError):
-            raise TransientError("events answered an invalid activity") from None
-
-    def get_event_title(self, event_id: uuid.UUID, request_id: str) -> str | None:
-        """The event title, or None if the event does not exist."""
-        body = _get_json(Kind.EVENTS, f"/events/{event_id}", request_id, missing_reason=None)
-        if body is None:
-            return None
-        title = body.get("title")
-        if not isinstance(title, str) or not title.strip():
-            raise TransientError("events answered an invalid event")
-        return title
+            raise TransientError("events answered an invalid event") from None
 
     def get_participant_name(self, user_id: uuid.UUID, request_id: str) -> str:
         body = _get_json(Kind.USER, f"/internal/users/{user_id}", request_id, missing_reason="USER_NOT_FOUND")

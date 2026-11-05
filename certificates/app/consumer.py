@@ -1,11 +1,13 @@
 """Certificates are created only here, from Subscription's `AttendanceEligible` events (ADR-006).
 
 Delivery is at least once: the offset is committed after processing, and a redelivered event is a
-no-op because registration_id is unique. The event is not trusted on its own; see AttendanceHandler.
+no-op because a certificate is unique per registration and per (user, event). The event is not trusted
+on its own; see AttendanceHandler.
 """
 
 import json
 import logging
+import math
 import threading
 import uuid
 from collections.abc import Callable
@@ -27,10 +29,9 @@ ELIGIBLE_TYPE = "AttendanceEligible"
 SCHEMA_VERSION = 1
 CONSUMER_GROUP = "certificates-service"
 
-# Subscription emits AttendanceEligible once a participant has at least one valid check-in (and only after the
-# activity ended). It does not send a percentage, so the eligibility rule (>= 75%) is applied to this fixed value:
-# the criterion "at least one valid check-in" is already satisfied by the event itself.
-ATTENDANCE_PERCENTAGE = 100
+# The percentage is computed by Subscription over the event's activities and is re-checked here: it must be
+# consistent with the counts (within one hundredth, the rounding Subscription applies).
+PERCENTAGE_TOLERANCE = 0.01 + 1e-9
 
 
 def _uuid(payload: dict, field: str) -> uuid.UUID:
@@ -38,6 +39,27 @@ def _uuid(payload: dict, field: str) -> uuid.UUID:
         return uuid.UUID(str(payload[field]))
     except (KeyError, ValueError):
         raise PoisonMessage("INVALID_CONTRACT") from None
+
+
+def _int(payload: dict, field: str) -> int:
+    value = payload.get(field)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise PoisonMessage("INVALID_CONTRACT")
+    return value
+
+
+def _attendance(payload: dict) -> tuple[int, int, float]:
+    """attended, total and the percentage, checked for shape and for consistency with each other."""
+    attended = _int(payload, "attended_activities")
+    total = _int(payload, "total_activities")
+    if total < 1 or not 0 <= attended <= total:
+        raise PoisonMessage("INVALID_CONTRACT")
+    percentage = payload.get("attendance_percentage")
+    if isinstance(percentage, bool) or not isinstance(percentage, (int, float)) or not math.isfinite(percentage):
+        raise PoisonMessage("INVALID_CONTRACT")
+    if abs(percentage - round(attended * 100 / total, 2)) > PERCENTAGE_TOLERANCE:
+        raise PoisonMessage("INVALID_CONTRACT")
+    return attended, total, percentage
 
 
 class AttendanceHandler:
@@ -72,12 +94,14 @@ class AttendanceHandler:
         registration_id = _uuid(payload, "registration_id")
         activity_id = _uuid(payload, "activity_id")
         user_id = _uuid(payload, "user_id")
+        parent_event_id = _uuid(payload, "parent_event_id")
+        _, _, attendance_percentage = _attendance(payload)
 
         request_id = str(uuid.uuid4())
         log.info("attendance_eligible_received registration_id=%s request_id=%s", registration_id, request_id)
 
         try:
-            self._issue(registration_id, activity_id, user_id, request_id)
+            self._issue(registration_id, activity_id, user_id, parent_event_id, attendance_percentage, request_id)
         except (PoisonMessage, TransientError):
             raise
         except CertificateAlreadyExistsError:
@@ -90,22 +114,32 @@ class AttendanceHandler:
             # Unexpected: never crash the consumer, never skip the message. Type only (messages may carry data).
             raise TransientError(f"unexpected {type(exc).__name__}") from None
 
-    def _issue(self, registration_id: uuid.UUID, activity_id: uuid.UUID, user_id: uuid.UUID, request_id: str) -> None:
+    def _issue(
+        self,
+        registration_id: uuid.UUID,
+        activity_id: uuid.UUID,
+        user_id: uuid.UUID,
+        event_id: uuid.UUID,
+        attendance_percentage: float,
+        request_id: str,
+    ) -> None:
         session = self.session_factory()
         try:
             service = CertificateService(session, self.storage_factory())
 
-            # Cheap idempotency check first: a redelivered event needs no lookups.
-            if service.repository.get_by_registration_id(registration_id) is not None:
+            # Cheap idempotency check first: a redelivered event, or a second one for the same user and event,
+            # needs no lookups (first completion wins).
+            if (
+                service.repository.get_by_registration_id(registration_id) is not None
+                or service.repository.get_by_user_and_event(user_id, event_id) is not None
+            ):
                 log.info("certificate_already_issued registration_id=%s", registration_id)
                 return
 
-            activity = self.directory.get_activity(activity_id, request_id)
-            event_name = self.directory.get_event_title(activity.event_id, request_id) or activity.title
-
-            if self.clock() < activity.ends_at:
-                # Subscription only emits after the end, so this is clock skew or an early event: retry later.
-                raise TransientError("activity has not ended yet")
+            event = self.directory.get_event(event_id, request_id)
+            if self.clock() < event.ends_at:
+                # Subscription only emits after the last activity ends, so this is clock skew or an early event.
+                raise TransientError("event has not ended yet")
 
             participant_name = self.directory.get_participant_name(user_id, request_id)
 
@@ -113,11 +147,12 @@ class AttendanceHandler:
                 registration_id=registration_id,
                 user_id=user_id,
                 activity_id=activity_id,
+                event_id=event_id,
                 participant_name=participant_name,
-                event_name=event_name,
-                event_date=activity.starts_at.date(),
+                event_name=event.title,
+                event_date=event.starts_at.date(),
                 event_ended=True,
-                attendance_percentage=ATTENDANCE_PERCENTAGE,
+                attendance_percentage=attendance_percentage,
             )
             log.info("certificate_issued registration_id=%s", registration_id)
         finally:

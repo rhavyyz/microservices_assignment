@@ -221,14 +221,16 @@ organizer actions need role `ORGANIZER` **and** an Events permission check on th
   the next person. The same lock prevents a new sign-up from jumping the queue.
 - Cancelling frees the seat immediately; refunds are asynchronous. A payment arriving after expiry or cancellation does
   not confirm: a refund is requested. A reconciliation job (every 60 s) re-checks pending payments.
-- Attendance rule in this version: one valid check-in. After `ActivityEnded`, it emits `AttendanceEligible` for
-  confirmed, present registrations. It does not issue certificates.
+- Attendance rule (RN06) is per event: attended activities over the event's confirmed activities. After the last
+  confirmed activity of the event ends, it emits `AttendanceEligible` once per user and event, only when the percentage
+  is >= 75%. It does not issue certificates.
 
 **Messaging.** Consumes `payments.events` and `events.events` (group `subscription-service`); produces `payments.commands`,
 `subscription.events` (`Registration*`, `WaitlistOffered`, `AttendanceRecorded`, `AttendanceEligible`), `notifications`,
 and `subscription.dlq`. Transactional outbox, inbox dedupe by `event_id`, `aggregate_version` to reject stale states.
 Envelope: `event_id`, `schema_version=1`, `type`, `registration_id`, `activity_id`, `user_id`, `aggregate_version`,
-`occurred_at`, `status`.
+`occurred_at`, `status`; `AttendanceEligible` adds `parent_event_id`, `attended_activities`, `total_activities`,
+`attendance_percentage`.
 
 **Config highlights:** `SUBSCRIPTION_DATABASE_URL`, `KAFKA_BROKERS`, `SERVICE_DISCOVERER_URL`, `RESERVATION_SECONDS`,
 `OFFER_SECONDS`, `SUBSCRIPTION_TOPIC_PARTITIONS`. Migrations run at startup.

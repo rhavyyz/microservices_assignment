@@ -10,6 +10,8 @@ class CertificateSummary(BaseModel):
     id: uuid.UUID
     registration_id: uuid.UUID
     activity_id: uuid.UUID
+    # None only for certificates issued per activity, before event_id existed.
+    event_id: uuid.UUID | None
     issued_at: datetime
 
 

@@ -6,12 +6,12 @@ Certificates are created **only** by consuming Subscription's `AttendanceEligibl
 
 ## Features
 
-- **Event-driven issuance:** a Kafka consumer (group `certificates-service`) turns `AttendanceEligible` events into certificates, after validating them against Events and Users instead of trusting the event.
-- **Eligibility validation:** A certificate can be issued only after the activity has ended and the attendance meets the minimum (75%).
+- **Event-driven issuance:** a Kafka consumer (group `certificates-service`) turns `AttendanceEligible` events into certificates, after validating them (contract, consistency, Certificates' own 75% rule) and checking Events and Users instead of trusting the event.
+- **Eligibility validation:** A certificate can be issued only after the event has ended and the event attendance percentage (supplied by Subscription and re-verified here) meets the minimum (75%).
 - **PDF generation:** Certificates are generated as A4 landscape PDF documents using ReportLab.
 - **Pluggable blob storage:** PDFs live outside the database, behind a storage interface with a local-filesystem backend and an S3-compatible backend (SeaweedFS in Compose).
-- **Database persistence:** Certificate metadata (including the owner `user_id` and the `activity_id`) is stored using SQLAlchemy; Alembic migrations run before the server starts.
-- **Duplicate prevention:** Each registration can have at most one certificate, which also makes redelivered events harmless.
+- **Database persistence:** Certificate metadata (including the owner `user_id`, the `event_id` and the `activity_id` of the triggering registration) is stored using SQLAlchemy; Alembic migrations run before the server starts.
+- **Duplicate prevention:** There is at most one certificate per registration and **one per (user, event)** (unique indexes), which also makes redelivered events harmless; the first completion wins.
 - **Owner-only API:** `GET /api/v1/certificates/me` and `GET /api/v1/certificates/{certificate_id}`; identity comes from the gateway's `X-User-Id` header.
 - **Health check:** The service checks database connectivity through `GET /healthcheck` (it does not depend on Kafka or the object store).
 - **Service discovery:** The service registers itself with the service discoverer in a background thread at startup.
@@ -62,11 +62,13 @@ certificates/
 
 ## Eligibility Rules
 
-1. The activity must have ended.
-2. The participant must meet the minimum attendance percentage (**75%**, an implementation assumption to confirm with the team).
-3. A certificate must not already exist for the participant's registration.
+The attendance rule (RN06) is about an **event**, not an activity: the percentage is the share of the event's activities the participant attended.
 
-**Attendance assumption:** Subscription emits `AttendanceEligible` when the participant has *at least one valid check-in*, and the event carries no percentage. The consumer therefore passes `attendance_percentage=100` to the eligibility rule, which is still applied through `CertificateService.issue_certificate`. If the team defines a real percentage, change the constant `ATTENDANCE_PERCENTAGE` in `app/consumer.py` and the event contract.
+1. The event must have ended (`now(UTC) >= ends_at` of the event, read from Events).
+2. The event attendance percentage must be at least **75%** (`MINIMUM_ATTENDANCE_PERCENTAGE` in `app/services/eligibility.py`, Certificates' own rule).
+3. A certificate must not already exist for the participant's registration, nor for the pair (user, event).
+
+**Percentage supplied and re-verified:** Subscription computes the percentage over the event's activities and emits `AttendanceEligible` only when its own rule is met, once per user and event, after the last confirmed activity of the event ends. Certificates does not blindly trust it: it validates the contract, checks that `attendance_percentage` equals `round(attended_activities * 100 / total_activities, 2)` (tolerance 0.01) and applies its own 75% threshold through `CertificateService.issue_certificate`. Certificates cannot recount check-ins itself: after the consistency check it trusts the counts.
 
 ## Kafka Consumer
 
@@ -74,17 +76,17 @@ The consumer is the only way a certificate is created. It runs in a daemon threa
 
 - **Topic:** `subscription.events` (group `certificates-service`, manual offset commit **after** processing, `topic.metadata.refresh.interval.ms=10000`).
 - **Topic provisioning (ADR-005):** before consuming, the service creates `subscription.events` and `certificates.dlq` if absent (replication 1, `CERTIFICATES_TOPIC_PARTITIONS` partitions, existing topics are never altered), retrying with backoff in the background until Kafka is up.
-- **Envelope (JSON):** `event_id`, `schema_version` (must be `1`), `type`, `registration_id`, `activity_id`, `user_id`, `aggregate_version`, `occurred_at`, `status`.
+- **Envelope (JSON):** `event_id`, `schema_version` (must be `1`), `type`, `registration_id`, `activity_id`, `user_id`, `aggregate_version`, `occurred_at`, `status`, plus the event-level fields `parent_event_id` (UUID of the Events event), `attended_activities` and `total_activities` (integers, `total >= 1`, `0 <= attended <= total`) and `attendance_percentage` (finite number, `attended * 100 / total` rounded to 2 decimals). `registration_id` and `activity_id` are those of the triggering registration (the last one to end).
 - **Only `type == "AttendanceEligible"` is acted on.** Every other type, including unknown ones, is acknowledged and ignored.
 
 For an `AttendanceEligible` event the service does its own validations before issuing:
 
-1. If a certificate already exists for `registration_id`, the event is a duplicate: success, commit.
-2. `GET /activities/{activity_id}` on Events (through the discoverer) for `title`, `event_id`, `starts_at`, `ends_at`. `404` is poison.
-3. `GET /events/{event_id}` on Events for the event title (falls back to the activity title on `404`).
-4. The activity must have ended (`now(UTC) >= ends_at`); otherwise nothing is issued and the message is retried later.
+1. Contract validation: `parent_event_id` is a UUID; `attended_activities` and `total_activities` are integers (booleans rejected) with `total >= 1` and `0 <= attended <= total`; `attendance_percentage` is a finite number consistent with the counts. A violation is poison (`INVALID_CONTRACT`).
+2. If a certificate already exists for `registration_id` or for `(user_id, parent_event_id)`, the event is a duplicate: success, commit, no lookups.
+3. `GET /events/{parent_event_id}` on Events (through the discoverer) for `title`, `starts_at`, `ends_at`. `404` is poison (`EVENT_NOT_FOUND`); any other failure is transient.
+4. The event must have ended (`now(UTC) >= ends_at`); otherwise nothing is issued and the message is retried later.
 5. `GET /internal/users/{user_id}` on Users for the participant name (`200 {"id","name"}`; `404` is poison). This endpoint is unauthenticated and protected by network isolation; it is never registered on the gateway.
-6. `CertificateService.issue_certificate` applies the eligibility rule (attendance fixed at 100, see above), renders the PDF (event date = date of `starts_at`), stores it and saves the row.
+6. `CertificateService.issue_certificate` applies the eligibility rule to the validated percentage (below 75% is poison, `NOT_ELIGIBLE`), renders the PDF (event name = event title, date = date of the event's `starts_at` in its own offset), stores it and saves the row.
 
 All outbound calls carry one `X-Request-Id` per message. Names and payloads are never logged; logs carry ids only.
 
@@ -93,9 +95,9 @@ All outbound calls carry one `X-Request-Id` per message. Names and payloads are 
 | Outcome | Examples | Action |
 |---|---|---|
 | Ignored | Any other `type` | Commit. |
-| Duplicate | Certificate already exists, including a lost unique-violation race | Commit. |
-| Poison | Malformed JSON, missing or non-UUID ids, `schema_version != 1`, unknown activity or user, not eligible | Publish a reference-only record (`source_topic`, `partition`, `offset`, `reason`) to `certificates.dlq`, then commit. |
-| Transient | Events/Users unreachable or non-2xx, activity not ended yet, storage or database failure, unexpected exception | Do not commit; seek back to the same message and retry after a backoff (2 s doubling to 30 s). The thread never crashes. |
+| Duplicate | Certificate already exists for the registration or for (user, event), including a lost unique-violation race | Commit. |
+| Poison | Malformed JSON, missing or non-UUID ids, invalid or inconsistent attendance fields, `schema_version != 1`, unknown event or user, not eligible (below 75%) | Publish a reference-only record (`source_topic`, `partition`, `offset`, `reason`) to `certificates.dlq`, then commit. |
+| Transient | Events/Users unreachable or non-2xx, event not ended yet, storage or database failure, unexpected exception | Do not commit; seek back to the same message and retry after a backoff (2 s doubling to 30 s). The thread never crashes. |
 
 If publishing to the DLQ itself fails, the message is treated as transient.
 
@@ -106,13 +108,14 @@ The `certificates` table contains the following fields:
 | Field | Description |
 |---|---|
 | `id` | UUID identifying the certificate |
-| `registration_id` | UUID identifying the participant's registration; unique |
+| `registration_id` | UUID identifying the participant's registration (the triggering one); unique |
 | `user_id` | UUID of the owner (from the event); indexed |
-| `activity_id` | UUID of the activity (from the event) |
+| `activity_id` | UUID of the activity of the triggering registration (from the event) |
+| `event_id` | UUID of the Events event (`parent_event_id`); unique together with `user_id` |
 | `file_path` | Opaque storage key (`<uuid>.pdf`) of the generated PDF |
 | `issued_at` | Timestamp indicating when the certificate was issued |
 
-`user_id` and `activity_id` are nullable in the database only because rows created before migration `7c1d3e9a4b52` cannot be backfilled. Every new certificate sets both (the repository requires them), and a row without `user_id` belongs to nobody and is never served.
+`user_id` and `activity_id` are nullable in the database only because rows created before migration `7c1d3e9a4b52` cannot be backfilled; `event_id` is nullable for the same reason (migration `9e4a6b2c1d83`, which also adds the unique index `uq_certificates_user_event` on `(user_id, event_id)`; NULLs are distinct, so old rows never collide). Every new certificate sets all three (the repository requires them), and a row without `user_id` belongs to nobody and is never served.
 
 The database stores metadata rather than the PDF contents. `file_path` is a storage key, not a filesystem path, and has the same meaning in both storage backends.
 
@@ -211,6 +214,7 @@ Lists the caller's certificates, newest first. `limit` is 1..100 (default 50) an
       "id": "…",
       "registration_id": "…",
       "activity_id": "…",
+      "event_id": "…",
       "issued_at": "2026-11-04T12:00:00Z"
     }
   ]
@@ -311,11 +315,12 @@ The tests use fakes for Kafka, the discoverer, Events/Users and S3 (no network),
 
 ## Current Limitations and Next Steps
 
-- Confirm the minimum attendance threshold with the team; today Subscription provides no percentage (see Eligibility Rules).
-- Events must expose `GET /activities/{id}` and `GET /events/{id}`, and Users `GET /internal/users/{id}`, as described above; they are consumed through the discoverer.
-- The event date on the PDF is the date of the activity's `starts_at`.
+- The 75% threshold is an implementation assumption to confirm with the team; it is applied both by Subscription and, independently, here.
+- Certificates cannot recount check-ins: it trusts `attended_activities`/`total_activities` after the consistency check with the percentage.
+- Events must expose `GET /events/{id}` (with `title`, `starts_at`, `ends_at`), and Users `GET /internal/users/{id}`, as described above; they are consumed through the discoverer.
+- The event date on the PDF is the date of the event's `starts_at`, in its own offset.
 - A message that depends on an unavailable service is retried indefinitely (backoff up to 30 s), which blocks the partition behind it; this favors never losing a certificate over throughput.
-- Several replicas are safe for issuance (unique `registration_id`), but concurrent migrations at first boot are not serialized.
+- Several replicas are safe for issuance (unique `registration_id` and unique `(user_id, event_id)`), but concurrent migrations at first boot are not serialized.
 - The S3 credentials of Compose are shared by SeaweedFS and the application; use a dedicated access key outside development.
 
 ## Technology Stack

@@ -52,12 +52,51 @@ def test_upgrade_adds_user_and_activity_columns_and_keeps_old_rows(tmp_path):
     engine.dispose()
 
 
+def test_event_id_revision_adds_nullable_column_and_unique_user_event_index(tmp_path):
+    url = f"sqlite:///{tmp_path / 'certs.db'}"
+    assert run_alembic(url, "upgrade", "7c1d3e9a4b52").returncode == 0
+    engine = create_engine(url)
+    with engine.begin() as connection:
+        for registration in ("r1", "r2"):  # two old rows of the same user: NULL event_id never collides
+            connection.execute(text(
+                "INSERT INTO certificates (id, registration_id, user_id, file_path, issued_at) "
+                f"VALUES ('{registration}', '{registration}', 'u', 'x.pdf', '2026-01-01 00:00:00')"
+            ))
+
+    result = run_alembic(url, "upgrade", "head")
+
+    assert result.returncode == 0, result.stderr
+    inspector = inspect(engine)
+    columns = {c["name"]: c for c in inspector.get_columns("certificates")}
+    assert columns["event_id"]["nullable"] is True
+    indexes = {i["name"]: i for i in inspector.get_indexes("certificates")}
+    assert indexes["uq_certificates_user_event"]["unique"]
+    assert indexes["uq_certificates_user_event"]["column_names"] == ["user_id", "event_id"]
+    with engine.begin() as connection:
+        assert connection.execute(text("SELECT count(*) FROM certificates")).scalar() == 2
+        connection.execute(text(
+            "INSERT INTO certificates (id, registration_id, user_id, event_id, file_path, issued_at) "
+            "VALUES ('a', 'a', 'u', 'e', 'x.pdf', '2026-01-01 00:00:00')"
+        ))
+    with pytest.raises(Exception), engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO certificates (id, registration_id, user_id, event_id, file_path, issued_at) "
+            "VALUES ('b', 'b', 'u', 'e', 'x.pdf', '2026-01-01 00:00:00')"
+        ))
+
+    assert run_alembic(url, "downgrade", "7c1d3e9a4b52").returncode == 0
+    inspector = inspect(engine)
+    assert "event_id" not in {c["name"] for c in inspector.get_columns("certificates")}
+    assert "uq_certificates_user_event" not in {i["name"] for i in inspector.get_indexes("certificates")}
+    engine.dispose()
+
+
 def test_single_head():
     result = run_alembic("sqlite://", "heads")
 
     assert result.returncode == 0
     assert result.stdout.count("(head)") == 1
-    assert "7c1d3e9a4b52" in result.stdout
+    assert "9e4a6b2c1d83" in result.stdout
 
 
 def test_migrate_retries_with_backoff_then_succeeds(monkeypatch):

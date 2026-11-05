@@ -10,12 +10,13 @@ from sqlalchemy.pool import StaticPool
 from app.config import settings
 from app.consumer import AttendanceHandler, AttendanceWorker
 from app.database import Base
-from app.integrations.directory import Activity, PoisonMessage, TransientError
+from app.integrations.directory import Event, PoisonMessage, TransientError
 from app.models.certificate import Certificate
 from app.services.storage import CertificateStorage, CertificateStorageError
 
 NOW = datetime(2026, 11, 4, 12, 0, tzinfo=timezone.utc)
 REGISTRATION_ID, ACTIVITY_ID, USER_ID, EVENT_ID = (uuid.uuid4() for _ in range(4))
+PERCENTAGE_FIELDS = {"attended_activities": 3, "total_activities": 4, "attendance_percentage": 75.0}
 
 
 def event(**overrides):
@@ -26,6 +27,8 @@ def event(**overrides):
         "registration_id": str(REGISTRATION_ID),
         "activity_id": str(ACTIVITY_ID),
         "user_id": str(USER_ID),
+        "parent_event_id": str(EVENT_ID),
+        **PERCENTAGE_FIELDS,
         "aggregate_version": 3,
         "occurred_at": "2026-11-04T11:00:00Z",
         "status": "ATTENDED",
@@ -36,18 +39,17 @@ def event(**overrides):
 
 class FakeDirectory:
     def __init__(self):
-        self.activity = Activity(
-            id=ACTIVITY_ID,
-            event_id=EVENT_ID,
-            title="Workshop",
-            starts_at=datetime(2026, 11, 4, 8, 0, tzinfo=timezone.utc),
+        self.event = Event(
+            id=EVENT_ID,
+            title="Software Week",
+            starts_at=datetime(2026, 11, 2, 22, 0, tzinfo=timezone(timedelta(hours=-3))),
             ends_at=NOW - timedelta(hours=1),
         )
-        self.event_title = "Software Week"
         self.name = "Alex Example"
         self.errors = {}
         self.calls = []
         self.request_ids = []
+        self.requested_event_ids = []
 
     def _call(self, name, request_id):
         self.calls.append(name)
@@ -55,13 +57,10 @@ class FakeDirectory:
         if name in self.errors:
             raise self.errors[name]
 
-    def get_activity(self, activity_id, request_id):
-        self._call("activity", request_id)
-        return self.activity
-
-    def get_event_title(self, event_id, request_id):
+    def get_event(self, event_id, request_id):
         self._call("event", request_id)
-        return self.event_title
+        self.requested_event_ids.append(event_id)
+        return self.event
 
     def get_participant_name(self, user_id, request_id):
         self._call("user", request_id)
@@ -111,31 +110,17 @@ def test_success_issues_certificate_with_event_data(env, monkeypatch):
     assert certificate.registration_id == REGISTRATION_ID
     assert certificate.user_id == USER_ID
     assert certificate.activity_id == ACTIVITY_ID
+    assert certificate.event_id == EVENT_ID
+    assert directory.requested_event_ids == [EVENT_ID]
+    assert directory.calls == ["event", "user"]
     assert storage.read_pdf(certificate.file_path).startswith(b"%PDF")
     assert captured["participant_name"] == "Alex Example"
     assert captured["event_name"] == "Software Week"
-    assert captured["event_date"] == directory.activity.starts_at.date()
+    # The date is taken in the event's own offset (22:00 at -03:00 on 2 Nov, which is already 3 Nov in UTC).
+    assert captured["event_date"] == datetime(2026, 11, 2).date()
     # One X-Request-Id per message, reused on every outbound call.
     assert len(set(directory.request_ids)) == 1
     uuid.UUID(directory.request_ids[0])
-
-
-def test_event_title_falls_back_to_activity_title(env, monkeypatch):
-    handler, directory, factory, _, _ = env
-    directory.event_title = None
-    names = {}
-    from app.services import certificate_service
-
-    real = certificate_service.generate_certificate_pdf
-    monkeypatch.setattr(
-        certificate_service,
-        "generate_certificate_pdf",
-        lambda **kw: names.update(kw) or real(**kw),
-    )
-
-    handler.handle(event())
-
-    assert names["event_name"] == "Workshop"
 
 
 @pytest.mark.parametrize("kind", ["AttendanceRevoked", "SomethingNew", None, 5])
@@ -162,6 +147,24 @@ def test_other_types_are_ignored_without_lookups(env, kind):
         (event(registration_id="nope"), "INVALID_CONTRACT"),
         (event(activity_id=None), "INVALID_CONTRACT"),
         (event(user_id=""), "INVALID_CONTRACT"),
+        (event(parent_event_id="nope"), "INVALID_CONTRACT"),
+        (event(parent_event_id=None), "INVALID_CONTRACT"),
+        (event(attended_activities=3.0), "INVALID_CONTRACT"),
+        (event(attended_activities=True, total_activities=1, attendance_percentage=100), "INVALID_CONTRACT"),
+        (event(total_activities=True, attended_activities=1, attendance_percentage=100), "INVALID_CONTRACT"),
+        (event(attended_activities="3"), "INVALID_CONTRACT"),
+        (event(total_activities=None), "INVALID_CONTRACT"),
+        (event(total_activities=0, attended_activities=0, attendance_percentage=0), "INVALID_CONTRACT"),
+        (event(total_activities=-4, attended_activities=3), "INVALID_CONTRACT"),
+        (event(attended_activities=-1, attendance_percentage=-25), "INVALID_CONTRACT"),
+        (event(attended_activities=5, attendance_percentage=125), "INVALID_CONTRACT"),
+        (event(attendance_percentage=None), "INVALID_CONTRACT"),
+        (event(attendance_percentage="75"), "INVALID_CONTRACT"),
+        (event(attendance_percentage=True), "INVALID_CONTRACT"),
+        (event(attendance_percentage=float("nan")), "INVALID_CONTRACT"),
+        (event(attendance_percentage=float("inf")), "INVALID_CONTRACT"),
+        (event(attendance_percentage=80), "INVALID_CONTRACT"),  # inconsistent with 3/4
+        (event(attendance_percentage=75.02), "INVALID_CONTRACT"),
     ],
 )
 def test_malformed_events_are_poison(env, raw, reason):
@@ -174,17 +177,56 @@ def test_malformed_events_are_poison(env, raw, reason):
     assert directory.calls == []
 
 
-def test_missing_id_field_is_poison(env):
-    handler, *_ = env
+@pytest.mark.parametrize(
+    "field",
+    ["user_id", "parent_event_id", "attended_activities", "total_activities", "attendance_percentage"],
+)
+def test_missing_field_is_poison(env, field):
+    handler, directory, *_ = env
     payload = json.loads(event())
-    del payload["user_id"]
+    del payload[field]
 
-    with pytest.raises(PoisonMessage):
+    with pytest.raises(PoisonMessage) as raised:
         handler.handle(json.dumps(payload).encode())
 
+    assert raised.value.reason == "INVALID_CONTRACT"
+    assert directory.calls == []
 
-@pytest.mark.parametrize("failing, reason", [("activity", "ACTIVITY_NOT_FOUND"), ("user", "USER_NOT_FOUND")])
-def test_unknown_activity_or_user_is_poison(env, failing, reason):
+
+@pytest.mark.parametrize("percentage", [75, 75.0, 75.01])
+def test_percentage_within_a_hundredth_of_the_counts_is_consistent(env, percentage):
+    handler, _, factory, *_ = env
+
+    handler.handle(event(attendance_percentage=percentage))
+
+    assert len(certificates(factory)) == 1
+
+
+def test_percentage_rounding_is_accepted(env):
+    handler, _, factory, *_ = env
+
+    # 66.67 is below the 75% rule, but consistent: rejected by eligibility, not by the contract.
+    with pytest.raises(PoisonMessage) as raised:
+        handler.handle(event(attended_activities=2, total_activities=3, attendance_percentage=66.67))
+
+    assert raised.value.reason == "NOT_ELIGIBLE"
+    assert certificates(factory) == []
+
+
+def test_boundary_75_passes_and_7499_fails(env):
+    handler, _, factory, *_ = env
+
+    with pytest.raises(PoisonMessage) as raised:
+        handler.handle(event(attended_activities=7499, total_activities=10000, attendance_percentage=74.99))
+    assert raised.value.reason == "NOT_ELIGIBLE"
+    assert certificates(factory) == []
+
+    handler.handle(event(attended_activities=75, total_activities=100, attendance_percentage=75.00))
+    assert len(certificates(factory)) == 1
+
+
+@pytest.mark.parametrize("failing, reason", [("event", "EVENT_NOT_FOUND"), ("user", "USER_NOT_FOUND")])
+def test_unknown_event_or_user_is_poison(env, failing, reason):
     handler, directory, factory, _, _ = env
     directory.errors[failing] = PoisonMessage(reason)
 
@@ -195,7 +237,7 @@ def test_unknown_activity_or_user_is_poison(env, failing, reason):
     assert certificates(factory) == []
 
 
-@pytest.mark.parametrize("failing", ["activity", "event", "user"])
+@pytest.mark.parametrize("failing", ["event", "user"])
 def test_dependency_failures_are_transient(env, failing):
     handler, directory, factory, _, _ = env
     directory.errors[failing] = TransientError("down")
@@ -206,11 +248,11 @@ def test_dependency_failures_are_transient(env, failing):
     assert certificates(factory) == []
 
 
-def test_activity_not_ended_is_not_issued_and_is_transient(env):
+def test_event_not_ended_is_not_issued_and_is_transient(env):
     handler, directory, factory, storage, clock = env
-    clock["now"] = directory.activity.ends_at - timedelta(seconds=1)
+    clock["now"] = directory.event.ends_at - timedelta(seconds=1)
 
-    with pytest.raises(TransientError, match="not ended"):
+    with pytest.raises(TransientError, match="not ended yet"):
         handler.handle(event())
 
     assert certificates(factory) == []
@@ -220,7 +262,7 @@ def test_activity_not_ended_is_not_issued_and_is_transient(env):
 
 def test_ended_boundary_is_inclusive(env):
     handler, directory, factory, _, clock = env
-    clock["now"] = directory.activity.ends_at
+    clock["now"] = directory.event.ends_at
 
     handler.handle(event())
 
@@ -239,36 +281,67 @@ def test_redelivered_event_is_idempotent_and_skips_lookups(env):
     assert len(list(storage.storage_dir.glob("*.pdf"))) == 1
 
 
+def test_second_registration_for_same_user_and_event_is_idempotent(env):
+    handler, directory, factory, storage, _ = env
+
+    handler.handle(event())
+    calls_after_first = list(directory.calls)
+    handler.handle(event(registration_id=str(uuid.uuid4()), activity_id=str(uuid.uuid4())))
+
+    [certificate] = certificates(factory)
+    assert certificate.registration_id == REGISTRATION_ID  # first completion wins
+    assert directory.calls == calls_after_first
+    assert len(list(storage.storage_dir.glob("*.pdf"))) == 1
+
+
+def test_same_event_for_another_user_gets_its_own_certificate(env):
+    handler, _, factory, *_ = env
+
+    handler.handle(event())
+    handler.handle(event(registration_id=str(uuid.uuid4()), user_id=str(uuid.uuid4())))
+
+    assert len(certificates(factory)) == 2
+
+
 def test_unique_violation_race_is_treated_as_success(env, monkeypatch):
     handler, directory, factory, storage, _ = env
     from app.repositories import certificate_repository
 
     original = certificate_repository.CertificateRepository.get_by_registration_id
+    original_by_event = certificate_repository.CertificateRepository.get_by_user_and_event
 
     handler.handle(event())  # the "other replica" that wins the race
     # The handler's pre-check and the service's own check both miss the row, so the insert hits the unique index.
+    # The race is on a different registration of the same user and event, so only the user + event key collides.
     calls = {"n": 0}
 
     def blind_twice(self, registration_id):
         calls["n"] += 1
         return None if calls["n"] <= 2 else original(self, registration_id)
 
-    monkeypatch.setattr(certificate_repository.CertificateRepository, "get_by_registration_id", blind_twice)
+    def blind_by_event_twice(self, user_id, event_id):
+        calls["e"] = calls.get("e", 0) + 1
+        return None if calls["e"] <= 2 else original_by_event(self, user_id, event_id)
 
-    handler.handle(event())
+    monkeypatch.setattr(certificate_repository.CertificateRepository, "get_by_registration_id", blind_twice)
+    monkeypatch.setattr(certificate_repository.CertificateRepository, "get_by_user_and_event", blind_by_event_twice)
+
+    handler.handle(event(registration_id=str(uuid.uuid4())))
 
     assert len(certificates(factory)) == 1
     assert len(list(storage.storage_dir.glob("*.pdf"))) == 1  # the orphan blob was cleaned up
 
 
-def test_not_eligible_is_poison(env, monkeypatch):
-    handler, *_ = env
-    monkeypatch.setattr("app.consumer.ATTENDANCE_PERCENTAGE", 10)
+def test_below_threshold_from_a_misconfigured_producer_is_poison(env):
+    handler, directory, factory, storage, _ = env
 
+    # Consistent counts (3/5 = 60%), so it passes the contract but not Certificates' own 75% rule.
     with pytest.raises(PoisonMessage) as raised:
-        handler.handle(event())
+        handler.handle(event(attended_activities=3, total_activities=5, attendance_percentage=60))
 
     assert raised.value.reason == "NOT_ELIGIBLE"
+    assert certificates(factory) == []
+    assert not list(storage.storage_dir.glob("*.pdf"))
 
 
 def test_storage_failure_is_transient(env, monkeypatch):

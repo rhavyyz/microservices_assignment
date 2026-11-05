@@ -17,6 +17,7 @@ from app.services.storage import CertificateStorage
 
 USER_ID = uuid.uuid4()
 ACTIVITY_ID = uuid.uuid4()
+EVENT_ID = uuid.uuid4()
 
 
 @pytest.fixture
@@ -46,6 +47,7 @@ def test_issue_and_retrieve_certificate(service_environment):
         registration_id=registration_id,
         user_id=USER_ID,
         activity_id=ACTIVITY_ID,
+        event_id=EVENT_ID,
         participant_name="Alex Example",
         event_name="Software Engineering Conference",
         event_date=date(2026, 10, 20),
@@ -75,6 +77,7 @@ def test_ineligible_participant_does_not_receive_certificate(
             registration_id=uuid.uuid4(),
             user_id=USER_ID,
             activity_id=ACTIVITY_ID,
+            event_id=EVENT_ID,
             participant_name="Alex Example",
             event_name="Software Engineering Conference",
             event_date=date(2026, 10, 20),
@@ -93,6 +96,7 @@ def test_duplicate_registration_is_rejected(service_environment):
         "registration_id": registration_id,
         "user_id": USER_ID,
         "activity_id": ACTIVITY_ID,
+        "event_id": EVENT_ID,
         "participant_name": "Alex Example",
         "event_name": "Software Engineering Conference",
         "event_date": date(2026, 10, 20),
@@ -108,6 +112,30 @@ def test_duplicate_registration_is_rejected(service_environment):
     assert len(list(storage.storage_dir.glob("*.pdf"))) == 1
 
 
+def test_second_registration_for_same_user_and_event_is_rejected(service_environment):
+    service, storage = service_environment
+    arguments = {
+        "user_id": USER_ID,
+        "activity_id": ACTIVITY_ID,
+        "event_id": EVENT_ID,
+        "participant_name": "Alex Example",
+        "event_name": "Software Engineering Conference",
+        "event_date": date(2026, 10, 20),
+        "event_ended": True,
+        "attendance_percentage": 90,
+    }
+
+    service.issue_certificate(registration_id=uuid.uuid4(), **arguments)
+
+    with pytest.raises(CertificateAlreadyExistsError):
+        service.issue_certificate(registration_id=uuid.uuid4(), **arguments)
+
+    # Another user, or another event, is a different certificate.
+    service.issue_certificate(registration_id=uuid.uuid4(), **{**arguments, "user_id": uuid.uuid4()})
+    service.issue_certificate(registration_id=uuid.uuid4(), **{**arguments, "event_id": uuid.uuid4()})
+    assert len(list(storage.storage_dir.glob("*.pdf"))) == 3
+
+
 def test_missing_certificate_is_not_found(service_environment):
     service, _ = service_environment
 
@@ -121,6 +149,7 @@ def test_certificate_of_another_user_is_not_found(service_environment):
         registration_id=uuid.uuid4(),
         user_id=USER_ID,
         activity_id=ACTIVITY_ID,
+        event_id=EVENT_ID,
         participant_name="Alex Example",
         event_name="Software Engineering Conference",
         event_date=date(2026, 10, 20),

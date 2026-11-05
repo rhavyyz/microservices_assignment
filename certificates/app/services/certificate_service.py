@@ -38,6 +38,7 @@ class CertificateService:
         registration_id: uuid.UUID,
         user_id: uuid.UUID,
         activity_id: uuid.UUID,
+        event_id: uuid.UUID,
         participant_name: str,
         event_name: str,
         event_date: date,
@@ -58,6 +59,10 @@ class CertificateService:
             raise CertificateAlreadyExistsError(
                 "A certificate already exists for this registration"
             )
+        if self.repository.get_by_user_and_event(user_id, event_id) is not None:
+            raise CertificateAlreadyExistsError(
+                "A certificate already exists for this user and event"
+            )
 
         pdf_bytes = generate_certificate_pdf(
             participant_name=participant_name,
@@ -72,6 +77,7 @@ class CertificateService:
                 registration_id=registration_id,
                 user_id=user_id,
                 activity_id=activity_id,
+                event_id=event_id,
                 file_path=storage_key,
             )
         except Exception:

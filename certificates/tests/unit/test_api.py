@@ -52,6 +52,7 @@ def issue(service, user_id):
         registration_id=uuid.uuid4(),
         user_id=user_id,
         activity_id=uuid.uuid4(),
+        event_id=uuid.uuid4(),
         participant_name="Alex Example",
         event_name="Conference",
         event_date=date(2026, 10, 20),
@@ -106,7 +107,7 @@ def test_me_lists_only_own_certificates_newest_first(env):
     assert response.status_code == 200
     items = response.json()["certificates"]
     assert [item["id"] for item in items] == [str(second.id), str(first.id)]
-    assert set(items[0]) == {"id", "registration_id", "activity_id", "issued_at"}
+    assert set(items[0]) == {"id", "registration_id", "activity_id", "event_id", "issued_at"}
 
 
 def test_me_pagination_and_limits(env):
