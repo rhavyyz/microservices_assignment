@@ -15,6 +15,9 @@ from app.services.certificate_service import (
 )
 from app.services.storage import CertificateStorage
 
+USER_ID = uuid.uuid4()
+ACTIVITY_ID = uuid.uuid4()
+
 
 @pytest.fixture
 def service_environment(tmp_path):
@@ -41,6 +44,8 @@ def test_issue_and_retrieve_certificate(service_environment):
 
     certificate = service.issue_certificate(
         registration_id=registration_id,
+        user_id=USER_ID,
+        activity_id=ACTIVITY_ID,
         participant_name="Alex Example",
         event_name="Software Engineering Conference",
         event_date=date(2026, 10, 20),
@@ -49,6 +54,8 @@ def test_issue_and_retrieve_certificate(service_environment):
     )
 
     assert certificate.registration_id == registration_id
+    assert certificate.user_id == USER_ID
+    assert certificate.activity_id == ACTIVITY_ID
     assert certificate.file_path.endswith(".pdf")
 
     retrieved, pdf_bytes = service.get_certificate_pdf(certificate.id)
@@ -66,6 +73,8 @@ def test_ineligible_participant_does_not_receive_certificate(
     with pytest.raises(CertificateNotEligibleError):
         service.issue_certificate(
             registration_id=uuid.uuid4(),
+            user_id=USER_ID,
+            activity_id=ACTIVITY_ID,
             participant_name="Alex Example",
             event_name="Software Engineering Conference",
             event_date=date(2026, 10, 20),
@@ -82,6 +91,8 @@ def test_duplicate_registration_is_rejected(service_environment):
 
     arguments = {
         "registration_id": registration_id,
+        "user_id": USER_ID,
+        "activity_id": ACTIVITY_ID,
         "participant_name": "Alex Example",
         "event_name": "Software Engineering Conference",
         "event_date": date(2026, 10, 20),
@@ -102,3 +113,22 @@ def test_missing_certificate_is_not_found(service_environment):
 
     with pytest.raises(CertificateNotFoundError):
         service.get_certificate_pdf(uuid.uuid4())
+
+
+def test_certificate_of_another_user_is_not_found(service_environment):
+    service, _ = service_environment
+    certificate = service.issue_certificate(
+        registration_id=uuid.uuid4(),
+        user_id=USER_ID,
+        activity_id=ACTIVITY_ID,
+        participant_name="Alex Example",
+        event_name="Software Engineering Conference",
+        event_date=date(2026, 10, 20),
+        event_ended=True,
+        attendance_percentage=100,
+    )
+
+    with pytest.raises(CertificateNotFoundError):
+        service.get_certificate_pdf(certificate.id, owner_id=uuid.uuid4())
+
+    assert service.get_certificate_pdf(certificate.id, owner_id=USER_ID)[0].id == certificate.id

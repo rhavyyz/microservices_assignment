@@ -24,6 +24,20 @@ class Certificate(Base):
         index=True,
     )
 
+    # Nullable only because rows created before these columns existed cannot be backfilled
+    # (the original registration was never stored). Every new certificate sets both:
+    # CertificateRepository.create requires them, and rows without user_id are never served.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=True,
+        index=True,
+    )
+
+    activity_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=True,
+    )
+
     file_path: Mapped[str] = mapped_column(
         String(1024),
         nullable=False,

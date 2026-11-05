@@ -32,14 +32,35 @@ class CertificateRepository:
     ) -> Certificate | None:
         return self.session.get(Certificate, certificate_id)
 
+    def list_by_user(
+        self,
+        user_id: uuid.UUID,
+        *,
+        limit: int,
+        offset: int,
+    ) -> list[Certificate]:
+        statement = (
+            select(Certificate)
+            .where(Certificate.user_id == user_id)
+            .order_by(Certificate.issued_at.desc(), Certificate.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+
+        return list(self.session.scalars(statement))
+
     def create(
         self,
         *,
         registration_id: uuid.UUID,
+        user_id: uuid.UUID,
+        activity_id: uuid.UUID,
         file_path: str,
     ) -> Certificate:
         certificate = Certificate(
             registration_id=registration_id,
+            user_id=user_id,
+            activity_id=activity_id,
             file_path=file_path,
         )
 
@@ -50,6 +71,9 @@ class CertificateRepository:
             self.session.refresh(certificate)
         except IntegrityError as exc:
             self.session.rollback()
+            # Lost a race on the unique registration_id; any other violation is a real error.
+            if self.get_by_registration_id(registration_id) is None:
+                raise
             raise CertificateAlreadyExistsError(
                 "A certificate already exists for this registration"
             ) from exc

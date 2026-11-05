@@ -27,6 +27,8 @@ def test_create_and_retrieve_certificate(tmp_path):
 
         created = repository.create(
             registration_id=registration_id,
+            user_id=uuid.uuid4(),
+            activity_id=uuid.uuid4(),
             file_path="example-certificate.pdf",
         )
 
