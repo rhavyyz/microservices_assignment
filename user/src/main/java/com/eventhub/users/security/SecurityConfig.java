@@ -45,6 +45,9 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/.well-known/jwks.json", "/healthcheck", "/openapi.json")
                         .permitAll()
                         .requestMatchers("/error").permitAll()
+                        // Consulta interna de nome (somente id e name) para outros serviços sem token de usuário.
+                        // É protegida por isolamento de rede, não por token: o Gateway nunca deve expô-la.
+                        .requestMatchers(HttpMethod.GET, "/internal/users/*").permitAll()
                         // Busca de usuários: dados pessoais de terceiros, somente organizadores (o serviço
                         // confere o papel no banco de novo, para que um rebaixamento valha antes de o token expirar).
                         .requestMatchers(HttpMethod.GET, "/api/v1/users").hasRole("ORGANIZER")

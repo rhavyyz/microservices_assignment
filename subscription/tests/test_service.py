@@ -244,32 +244,228 @@ def test_capacity_is_immutable_even_in_sql(service, db):
         register(service, act.model_copy(update={"capacity": 100}))
 
 
+def ongoing(act):
+    now = datetime.now(timezone.utc)
+    return act.model_copy(update={"starts_at": now - timedelta(hours=1), "ends_at": now + timedelta(hours=1)})
+
+
+def finished(act):
+    return ongoing(act).model_copy(update={"ends_at": datetime.now(timezone.utc) - timedelta(seconds=1)})
+
+
+def end(service, act, kind="ActivityEnded", event_id=None):
+    event = ActivityEvent(
+        event_id=event_id or uuid4(), schema_version=1, type=kind, activity_id=act.activity_id
+    )
+    service.activity_event(event, finished(act))
+    return event
+
+
+def sibling(act):
+    return act.model_copy(update={"activity_id": uuid4()})
+
+
+def eligible(db, user=None):
+    with db.transaction() as conn:
+        rows = conn.execute(
+            "SELECT payload, message_key FROM outbox WHERE payload->>'type'='AttendanceEligible' "
+            "ORDER BY sequence"
+        ).fetchall()
+    return [r for r in rows if user is None or r["payload"]["user_id"] == str(user)]
+
+
 def test_presence_and_certificate_eligibility(service, db):
     act = activity()
     reg = register(service, act)
     organizer = uuid4()
     with pytest.raises(DomainError, match="OUTSIDE_CHECK_IN_WINDOW"):
         service.check_in(reg["id"], organizer, act)
-    now = datetime.now(timezone.utc)
-    ongoing = act.model_copy(
-        update={"starts_at": now - timedelta(hours=1), "ends_at": now + timedelta(hours=1)}
-    )
-    service.check_in(reg["id"], organizer, ongoing)
-    service.check_in(reg["id"], organizer, ongoing)
-    ended = ongoing.model_copy(update={"ends_at": now - timedelta(seconds=1)})
-    event = ActivityEvent(
-        event_id=uuid4(), schema_version=1, type="ActivityEnded", activity_id=act.activity_id
-    )
-    service.activity_event(event, ended)
-    service.activity_event(event, ended)
+    service.check_in(reg["id"], organizer, ongoing(act))
+    service.check_in(reg["id"], organizer, ongoing(act))
+    event = end(service, act)
+    service.activity_event(event, finished(act))
+    rows = eligible(db)
+    assert len(rows) == 1
+    payload = rows[0]["payload"]
+    assert rows[0]["message_key"] == reg["id"]
+    assert payload["parent_event_id"] == str(act.event_id)
+    assert payload["event_id"] != str(act.event_id)
+    assert payload["registration_id"] == reg["id"]
+    assert payload["activity_id"] == str(act.activity_id)
+    assert (payload["attended_activities"], payload["total_activities"]) == (1, 1)
+    assert payload["attendance_percentage"] == 100.0
+    assert payload["schema_version"] == 1
     with db.transaction() as conn:
-        assert (
-            conn.execute(
-                "SELECT count(*) AS n FROM outbox WHERE payload->>'type'='AttendanceEligible'"
-            ).fetchone()["n"]
-            == 1
-        )
+        assert conn.execute("SELECT count(*) AS n FROM event_attendance_emitted").fetchone()["n"] == 1
+        recorded = conn.execute(
+            "SELECT count(*) AS n FROM outbox WHERE payload->>'type'='AttendanceRecorded'"
+        ).fetchone()["n"]
+        assert not conn.execute("SELECT eligible_emitted FROM attendance").fetchone()["eligible_emitted"]
+    assert recorded == 1
     invariant(db, act.activity_id)
+
+
+def event_activities(count):
+    first = activity(capacity=5)
+    return [first] + [sibling(first) for _ in range(count - 1)]
+
+
+def enroll(service, acts, user, attend):
+    """Inscreve a pessoa em todas as atividades e registra check-in nas indicadas."""
+    regs = []
+    for index, act in enumerate(acts):
+        reg = service.create(user, act)
+        regs.append(reg)
+        if index in attend:
+            service.check_in(reg["id"], uuid4(), ongoing(act))
+    return regs
+
+
+def test_full_attendance_emits_once_at_last_activity(service, db):
+    acts, user = event_activities(3), uuid4()
+    enroll(service, acts, user, {0, 1, 2})
+    end(service, acts[0])
+    end(service, acts[1])
+    assert eligible(db) == []
+    end(service, acts[2])
+    rows = eligible(db, user)
+    assert len(rows) == 1
+    assert rows[0]["payload"]["activity_id"] == str(acts[2].activity_id)
+    assert rows[0]["payload"]["attendance_percentage"] == 100.0
+    assert rows[0]["payload"]["total_activities"] == 3
+
+
+@pytest.mark.parametrize(
+    "total,attended,emits,percent",
+    [(3, 2, False, 66.67), (4, 3, True, 75.0), (4, 2, False, 50.0), (1, 0, False, 0.0), (1, 1, True, 100.0)],
+)
+def test_threshold_boundary(service, db, total, attended, emits, percent):
+    acts, user = event_activities(total), uuid4()
+    enroll(service, acts, user, set(range(attended)))
+    for act in acts:
+        end(service, act)
+    rows = eligible(db, user)
+    assert len(rows) == int(emits)
+    if emits:
+        assert rows[0]["payload"]["attendance_percentage"] == percent
+        assert rows[0]["payload"]["attended_activities"] == attended
+
+
+def test_replay_does_not_emit_again(service, db):
+    acts, user = event_activities(2), uuid4()
+    enroll(service, acts[:1], user, {0})
+    first = end(service, acts[0])
+    assert len(eligible(db, user)) == 1
+    service.activity_event(first, finished(acts[0]))
+    assert len(eligible(db, user)) == 1
+
+
+def test_late_registration_after_emission_does_not_emit_again(service, db):
+    acts, user = event_activities(2), uuid4()
+    enroll(service, acts[:1], user, {0})
+    end(service, acts[0])
+    assert len(eligible(db, user)) == 1
+    # Inscrição tardia em outra atividade do mesmo evento: a primeira conclusão vence.
+    assert service.create(user, acts[1])["status"] == "CONFIRMED"
+    service.check_in(service.active_registration(user, acts[1].activity_id)["id"], uuid4(), ongoing(acts[1]))
+    end(service, acts[1])
+    assert len(eligible(db, user)) == 1
+    with db.transaction() as conn:
+        assert conn.execute("SELECT count(*) AS n FROM event_attendance_emitted").fetchone()["n"] == 1
+
+
+def test_cancel_of_last_activity_evaluates_remaining(service, db):
+    acts, user = event_activities(3), uuid4()
+    enroll(service, acts, user, {0, 1})
+    end(service, acts[0])
+    end(service, acts[1])
+    assert eligible(db) == []
+    cancel = end(service, acts[2], "ActivityCancelled")
+    rows = eligible(db, user)
+    assert len(rows) == 1
+    assert rows[0]["payload"]["attendance_percentage"] == 100.0
+    assert (rows[0]["payload"]["attended_activities"], rows[0]["payload"]["total_activities"]) == (2, 2)
+    assert rows[0]["payload"]["activity_id"] == str(acts[2].activity_id)
+    service.activity_event(cancel, finished(acts[2]))
+    assert len(eligible(db, user)) == 1
+
+
+def test_cancel_with_half_attendance_does_not_emit(service, db):
+    acts, user = event_activities(3), uuid4()
+    enroll(service, acts, user, {0})
+    end(service, acts[0])
+    end(service, acts[1])
+    end(service, acts[2], "ActivityCancelled")
+    assert eligible(db) == []
+
+
+def test_cancel_of_only_confirmed_activity_emits_nothing(service, db):
+    acts, user = event_activities(2), uuid4()
+    service.create(user, acts[0])
+    end(service, acts[0], "ActivityCancelled")
+    assert eligible(db) == []
+
+
+def test_nothing_while_registered_activity_not_ended(service, db):
+    acts, user = event_activities(2), uuid4()
+    enroll(service, acts, user, {0, 1})
+    end(service, acts[0])
+    assert eligible(db) == []
+    # Quem só está em atividade não encerrada também não recebe nada.
+    other = uuid4()
+    service.create(other, acts[1])
+    end(service, acts[0], event_id=uuid4())
+    assert eligible(db, other) == []
+
+
+def test_cancelled_activity_does_not_count(service, db):
+    acts, user = event_activities(3), uuid4()
+    enroll(service, acts, user, {0, 1})
+    end(service, acts[2], "ActivityCancelled")
+    end(service, acts[0])
+    assert eligible(db) == []
+    end(service, acts[1])
+    rows = eligible(db, user)
+    assert len(rows) == 1
+    assert (rows[0]["payload"]["attended_activities"], rows[0]["payload"]["total_activities"]) == (2, 2)
+
+
+def test_non_confirmed_registrations_are_excluded(service, db):
+    first = activity(capacity=1)
+    acts, user = [first, sibling(first), sibling(first), sibling(first)], uuid4()
+    service.check_in(service.create(user, acts[0])["id"], uuid4(), ongoing(acts[0]))
+    # Lista de espera, cancelada e reserva sem pagamento não entram no denominador.
+    service.create(uuid4(), acts[1])
+    waiting = service.create(user, acts[1])
+    assert waiting["status"] == "WAITLISTED"
+    cancelled = service.create(user, acts[2])
+    service.cancel(cancelled["id"], user)
+    pending = service.create(user, sibling(first).model_copy(update={"amount_minor": 100}))
+    assert pending["status"] == "PENDING_PAYMENT"
+    for act in acts:
+        end(service, act)
+    rows = eligible(db, user)
+    assert len(rows) == 1
+    assert (rows[0]["payload"]["attended_activities"], rows[0]["payload"]["total_activities"]) == (1, 1)
+
+
+def test_users_are_evaluated_independently(service, db):
+    acts, good, bad = event_activities(2), uuid4(), uuid4()
+    enroll(service, acts, good, {0, 1})
+    enroll(service, acts, bad, {0})
+    for act in acts:
+        end(service, act)
+    assert len(eligible(db, good)) == 1
+    assert eligible(db, bad) == []
+
+
+def test_concurrent_end_of_last_activities_emits_once(service, db, settings):
+    acts, user = event_activities(2), uuid4()
+    enroll(service, acts, user, {0, 1})
+    replica = SubscriptionService(db, settings)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(lambda pair: end(pair[0], pair[1]), [(service, acts[0]), (replica, acts[1])]))
+    assert len(eligible(db, user)) == 1
 
 
 def test_cancelled_activity_releases_everyone(service, db):
