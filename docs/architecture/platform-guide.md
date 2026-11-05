@@ -61,8 +61,9 @@ Sources of truth, in order: the code, the service's own README/`CONTRACTS.md`, t
 - [ ] Register with the discoverer in the background (`register(kind)` blocks up to ~2.5 min) **and re-register
       periodically (~30 s)**: the registry is in memory, so a discoverer restart forgets everyone.
 - [ ] Read identity from `X-User-Id`/`X-User-Roles` (401 `UNAUTHENTICATED` when absent or not a UUID).
-- [ ] Register the public routes on the gateway with a script (`PUT /admin/endpoints`): `isPublic`, `requireAuth`,
-      `rateLimitBy`, `maxPerMin`. See `user/scripts/register-gateway-routes.sh` and `subscription/scripts/register_gateway.py`.
+- [ ] Declare the gateway settings of each route in the service's OpenAPI with `x-gateway` (`isPublic`, `requireAuth`,
+      `rateLimitBy`, `maxPerMin`; applied when the gateway first inserts the route), instead of, or in addition to, a
+      registration script (`PUT /admin/endpoints`, which also edits an already-stored route). See `user/scripts/register-gateway-routes.sh` and `subscription/scripts/register_gateway.py`.
       Internal-only routes (e.g. `/internal/...`) are **never** opened.
 - [ ] Env-driven config with safe defaults; secrets via `${VAR:-}` empty defaults in compose (so a missing one fails
       loudly), placeholders in `.env.example`, real values in git-ignored `.env`.
@@ -75,7 +76,8 @@ Sources of truth, in order: the code, the service's own README/`CONTRACTS.md`, t
 - Start the gateway's Mongo first (standalone project, creates the external `gateway-net` network):
   `docker compose -f gateway/docker-compose.yml up -d`, then `docker compose up -d --build` at the root.
 - Users needs `user/.keys` (`user/scripts/gen-dev-keys.sh`) and `USERS_DB_PASSWORD`; `.env` and `user/.keys` are git-ignored.
-- The gateway exposes a service's routes only after the service's registration script ran (inside the stack network; the
+- The gateway exposes a route when the service declared `isPublic: true` for it in `x-gateway` (honored only the first
+  time the gateway inserts the route) or after the service's registration script ran (inside the stack network; the
   admin API has no auth and no host port).
 - Services not yet built need a test double registered with the discoverer under a name that resolves on the network
   (use `--network-alias`).
@@ -111,8 +113,10 @@ stripped. Requests that do not match a known endpoint get 404.
 **Pipeline** (outermost first; CORS wraps all): Logging, Resolve, Auth, RateLimit, DefaultHeaders, Proxy.
 
 **Endpoint table** (MongoDB `gateway-db`, private, a standalone compose project). At startup, in the background, the
-gateway reads each kind's `GET /openapi.json`, adds new endpoints with defaults and removes stale ones (existing
-settings are never overwritten). Per-endpoint settings, changed only via the admin API:
+gateway reads each kind's `GET /openapi.json`, adds new endpoints and removes stale ones. A new endpoint takes the
+settings it declares in its OpenAPI operation under the vendor extension `x-gateway` (same keys as below), else the
+defaults. Existing endpoints are **never** overwritten by the spec (insert-only), so the admin API stays authoritative at
+runtime. Per-endpoint settings, changed at runtime via the admin API:
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -120,6 +124,11 @@ settings are never overwritten). Per-endpoint settings, changed only via the adm
 | `requireAuth` | `false` | `true` = the gateway demands a valid JWT: 401 (`WWW-Authenticate: Bearer`) if missing/invalid, 503 if signing keys are unavailable. With `false`, a missing/invalid token continues **anonymous**. |
 | `maxPerMin` | `DEFAULT_MAX_PER_MIN` (60) | Fixed 1-minute window per gateway instance; 429 + `Retry-After`; `0` blocks. |
 | `rateLimitBy` | `user_or_ip` | `user_or_ip` (verified `X-User-Id`, else IP), `ip` (use for login), `global`. |
+
+Declaration example: `"get": {..., "x-gateway": {"isPublic": true, "requireAuth": true, "maxPerMin": 120, "rateLimitBy": "user_or_ip"}}`.
+All keys optional; an invalid key is ignored (default) and logged, it never fails the sync. Only the first insertion
+honors the declaration: to re-apply a changed one, `PUT` the values or delete the endpoint document in `gateway-db`.
+A service can thereby declare itself public (accepted risk, ADR-003); never declare `/internal/...` routes public.
 
 **Identity.** The gateway fetches the JWKS of the Users service (through the discoverer), verifies RS256, `iss`, `exp`,
 `kid` (cooldown of 30 s between refetches, refresh every 10 min). For **every** route it first deletes the client's
