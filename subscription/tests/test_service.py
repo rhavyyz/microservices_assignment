@@ -31,18 +31,23 @@ def register(service, act, user=None):
     return service.create(user or uuid4(), act)
 
 
-def payment(service, reg, kind="PaymentApproved", version=1, event_id=None):
-    current = service.get(reg["id"])
+def payment(reg, kind="PaymentApproved", event_id=None):
     return PaymentEvent(
         event_id=event_id or uuid4(),
         schema_version=1,
         type=kind,
         registration_id=reg["id"],
-        payment_attempt_id=current["payment"]["id"],
-        provider_version=version,
         amount_minor=reg["amount_minor"],
         currency=reg["currency"],
     )
+
+
+def domain_events(db, reg, kind):
+    with db.transaction() as conn:
+        return conn.execute(
+            "SELECT payload FROM outbox WHERE payload->>'type'=%s AND payload->>'registration_id'=%s",
+            (kind, str(reg["id"])),
+        ).fetchall()
 
 
 def invariant(db, aid):
@@ -112,11 +117,15 @@ def test_signup_after_cancel_creates_new_registration(service, db):
     assert invariant(db, act.activity_id)["confirmed"] == 1
 
 
-@pytest.mark.parametrize("kind,final", [("PaymentDeclined", "REJECTED"), ("PaymentExpired", "EXPIRED")])
-def test_signup_after_rejected_or_expired_creates_new_registration(service, db, kind, final):
+@pytest.mark.parametrize("final", ["REJECTED", "EXPIRED"])
+def test_signup_after_rejected_or_expired_creates_new_registration(service, db, final):
     act, user = activity(1, amount=100), uuid4()
     first = register(service, act, user)
-    service.payment_event(payment(service, first, kind))
+    if final == "REJECTED":
+        service.payment_event(payment(first, "PaymentDeclined"))
+    else:
+        overdue(db, first)
+        service.expire()
     assert service.get(first["id"])["status"] == final
     second = register(service, act, user)
     assert second["id"] != first["id"]
@@ -127,41 +136,52 @@ def test_signup_after_rejected_or_expired_creates_new_registration(service, db, 
 def test_payment_confirmation_duplicate_and_stale(service, db):
     act = activity(amount=100)
     reg = register(service, act)
-    event = payment(service, reg, version=2)
+    event = payment(reg)
     service.payment_event(event)
     service.payment_event(event)
-    service.payment_event(payment(service, reg, "PaymentDeclined", version=1))
+    service.payment_event(payment(reg, "PaymentDeclined"))
     assert service.get(reg["id"])["status"] == "CONFIRMED"
     assert invariant(db, act.activity_id)["confirmed"] == 1
+    assert len(domain_events(db, reg, "RegistrationConfirmed")) == 1
 
 
-@pytest.mark.parametrize("kind", ["PaymentDeclined", "PaymentExpired", "PaymentCancelled"])
-def test_financial_failure_releases_seat(service, db, kind):
+def test_declined_releases_seat_and_promotes_waitlist(service, db):
+    act = activity(amount=100)
+    reg, waiting = register(service, act), register(service, act)
+    service.payment_event(payment(reg, "PaymentDeclined"))
+    assert service.get(reg["id"])["status"] == "REJECTED"
+    assert service.get(waiting["id"])["status"] == "OFFERED"
+    assert invariant(db, act.activity_id)["reserved"] == 1
+
+
+@pytest.mark.parametrize("kind", ["PaymentCreated", "PaymentExpired", "PaymentCancelled", "PaymentRefunded"])
+def test_informational_payment_events_keep_the_reservation(service, db, kind):
     act = activity(amount=100)
     reg = register(service, act)
-    service.payment_event(payment(service, reg, kind))
-    assert service.get(reg["id"])["status"] in ("REJECTED", "EXPIRED")
-    assert invariant(db, act.activity_id)["reserved"] == 0
+    service.payment_event(payment(reg, kind))
+    assert service.get(reg["id"])["status"] == "PENDING_PAYMENT"
+    assert invariant(db, act.activity_id)["reserved"] == 1
 
 
-def test_payment_after_expiry_is_refunded(service, db):
+def test_payment_after_expiry_is_ignored(service, db):
     act = activity(amount=100)
     reg = register(service, act)
     overdue(db, reg)
-    service.payment_event(payment(service, reg))
-    result = service.get(reg["id"])
-    assert result["status"] == "EXPIRED"
-    assert result["payment"]["status"] == "REFUND_PENDING"
-    service.payment_event(payment(service, reg, "PaymentRefunded", version=2))
-    assert service.get(reg["id"])["payment"]["status"] == "REFUNDED"
+    service.payment_event(payment(reg))
+    assert service.get(reg["id"])["status"] == "EXPIRED"
+    assert domain_events(db, reg, "RegistrationConfirmed") == []
     assert invariant(db, act.activity_id)["reserved"] == 0
+
+
+def test_unknown_registration_payment_is_ignored(service):
+    service.payment_event(payment({"id": uuid4(), "amount_minor": 100, "currency": "BRL"}))
 
 
 def test_expiry_and_payment_race(service, db):
     act = activity(amount=100)
     reg = register(service, act)
     overdue(db, reg)
-    event = payment(service, reg)
+    event = payment(reg)
     with ThreadPoolExecutor(max_workers=2) as pool:
         tasks = [pool.submit(service.expire), pool.submit(service.payment_event, event)]
         for task in tasks:
@@ -173,7 +193,7 @@ def test_expiry_and_payment_race(service, db):
 def test_cancel_and_payment_race(service, db):
     act = activity(amount=100)
     reg = register(service, act)
-    event = payment(service, reg)
+    event = payment(reg)
     with ThreadPoolExecutor(max_workers=2) as pool:
         tasks = [
             pool.submit(service.cancel, reg["id"], reg["user_id"]),
@@ -181,9 +201,7 @@ def test_cancel_and_payment_race(service, db):
         ]
         for task in tasks:
             task.result()
-    result = service.get(reg["id"])
-    assert result["status"] == "CANCELLED"
-    assert result["payment"]["status"] == "REFUND_PENDING"
+    assert service.get(reg["id"])["status"] == "CANCELLED"
     invariant(db, act.activity_id)
 
 
@@ -201,20 +219,15 @@ def test_fifo_offer_expiry_and_acceptance(service, db):
     invariant(db, act.activity_id)
 
 
-def test_paid_offer_creates_only_one_charge(service, db):
+def test_paid_offer_announces_pending_payment_once(service, db):
     act = activity(amount=100)
     first, second = [register(service, act) for _ in range(2)]
     service.cancel(first["id"], first["user_id"])
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _: service.accept(second["id"], second["user_id"], act), range(2)))
     assert all(r["status"] == "PENDING_PAYMENT" for r in results)
-    with db.transaction() as conn:
-        assert (
-            conn.execute(
-                "SELECT count(*) AS n FROM payment_attempts WHERE registration_id=%s", (second["id"],)
-            ).fetchone()["n"]
-            == 1
-        )
+    # A segunda chamada concorrente encontra a inscrição já em PENDING_PAYMENT e não emite de novo.
+    assert len(domain_events(db, second, "RegistrationPendingPayment")) == 1
     invariant(db, act.activity_id)
 
 
@@ -280,8 +293,8 @@ def test_cancelled_activity_releases_everyone(service, db):
         event_id=uuid4(), schema_version=1, type="ActivityCancelled", activity_id=act.activity_id
     )
     service.activity_event(event, act)
-    service.payment_event(payment(service, reg))
-    assert service.get(reg["id"])["payment"]["status"] == "REFUND_PENDING"
+    service.payment_event(payment(reg))
+    assert service.get(reg["id"])["status"] == "CANCELLED"
     assert invariant(db, act.activity_id)["reserved"] == 0
 
 
@@ -325,11 +338,28 @@ def test_activity_event_fetch_carries_no_identity(service, db, settings, kind):
     assert calls == [((act.activity_id,), {})]
 
 
-def test_ownership_and_payment_amount_validation(service):
+def test_ownership_and_payment_amount_mismatch_is_ignored(service):
     reg = register(service, activity(amount=100))
     with pytest.raises(DomainError, match="REGISTRATION_NOT_FOUND"):
         service.cancel(reg["id"], uuid4())
-    wrong = payment(service, reg).model_copy(update={"amount_minor": 1})
-    with pytest.raises(DomainError, match="PAYMENT_CONTRACT_MISMATCH"):
-        service.payment_event(wrong)
+    wrong = payment(reg).model_copy(update={"amount_minor": 1})
+    service.payment_event(wrong)
     assert service.get(reg["id"])["status"] == "PENDING_PAYMENT"
+
+
+def test_internal_registration_exposes_facts_and_parent_event(service):
+    act = activity(amount=100)
+    reg = register(service, act)
+    facts = service.internal_registration(reg["id"])
+    assert facts == {
+        "registration_id": reg["id"],
+        "user_id": reg["user_id"],
+        "status": "PENDING_PAYMENT",
+        "amount_minor": 100,
+        "currency": "BRL",
+        "expires_at": facts["expires_at"],
+        "parent_event_id": act.event_id,
+    }
+    assert facts["expires_at"] is not None
+    with pytest.raises(DomainError, match="REGISTRATION_NOT_FOUND"):
+        service.internal_registration(uuid4())

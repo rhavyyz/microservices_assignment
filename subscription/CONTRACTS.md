@@ -1,22 +1,23 @@
 # Contratos de integração de Inscrições — v1
 
 Estes contratos são implementados **no lado consumidor/produtor de Inscrições**. As APIs de
-Eventos e Pagamentos abaixo são propostas para a equipe, não endpoints já existentes no
-monorepo. Usuários, Gateway, Discoverer e o formato de Notificações seguem o código existente.
+Eventos abaixo são propostas para a equipe, não endpoints já existentes no
+monorepo. Pagamentos reage aos eventos de Inscrições e lê fatos pelo endpoint interno descrito adiante. Usuários, Gateway, Discoverer e o formato de Notificações seguem o código existente.
 
 ## Descoberta, identidade e HTTP
 
 - Registro periódico: `POST {SERVICE_DISCOVERER_URL}/register`
   com `{"kind":"subscription","host":"host:8080"}`.
-- Resolução: `GET /consult?kind=events|payments|user` → `{"host":"host:8080"}`.
+- Resolução: `GET /consult?kind=events|user` → `{"host":"host:8080"}`.
 - HTTP externo tem timeout de 5 segundos, sem retry de mutações HTTP.
 - Identidade: o gateway verifica o JWT e envia `X-User-Id` (UUID do `sub`) e `X-User-Roles`
   (separados por vírgula; ausente sem papéis). Inscrições não valida JWT e só aceita a
   identidade desses cabeçalhos (401 `UNAUTHENTICATED` se `X-User-Id` faltar ou for inválido).
 - Chamadas a Eventos feitas em nome de um usuário enviam `X-User-Id`, `X-User-Roles` (somente
   se houver papéis), `X-Request-Id` e o `Authorization` do usuário (repassado sem verificação).
-  Chamadas de fundo (reação a `events.events`, reconciliação de pagamentos) não carregam identidade.
-  Os endpoints `/internal/...` são protegidos por isolamento de rede, não por token.
+  Chamadas de fundo (reação a `events.events` e a `payments.events`) não carregam identidade.
+  Os endpoints `/internal/...` são protegidos por isolamento de rede, não por token; ficam fora do
+  OpenAPI e do `scripts/register_gateway.py`, e não são destinados ao Gateway.
 - O broker atual é PLAINTEXT em rede compartilhada. Resultados financeiros só são confiáveis
   se clientes públicos não puderem produzir nesses tópicos; ACLs/credenciais no broker são
   responsabilidade da infraestrutura e não foram adicionadas aos outros serviços.
@@ -57,83 +58,89 @@ administrativa; o papel `ORGANIZER` sozinho não concede acesso a todos os event
 
 | Tópico padrão | Produtor | Consumidor | Chave |
 |---|---|---|---|
-| `payments.commands` | Inscrições | Pagamentos | registration_id |
 | `payments.events` | Pagamentos | Inscrições | registration_id |
 | `events.events` | Eventos | Inscrições / outros | activity_id |
-| `subscription.events` | Inscrições | Certificados / Relatórios | registration_id |
+| `subscription.events` | Inscrições | Pagamentos / Certificados / Relatórios | registration_id |
 | `notifications` | Inscrições / outros | Notificações | user_id |
 | `subscription.dlq` | Inscrições | Operação/manual | tópico:partição |
 
-Na inicialização, Inscrições cria os seis tópicos acima, se ausentes, com
+Na inicialização, Inscrições cria os cinco tópicos acima, se ausentes, com
 `SUBSCRIPTION_TOPIC_PARTITIONS` partições (padrão 6) e nunca altera tópicos existentes; se o Kafka
 estiver indisponível, repete em segundo plano até conseguir, antes de consumir ou publicar.
 Cada serviço consumidor usa grupo próprio; Inscrições usa `subscription-service`.
 Não alterar partições durante processamento que dependa da ordenação da chave sem planejar
-a migração. A correção financeira também usa versão, não apenas a ordem Kafka.
+a migração.
 
-Variáveis: `PAYMENT_COMMANDS_TOPIC`, `PAYMENT_EVENTS_TOPIC`, `EVENTS_TOPIC`,
+Variáveis: `PAYMENT_EVENTS_TOPIC`, `EVENTS_TOPIC`,
 `SUBSCRIPTION_EVENTS_TOPIC`, `NOTIFICATIONS_TOPIC`, `SUBSCRIPTION_DLQ_TOPIC`.
 
-## Comandos financeiros
+## Modelo declarativo: Inscrições não comanda Pagamentos
+
+Inscrições **não envia comandos nem chama Pagamentos**. Ela publica apenas os próprios eventos de
+domínio em `subscription.events` e aguarda os resultados em `payments.events`. Pagamentos reage:
+
+- cria a cobrança ao ver `RegistrationPendingPayment`, lendo os fatos em
+  `GET /internal/registrations/{registration_id}` (abaixo) e mantendo a própria expiração;
+- cancela a cobrança pendente ao ver `RegistrationCancelled`/`RegistrationExpired` e estorna uma
+  cobrança já aprovada (inclusive aprovação tardia, vista depois do cancelamento/expiração).
+
+Não há `payments.commands`, tentativa financeira local, chave de idempotência, reconciliação nem
+endpoint de consulta financeira. O prazo da reserva de Inscrições (`RESERVATION_SECONDS`) é a
+autoridade sobre a vaga.
+
+### Endpoint interno para Pagamentos
+
+`GET /internal/registrations/{registration_id}` → 200, sem autenticação (isolamento de rede):
 
 ```json
 {
-  "event_id": "33333333-3333-4333-8333-333333333333",
-  "schema_version": 1,
-  "type": "PaymentRequested",
-  "idempotency_key": "44444444-4444-4444-8444-444444444444:PaymentRequested",
-  "payment_attempt_id": "44444444-4444-4444-8444-444444444444",
   "registration_id": "55555555-5555-4555-8555-555555555555",
   "user_id": "66666666-6666-4666-8666-666666666666",
+  "status": "PENDING_PAYMENT",
   "amount_minor": 2500,
   "currency": "BRL",
-  "expires_at": "2026-11-01T22:15:00+00:00"
+  "expires_at": "2026-11-01T22:15:00Z",
+  "parent_event_id": "88888888-8888-4888-8888-888888888888"
 }
 ```
 
-Tipos: `PaymentRequested`, `PaymentCancelRequested`, `PaymentRefundRequested`.
-`expires_at` pode ser null nos comandos de compensação. Inscrições fornece o ID da tentativa;
-Pagamentos deve usá-lo para identificar a cobrança e devolver esse mesmo ID nos resultados.
-
-**Deduplicar pela idempotency_key**, pois reconciliação pode gerar novo event_id para o mesmo
-efeito financeiro. Mesmo comando repetido não cria outra cobrança/estorno. Cancelamento deve
-impedir uma solicitação atrasada de reabrir uma tentativa; estorno deve concluir uma aprovação
-concorrente ao cancelamento. Não confiar na ordem entre provedores/callbacks externos.
+`status` é o estado da inscrição (`PENDING_PAYMENT`, `CONFIRMED`, ...). `expires_at` é null fora de
+`OFFERED`/`PENDING_PAYMENT`. `parent_event_id` é o id do evento de Eventos ao qual a atividade pertence
+(`event_id` da atividade, gravado na criação da inscrição); é null em inscrições anteriores à migração
+`003`. Id desconhecido ou que não seja UUID → 404 `REGISTRATION_NOT_FOUND` (`application/problem+json`).
+Não confundir `parent_event_id` com o `event_id` das mensagens Kafka, que identifica a mensagem.
 
 ## Resultados financeiros
+
+Pagamentos publica em `payments.events` mensagens planas:
 
 ```json
 {
   "event_id": "77777777-7777-4777-8777-777777777777",
   "schema_version": 1,
   "type": "PaymentApproved",
-  "payment_attempt_id": "44444444-4444-4444-8444-444444444444",
   "registration_id": "55555555-5555-4555-8555-555555555555",
-  "provider_version": 1,
   "amount_minor": 2500,
-  "currency": "BRL"
+  "currency": "BRL",
+  "request_id": "req-a1b2c3d4"
 }
 ```
 
-Tipos: `PaymentApproved`, `PaymentDeclined`, `PaymentExpired`, `PaymentCancelled`, `PaymentRefunded`.
-`provider_version` é crescente **por tentativa**, atribuído pelo serviço de Pagamentos após
-normalizar os callbacks do provedor. Versões menores/iguais são ignoradas. Um snapshot mais
-novo deve representar a verdade financeira atual, não apenas a última mensagem recebida.
-Registro, tentativa, valor e moeda devem corresponder exatamente. Nenhum cliente HTTP público
-pode enviar esse resultado diretamente à API de Inscrições.
+Tipos: `PaymentCreated`, `PaymentApproved`, `PaymentDeclined`, `PaymentExpired`, `PaymentCancelled`,
+`PaymentRefunded`. Obrigatórios: `event_id`, `schema_version` (1), `type`, `registration_id`,
+`amount_minor` (inteiro >= 0) e `currency` (texto, sem validação de padrão em Inscrições).
+`request_id` é opcional/nulo (string de 8–64 caracteres `[A-Za-z0-9._-]` quando presente) e é propagado
+aos eventos resultantes. Campos adicionais são ignorados. Mensagem inválida vai para a DLQ.
+Inscrições deduplica por `event_id`. Nenhum cliente HTTP público pode enviar esse resultado.
 
-Uma aprovação só confirma se a reserva estiver válida no relógio do banco durante o
-processamento. Aprovação atrasada após liberação de vaga resulta em estorno, sem reativação.
+Regras aplicadas sob o lock da atividade, com o relógio do banco:
 
-## Reconciliação de Pagamentos
-
-`GET /internal/payment-attempts/{payment_attempt_id}` deve devolver o mesmo JSON do último
-resultado acima, com event_id e versão estáveis. Enquanto ainda não há resultado, devolver 404.
-Não interpretar 404 como pagamento recusado. A consulta precisa continuar disponível para
-cancelados/estornados, para resolver compensações após quedas e perda de mensagens.
-
-Inscrições consulta `REQUESTED`, `CANCEL_PENDING`, `REFUND_PENDING` após `RECONCILE_SECONDS`.
-Compensações pendentes são reenviadas com a mesma chave de idempotência.
+| Tipo | Efeito em Inscrições |
+|---|---|
+| `PaymentApproved` | Se a inscrição está `PENDING_PAYMENT`, dentro da reserva (`expires_at` não passou) e `amount_minor`/`currency` iguais ao snapshot: `CONFIRMED` e `RegistrationConfirmed`. Caso contrário é ignorada, sem erro; Pagamentos estorna por conta própria ao ver o evento de cancelamento/expiração. |
+| `PaymentDeclined` | Se `PENDING_PAYMENT`: `REJECTED`, `RegistrationRejected`, libera a vaga e promove a fila. |
+| `PaymentCreated`, `PaymentExpired`, `PaymentCancelled`, `PaymentRefunded` | Informativos: nenhuma mudança de estado. |
+| `registration_id` desconhecido | Ignorado (não vai para a DLQ). |
 
 ## Ciclo de atividade
 
@@ -155,9 +162,12 @@ API após encerramento/cancelamento. Encerramento antecipado à data final não 
 ## Eventos de Inscrições
 
 Envelope: `event_id`, `schema_version=1`, `type`, `registration_id`, `activity_id`, `user_id`,
-`aggregate_version`, `occurred_at`, `status`. Tipos:
+`aggregate_version`, `occurred_at`, `status`, `request_id` (opcional/nulo em trabalho de fundo; Pagamentos
+devolve o mesmo valor nos resultados; ausente das mensagens de Notificações). Tipos:
 
 - `RegistrationWaitlisted`, `WaitlistOffered`;
+- `RegistrationPendingPayment` (a inscrição entrou em `PENDING_PAYMENT`: inscrição paga com vaga ou
+  aceite de oferta paga; sem campos extras — Pagamentos lê os fatos no endpoint interno);
 - `RegistrationConfirmed`, `RegistrationCancelled`, `RegistrationExpired`, `RegistrationRejected`;
 - `AttendanceRecorded`, `AttendanceEligible`.
 

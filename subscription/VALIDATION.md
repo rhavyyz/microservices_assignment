@@ -44,7 +44,8 @@ instalada de Starlette; não houve falha, nem ocultação de warnings.
 - HTTP de descoberta/atividade validado com transporte simulado e verificação do Bearer.
 - Consumer não confirma offset antes do commit, nem após falha de processamento.
 - Quarentena persistida sem copiar payload potencialmente sensível.
-- Reconciliação reenvia compensação com chave de idempotência estável.
+- Resultados de Pagamentos: regras de aprovação/recusa, tipos informativos e inscrição desconhecida (testes offline).
+- Rota interna `GET /internal/registrations/{id}`: formato 200, 404 e ausência no OpenAPI.
 - Cliente confluent-kafka real: publicação da outbox, serialização, chave Kafka, leitura e
   commit no cluster mock nativo do librdkafka (broker de teste simulado).
 

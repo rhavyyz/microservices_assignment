@@ -94,8 +94,11 @@ class SubscriptionService:
             (event_id, topic, str(key), Jsonb(serializable(payload))),
         )
 
-    def emit(self, conn, reg, event_type):
-        """Evento de domínio e mensagem compatível com Notificações na mesma transação."""
+    def emit(self, conn, reg, event_type, request_id=None):
+        """Evento de domínio e mensagem compatível com Notificações na mesma transação.
+
+        request_id só existe em ações originadas por HTTP; trabalho de fundo envia null.
+        """
         payload = {
             "event_id": str(uuid4()),
             "schema_version": 1,
@@ -106,6 +109,7 @@ class SubscriptionService:
             "aggregate_version": reg["version"],
             "occurred_at": self.now(conn),
             "status": reg["status"],
+            "request_id": request_id,
         }
         self.enqueue(conn, self.settings.domain_topic, reg["id"], payload)
         messages = {
@@ -146,47 +150,6 @@ class SubscriptionService:
             (status, expires_at, reg["id"]),
         ).fetchone()
 
-    def payment_command(self, conn, reg, attempt, command):
-        self.enqueue(
-            conn,
-            self.settings.payment_commands,
-            reg["id"],
-            {
-                "event_id": str(uuid4()),
-                "schema_version": 1,
-                "type": command,
-                "idempotency_key": f"{attempt['id']}:{command}",
-                "payment_attempt_id": attempt["id"],
-                "registration_id": reg["id"],
-                "user_id": reg["user_id"],
-                "amount_minor": reg["amount_minor"],
-                "currency": reg["currency"],
-                "expires_at": reg["expires_at"],
-            },
-        )
-
-    def request_payment(self, conn, reg):
-        attempt = conn.execute(
-            "INSERT INTO payment_attempts(id,registration_id,status) VALUES (%s,%s,'REQUESTED') RETURNING *",
-            (uuid4(), reg["id"]),
-        ).fetchone()
-        self.payment_command(conn, reg, attempt, "PaymentRequested")
-
-    def compensate(self, conn, reg):
-        attempt = conn.execute(
-            "SELECT * FROM payment_attempts WHERE registration_id=%s", (reg["id"],)
-        ).fetchone()
-        if not attempt or attempt["status"] in ("DECLINED", "EXPIRED", "CANCELLED", "REFUNDED"):
-            return
-        approved = attempt["status"] in ("APPROVED", "REFUND_PENDING")
-        conn.execute(
-            "UPDATE payment_attempts SET status=%s WHERE id=%s",
-            ("REFUND_PENDING" if approved else "CANCEL_PENDING", attempt["id"]),
-        )
-        self.payment_command(
-            conn, reg, attempt, "PaymentRefundRequested" if approved else "PaymentCancelRequested"
-        )
-
     def promote(self, conn, activity_id):
         """Preenche vagas pela ordem persistida; o chamador já possui o lock da atividade."""
         inv = self.inventory(conn, activity_id)
@@ -213,11 +176,10 @@ class SubscriptionService:
         ).fetchall()
         for reg in expired:
             updated = self.transition(conn, reg, "EXPIRED")
-            self.compensate(conn, updated)
             self.emit(conn, updated, "RegistrationExpired")
         self.promote(conn, activity_id)
 
-    def create(self, user_id, activity, join_waitlist=True):
+    def create(self, user_id, activity, join_waitlist=True, request_id=None):
         with self.db.transaction() as conn:
             if not activity.registration_open or activity.starts_at <= self.now(conn):
                 raise DomainError(409, "REGISTRATION_CLOSED")
@@ -245,9 +207,16 @@ class SubscriptionService:
                 raise DomainError(409, "ACTIVITY_FULL")
             # Criar como WAITLISTED permite usar uma única função para todos os deltas.
             reg = conn.execute(
-                "INSERT INTO registrations(id,activity_id,user_id,status,amount_minor,currency) "
-                "VALUES (%s,%s,%s,'WAITLISTED',%s,%s) RETURNING *",
-                (uuid4(), activity.activity_id, user_id, activity.amount_minor, activity.currency),
+                "INSERT INTO registrations(id,activity_id,user_id,status,amount_minor,currency,parent_event_id) "
+                "VALUES (%s,%s,%s,'WAITLISTED',%s,%s,%s) RETURNING *",
+                (
+                    uuid4(),
+                    activity.activity_id,
+                    user_id,
+                    activity.amount_minor,
+                    activity.currency,
+                    activity.event_id,
+                ),
             ).fetchone()
             if available:
                 if reg["amount_minor"]:
@@ -257,10 +226,10 @@ class SubscriptionService:
                         "PENDING_PAYMENT",
                         self.now(conn) + timedelta(seconds=self.settings.reservation_seconds),
                     )
-                    self.request_payment(conn, reg)
+                    self.emit(conn, reg, "RegistrationPendingPayment", request_id)
                 else:
                     reg = self.transition(conn, reg, "CONFIRMED")
-                    self.emit(conn, reg, "RegistrationConfirmed")
+                    self.emit(conn, reg, "RegistrationConfirmed", request_id)
             else:
                 position = conn.execute(
                     "UPDATE activity_inventory SET next_position=next_position+1 "
@@ -271,10 +240,10 @@ class SubscriptionService:
                     "INSERT INTO waitlist_entries VALUES (%s,%s,%s)",
                     (reg["id"], activity.activity_id, position["next_position"]),
                 )
-                self.emit(conn, reg, "RegistrationWaitlisted")
+                self.emit(conn, reg, "RegistrationWaitlisted", request_id)
             return serializable(reg)
 
-    def cancel(self, registration_id, user_id):
+    def cancel(self, registration_id, user_id, request_id=None):
         with self.db.transaction() as conn:
             inv, reg = self.locked_registration(conn, registration_id)
             self.owner(reg, user_id)
@@ -282,12 +251,11 @@ class SubscriptionService:
                 raise DomainError(409, "ACTIVITY_ENDED")
             if reg["status"] in ACTIVE:
                 reg = self.transition(conn, reg, "CANCELLED")
-                self.compensate(conn, reg)
-                self.emit(conn, reg, "RegistrationCancelled")
+                self.emit(conn, reg, "RegistrationCancelled", request_id)
                 self.promote(conn, reg["activity_id"])
             return serializable(reg)
 
-    def accept(self, registration_id, user_id, activity):
+    def accept(self, registration_id, user_id, activity, request_id=None):
         with self.db.transaction() as conn:
             inv, reg = self.locked_registration(conn, registration_id)
             self.owner(reg, user_id)
@@ -309,66 +277,41 @@ class SubscriptionService:
                     "PENDING_PAYMENT",
                     self.now(conn) + timedelta(seconds=self.settings.reservation_seconds),
                 )
-                self.request_payment(conn, reg)
+                self.emit(conn, reg, "RegistrationPendingPayment", request_id)
             else:
                 reg = self.transition(conn, reg, "CONFIRMED")
-                self.emit(conn, reg, "RegistrationConfirmed")
+                self.emit(conn, reg, "RegistrationConfirmed", request_id)
             return serializable(reg)
 
     def payment_event(self, event):
+        """Regras declarativas: Pagamentos reage aos eventos de Inscrições, aqui só se aplica o resultado."""
+        rid = event.request_id
         with self.db.transaction() as conn:
-            inv, reg = self.locked_registration(conn, event.registration_id)
+            ref = conn.execute("SELECT * FROM registrations WHERE id=%s", (event.registration_id,)).fetchone()
+            if not ref:
+                return
+            _, reg = self.locked_registration(conn, event.registration_id)
             inserted = conn.execute(
                 "INSERT INTO inbox(source,event_id) VALUES ('payments',%s) "
                 "ON CONFLICT DO NOTHING RETURNING event_id",
                 (event.event_id,),
             ).fetchone()
-            if not inserted:
+            if not inserted or reg["status"] != "PENDING_PAYMENT":
                 return
-            attempt = conn.execute(
-                "SELECT * FROM payment_attempts WHERE id=%s AND registration_id=%s",
-                (event.payment_attempt_id, reg["id"]),
-            ).fetchone()
-            if not attempt or event.amount_minor != reg["amount_minor"] or event.currency != reg["currency"]:
-                raise DomainError(409, "PAYMENT_CONTRACT_MISMATCH")
-            if event.provider_version <= attempt["provider_version"]:
-                return
-            # Efetivação e expiração são decididas pelo mesmo lock e relógio do banco.
-            self.expire_locked(conn, reg["activity_id"])
-            reg = self.registration(conn, reg["id"])
-            states = {
-                "PaymentApproved": "APPROVED",
-                "PaymentDeclined": "DECLINED",
-                "PaymentExpired": "EXPIRED",
-                "PaymentCancelled": "CANCELLED",
-                "PaymentRefunded": "REFUNDED",
-            }
-            financial = states[event.type]
-            # Snapshots terminais não podem regredir para aprovação; isso é erro do produtor.
-            if attempt["status"] == "REFUNDED" and financial != "REFUNDED":
-                raise DomainError(409, "INVALID_PAYMENT_TRANSITION")
-            conn.execute(
-                "UPDATE payment_attempts SET status=%s,provider_version=%s,checked_at=clock_timestamp() "
-                "WHERE id=%s",
-                (financial, event.provider_version, attempt["id"]),
-            )
-            if financial == "APPROVED":
-                if reg["status"] == "PENDING_PAYMENT" and inv["lifecycle"] == "OPEN":
+            if event.type == "PaymentApproved":
+                # Confirmação e prazo são decididos pelo mesmo lock e relógio do banco; aprovação
+                # fora da reserva ou divergente é ignorada e Pagamentos estorna por conta própria.
+                if (
+                    reg["expires_at"] > self.now(conn)
+                    and event.amount_minor == reg["amount_minor"]
+                    and event.currency == reg["currency"]
+                ):
                     reg = self.transition(conn, reg, "CONFIRMED")
-                    self.emit(conn, reg, "RegistrationConfirmed")
-                elif reg["status"] != "CONFIRMED":
-                    self.compensate(conn, reg)
-            elif reg["status"] == "PENDING_PAYMENT":
-                target = "REJECTED" if financial == "DECLINED" else "EXPIRED"
-                reg = self.transition(conn, reg, target)
-                self.emit(
-                    conn, reg, "RegistrationRejected" if target == "REJECTED" else "RegistrationExpired"
-                )
-            elif reg["status"] == "CONFIRMED":
-                # Uma reversão financeira válida também revoga a inscrição, sem confirmar de novo.
-                reg = self.transition(conn, reg, "CANCELLED")
-                self.emit(conn, reg, "RegistrationCancelled")
-            self.promote(conn, reg["activity_id"])
+                    self.emit(conn, reg, "RegistrationConfirmed", rid)
+            elif event.type == "PaymentDeclined":
+                reg = self.transition(conn, reg, "REJECTED")
+                self.emit(conn, reg, "RegistrationRejected", rid)
+                self.promote(conn, reg["activity_id"])
 
     def expire(self):
         with self.db.transaction() as conn:
@@ -387,11 +330,21 @@ class SubscriptionService:
             reg = self.registration(conn, registration_id)
             if user_id is not None:
                 self.owner(reg, user_id)
-            payment = conn.execute(
-                "SELECT id,status FROM payment_attempts WHERE registration_id=%s", (registration_id,)
-            ).fetchone()
-            reg["payment"] = payment
             return serializable(reg)
+
+    def internal_registration(self, registration_id):
+        """Fatos da inscrição para Pagamentos (rota interna, sem identidade de usuário)."""
+        with self.db.transaction() as conn:
+            reg = self.registration(conn, registration_id)
+            return {
+                "registration_id": reg["id"],
+                "user_id": reg["user_id"],
+                "status": reg["status"],
+                "amount_minor": reg["amount_minor"],
+                "currency": reg["currency"],
+                "expires_at": reg["expires_at"],
+                "parent_event_id": reg["parent_event_id"],
+            }
 
     def list(self, *, user_id=None, activity_id=None, limit=50, offset=0):
         # Colunas escolhidas pelo código, não interpoladas a partir de entrada do cliente.
@@ -404,7 +357,7 @@ class SubscriptionService:
             ).fetchall()
             return serializable(rows)
 
-    def check_in(self, registration_id, organizer_id, activity):
+    def check_in(self, registration_id, organizer_id, activity, request_id=None):
         with self.db.transaction() as conn:
             inv, reg = self.locked_registration(conn, registration_id)
             now = self.now(conn)
@@ -423,7 +376,7 @@ class SubscriptionService:
                     "WHERE id=%s RETURNING *",
                     (registration_id,),
                 ).fetchone()
-                self.emit(conn, reg, "AttendanceRecorded")
+                self.emit(conn, reg, "AttendanceRecorded", request_id)
             else:
                 attendance = conn.execute(
                     "SELECT * FROM attendance WHERE registration_id=%s", (registration_id,)
@@ -460,7 +413,6 @@ class SubscriptionService:
             for reg in rows:
                 if cancelled or reg["status"] != "CONFIRMED":
                     reg = self.transition(conn, reg, "CANCELLED" if cancelled else "EXPIRED")
-                    self.compensate(conn, reg)
                     self.emit(conn, reg, "RegistrationCancelled" if cancelled else "RegistrationExpired")
                 else:
                     # Critério inicial de presença: ao menos um check-in válido. Certificados emite o documento.
@@ -476,27 +428,3 @@ class SubscriptionService:
                             (reg["id"],),
                         ).fetchone()
                         self.emit(conn, reg, "AttendanceEligible")
-
-    def reconciliation_candidates(self):
-        with self.db.transaction() as conn:
-            return conn.execute(
-                "SELECT id FROM payment_attempts WHERE status IN "
-                "('REQUESTED','CANCEL_PENDING','REFUND_PENDING') AND "
-                "checked_at < clock_timestamp() - (%s * interval '1 second') LIMIT 50",
-                (self.settings.reconcile_seconds,),
-            ).fetchall()
-
-    def reconcile(self, attempt_id, event):
-        if str(event.payment_attempt_id) != str(attempt_id):
-            raise DomainError(409, "PAYMENT_CONTRACT_MISMATCH")
-        self.payment_event(event)
-        with self.db.transaction() as conn:
-            ref = conn.execute(
-                "SELECT registration_id FROM payment_attempts WHERE id=%s", (attempt_id,)
-            ).fetchone()
-            _, reg = self.locked_registration(conn, ref["registration_id"])
-            conn.execute(
-                "UPDATE payment_attempts SET checked_at=clock_timestamp() WHERE id=%s", (attempt_id,)
-            )
-            if reg["status"] not in ACTIVE:
-                self.compensate(conn, reg)

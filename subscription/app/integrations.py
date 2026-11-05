@@ -5,7 +5,7 @@ import socket
 
 import httpx
 
-from .contracts import Activity, DomainError, PaymentEvent
+from .contracts import Activity, DomainError
 
 
 class Services:
@@ -60,7 +60,3 @@ class Services:
         result = self.get("events", f"/api/v1/activities/{activity_id}/permissions/me", headers)
         if result.get("can_manage") is not True:
             raise DomainError(403, "FORBIDDEN")
-
-    def payment(self, attempt_id):
-        # 404 não significa recusa: a solicitação pode ainda estar aguardando no Kafka.
-        return PaymentEvent.model_validate(self.get("payments", f"/internal/payment-attempts/{attempt_id}"))

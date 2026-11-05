@@ -27,7 +27,7 @@
 | Identidade injetada | Em toda rota o Gateway apaga `X-User-Id`/`X-User-Roles` do cliente; com token válido define `X-User-Id` = `sub` e `X-User-Roles` = `roles` (separadas por vírgula). Em rota sem `requireAuth`, token ausente ou inválido segue **anônimo**. `Authorization` é repassado sem alteração. | Usuários continua ignorando esses cabeçalhos e valida o próprio JWT (é quem emite o token). Inscrições **(branch)** confia nos cabeçalhos. |
 | WebSocket `/ws` | Token em `Authorization: Bearer` ou `?access_token=` (cabeçalho vence). `X-User-Id` e `?user_id=` **não são mais aceitos**. Falha → `401`/`503` antes do upgrade. A conexão aberta sobrevive ao `exp`. | Nenhum em Usuários. Mudança incompatível, aceita: o `/ws` ainda não tem consumidores. |
 | CORS | Gateway responde preflight e define cabeçalhos; **reflete qualquer `Origin` com credenciais**; remove `Access-Control-*` do serviço. | Usuários **não** configura CORS (ADR-003). |
-| Correlação | Usa **`X-Request-Id`** (gera se ausente; ecoa na resposta). | Usuários adota `X-Request-Id` em vez de `X-Correlation-Id` do prompt. |
+| Correlação | Usa **`X-Request-Id`** (gera se ausente; ecoa na resposta). | Usuários adota `X-Request-Id` em vez de `X-Correlation-Id` do prompt. Em Kafka, o mesmo valor segue no campo `request_id` (snake_case, string ou null) dos eventos de Inscrições e Pagamentos; é nulo em trabalho de fundo e Pagamentos o devolve nos resultados. |
 | Rate limit | Por endpoint; `user_or_ip` usa `X-User-Id`. valor verificado (`sub`); um cabeçalho forjado não escolhe o balde. | Script usa `rateLimitBy=ip`. |
 | Admin API | **Sem autenticação**, sem porta no host. | Não expor publicamente. |
 
@@ -77,11 +77,12 @@ Quem usa o tópico garante que ele existe antes de consumir ou publicar (cria se
 |---|---|---|---|
 | `notifications` | Inscrições (outros serviços) | Notificações | Notificações, Inscrições |
 | `notifications-push` | Notificações | Gateway (`/ws`) | Notificações, Gateway |
-| `payments.commands` | Inscrições | Pagamentos | Inscrições |
 | `payments.events` | Pagamentos | Inscrições | Inscrições |
 | `events.events` | Eventos | Inscrições | Inscrições |
-| `subscription.events` | Inscrições | Certificados / Relatórios | Inscrições |
+| `subscription.events` | Inscrições | Pagamentos / Certificados / Relatórios | Inscrições |
 | `subscription.dlq` | Inscrições | Operação (manual) | Inscrições |
+
+Inscrições/Pagamentos é declarativo (ADR-007): Inscrições não envia comandos; publica `RegistrationPendingPayment`, `RegistrationCancelled`, `RegistrationExpired` etc. em `subscription.events` e Pagamentos reage. Pagamentos cria a cobrança lendo os fatos por HTTP em `GET /internal/registrations/{registration_id}` de Inscrições (rota interna, sem autenticação, fora do Gateway; resposta `registration_id`, `user_id`, `status`, `amount_minor`, `currency`, `expires_at`, `parent_event_id`; 404 se desconhecida). Inscrições consome `payments.events` (`PaymentCreated`, `PaymentApproved`, `PaymentDeclined`, `PaymentExpired`, `PaymentCancelled`, `PaymentRefunded`, com `registration_id`, `amount_minor`, `currency`, `request_id` opcional; campos adicionais ignorados). Detalhes em `subscription/CONTRACTS.md`.
 
 Eventos, Pagamentos, Certificados e Relatórios ainda não têm código: ao passarem a usar Kafka devem criar os tópicos que produzem ou consomem do mesmo modo.
 
@@ -98,7 +99,7 @@ Eventos, Pagamentos, Certificados e Relatórios ainda não têm código: ao pass
 | Relatórios | Sem dados pessoais de Usuários | Proposto |
 
 ### Serviços atrás do Gateway
-Um serviço que só recebe tráfego pelo Gateway **não precisa validar o JWT**: lê `X-User-Id` (UUID) e `X-User-Roles` (`PARTICIPANT`/`ORGANIZER`, separadas por vírgula; ausente se não houver). Ausência de `X-User-Id` significa requisição anônima (rota sem `requireAuth`); um serviço protegido deve responder `401`. Isso só é seguro se o serviço **não for alcançável por outro caminho**: valide o token como abaixo. O `Authorization` continua sendo repassado. Inscrições **(branch)**, nas chamadas feitas em nome do usuário, reencaminha a Eventos `X-User-Id`, `X-User-Roles`, `X-Request-Id` e o `Authorization` (sem verificá-lo); chamadas em segundo plano (reação a `events.events`, reconciliação de pagamentos) não levam identidade. Não há segredo entre serviços: os endpoints `/internal/...` dependem do isolamento de rede.
+Um serviço que só recebe tráfego pelo Gateway **não precisa validar o JWT**: lê `X-User-Id` (UUID) e `X-User-Roles` (`PARTICIPANT`/`ORGANIZER`, separadas por vírgula; ausente se não houver). Ausência de `X-User-Id` significa requisição anônima (rota sem `requireAuth`); um serviço protegido deve responder `401`. Isso só é seguro se o serviço **não for alcançável por outro caminho**: valide o token como abaixo. O `Authorization` continua sendo repassado. Inscrições **(branch)**, nas chamadas feitas em nome do usuário, reencaminha a Eventos `X-User-Id`, `X-User-Roles`, `X-Request-Id` e o `Authorization` (sem verificá-lo); chamadas em segundo plano (reação a `events.events` e a `payments.events`) não levam identidade. Não há segredo entre serviços: os endpoints `/internal/...` dependem do isolamento de rede.
 
 ### Como um consumidor valida o token (Proposto)
 RS256; chave pública em `GET /consult?kind=user` → `http://<host>/.well-known/jwks.json` (`kid` na assinatura); exigir `iss`, `exp` e assinatura. Claims: `sub` (UUID), `roles` (`PARTICIPANT`/`ORGANIZER`), `iss`, `iat`, `exp`, `jti`.
