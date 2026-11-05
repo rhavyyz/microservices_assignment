@@ -301,7 +301,7 @@ def test_presence_and_certificate_eligibility(service, db):
     assert len(rows) == 1
     payload = rows[0]["payload"]
     assert rows[0]["message_key"] == reg["id"]
-    assert payload["parent_event_id"] == str(act.event_id)
+    assert payload["event_id"] == str(act.event_id)
     assert payload["message_id"] != str(act.event_id)
     assert payload["registration_id"] == reg["id"]
     assert payload["activity_id"] == str(act.activity_id)
@@ -543,7 +543,7 @@ def test_ownership_and_payment_amount_mismatch_is_ignored(service):
     assert service.get(reg["id"])["status"] == "PENDING_PAYMENT"
 
 
-def test_internal_registration_exposes_facts_and_parent_event(service):
+def test_internal_registration_exposes_facts_and_event_id(service):
     act = activity(amount=100)
     reg = register(service, act)
     facts = service.internal_registration(reg["id"])
@@ -554,7 +554,7 @@ def test_internal_registration_exposes_facts_and_parent_event(service):
         "amount_minor": 100,
         "currency": "BRL",
         "expires_at": facts["expires_at"],
-        "parent_event_id": act.event_id,
+        "event_id": act.event_id,
     }
     assert facts["expires_at"] is not None
     with pytest.raises(DomainError, match="REGISTRATION_NOT_FOUND"):

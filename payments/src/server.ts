@@ -184,7 +184,7 @@ export async function buildServer(pool: Pool, lookup: FetchRegistration = fetchR
     const { payment, created } = await createPayment(pool, {
       registrationId,
       userId: r.user_id,
-      eventId: r.parent_event_id,
+      eventId: r.event_id,
       amountMinor: r.amount_minor,
       currency: r.currency,
       expiresAt: new Date(now().getTime() + config.paymentTtlSeconds * 1000),

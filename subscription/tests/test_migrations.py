@@ -1,11 +1,12 @@
 """A 002 remove a tabela de chaves de idempotência abandonada; a 003 cria a de emissões por evento;
-a 004 remove tentativas de pagamento e lembra o evento pai; a 005 renomeia inbox.event_id para message_id."""
+a 004 remove tentativas de pagamento e lembra o evento; a 005 renomeia inbox.event_id para message_id;
+a 006 renomeia registrations.parent_event_id para event_id."""
 
 import psycopg
 import pytest
 
 
-def test_abandoned_tables_dropped_and_parent_event_column_added(db):
+def test_abandoned_tables_dropped_and_event_column_added(db):
     with db.transaction() as conn:
         tables = {
             r["tablename"]
@@ -14,17 +15,22 @@ def test_abandoned_tables_dropped_and_parent_event_column_added(db):
         applied = [r["version"] for r in conn.execute("SELECT version FROM schema_migrations ORDER BY version")]
         column = conn.execute(
             "SELECT is_nullable FROM information_schema.columns WHERE table_schema=current_schema() "
+            "AND table_name='registrations' AND column_name='event_id'"
+        ).fetchone()
+        old_column = conn.execute(
+            "SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() "
             "AND table_name='registrations' AND column_name='parent_event_id'"
         ).fetchone()
     assert not {"idempotency_keys", "payment_attempts"} & tables
     assert {"registrations", "activity_inventory", "outbox"} <= tables
-    assert column == {"is_nullable": "YES"}
+    assert column == {"is_nullable": "YES"} and old_column is None
     assert applied == [
         "001_initial.sql",
         "002_drop_idempotency_keys.sql",
         "003_event_attendance_emitted.sql",
         "004_declarative_payments.sql",
         "005_inbox_message_id.sql",
+        "006_registration_event_id.sql",
     ]
 
 
@@ -64,6 +70,25 @@ def test_migration_005_is_idempotent(db):
     import app.db
 
     sql = (Path(app.db.__file__).parent / "migrations" / "005_inbox_message_id.sql").read_text(encoding="utf-8")
+    with db.transaction() as conn:
+        conn.execute(sql)
+
+
+def test_registrations_event_id_is_nullable_uuid(db):
+    with db.transaction() as conn:
+        column = conn.execute(
+            "SELECT data_type, is_nullable FROM information_schema.columns WHERE table_schema=current_schema() "
+            "AND table_name='registrations' AND column_name='event_id'"
+        ).fetchone()
+    assert column == {"data_type": "uuid", "is_nullable": "YES"}
+
+
+def test_migration_006_is_idempotent(db):
+    from pathlib import Path
+
+    import app.db
+
+    sql = (Path(app.db.__file__).parent / "migrations" / "006_registration_event_id.sql").read_text(encoding="utf-8")
     with db.transaction() as conn:
         conn.execute(sql)
 

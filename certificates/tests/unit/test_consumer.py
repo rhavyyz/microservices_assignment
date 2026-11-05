@@ -27,7 +27,7 @@ def event(**overrides):
         "registration_id": str(REGISTRATION_ID),
         "activity_id": str(ACTIVITY_ID),
         "user_id": str(USER_ID),
-        "parent_event_id": str(EVENT_ID),
+        "event_id": str(EVENT_ID),
         **PERCENTAGE_FIELDS,
         "aggregate_version": 3,
         "occurred_at": "2026-11-04T11:00:00Z",
@@ -147,8 +147,8 @@ def test_other_types_are_ignored_without_lookups(env, kind):
         (event(registration_id="nope"), "INVALID_CONTRACT"),
         (event(activity_id=None), "INVALID_CONTRACT"),
         (event(user_id=""), "INVALID_CONTRACT"),
-        (event(parent_event_id="nope"), "INVALID_CONTRACT"),
-        (event(parent_event_id=None), "INVALID_CONTRACT"),
+        (event(event_id="nope"), "INVALID_CONTRACT"),
+        (event(event_id=None), "INVALID_CONTRACT"),
         (event(attended_activities=3.0), "INVALID_CONTRACT"),
         (event(attended_activities=True, total_activities=1, attendance_percentage=100), "INVALID_CONTRACT"),
         (event(total_activities=True, attended_activities=1, attendance_percentage=100), "INVALID_CONTRACT"),
@@ -179,7 +179,7 @@ def test_malformed_events_are_poison(env, raw, reason):
 
 @pytest.mark.parametrize(
     "field",
-    ["user_id", "parent_event_id", "attended_activities", "total_activities", "attendance_percentage"],
+    ["user_id", "event_id", "attended_activities", "total_activities", "attendance_percentage"],
 )
 def test_missing_field_is_poison(env, field):
     handler, directory, *_ = env

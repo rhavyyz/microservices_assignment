@@ -62,13 +62,13 @@ Set `SIMULATOR_ENABLED=false` to turn the simulator off.
 
     {"registration_id":"<uuid>"}
 
-- Only `registration_id` is read (missing / not a UUID = 400 `VALIDATION_ERROR`); unknown properties are ignored. Amount, currency, owner and parent event never come from the client.
+- Only `registration_id` is read (missing / not a UUID = 400 `VALIDATION_ERROR`); unknown properties are ignored. Amount, currency, owner and event never come from the client.
 - Flow: Payments calls Subscription `GET /internal/registrations/{id}` (that endpoint belongs to Subscription, not Payments) with the caller's `X-Trace-Id`, and uses the answer:
   - Subscription 404, or the registration belongs to another user -> 404 `REGISTRATION_NOT_FOUND` (other users' registrations are never revealed);
   - status other than `PENDING_PAYMENT` -> 409 `REGISTRATION_NOT_PAYABLE`;
   - registration `expires_at` not in the future (checked against Payments' clock, after the owner and status checks; Subscription's expiry worker can lag a few seconds) -> 409 `REGISTRATION_NOT_PAYABLE`;
   - Subscription unreachable, 5xx or invalid body -> 503 `UPSTREAM_UNAVAILABLE`;
-  - otherwise the payment is created `PENDING` with `amount_minor`, `currency`, `user_id` and `parent_event_id` (stored in `event_id`, nullable) from Subscription's answer.
+  - otherwise the payment is created `PENDING` with `amount_minor`, `currency`, `user_id` and `event_id` (nullable) from Subscription's answer.
 - `expires_at = now + PAYMENT_TTL_SECONDS` (Payments' own deadline).
 - Idempotent by `registration_id`: if a payment already exists it is returned unchanged (200 instead of 201) after the owner check, without asking Subscription again.
 - Answer: `{payment_id, registration_id, user_id, event_id, amount_minor, currency, status:"PENDING", expires_at, created_at}`.
@@ -94,10 +94,10 @@ At startup Payments creates (if absent, 1 replica, `PAYMENTS_TOPIC_PARTITIONS` p
 Flat envelope, no nested `data`:
 
     {"message_id","schema_version":1,"type","occurred_at","trace_id","registration_id","amount_minor","currency",
-     "payment_id","user_id","parent_event_id","status","reason"}
+     "payment_id","user_id","event_id","status","reason"}
 
 - `message_id` is the unique id of the message (consumers dedupe by it). The Events-service event the payment belongs to
-  is published as `parent_event_id` (the HTTP API and the `payments.event_id` column call it `event_id`).
+  is published as `event_id` (same name in the HTTP API and the `payments.event_id` column).
 - `amount_minor` is an integer in minor units (2500 = 25.00).
 - `type` by status: `PENDING` -> `PaymentCreated`, `APPROVED` -> `PaymentApproved`, `DECLINED` -> `PaymentDeclined`,
   `EXPIRED` -> `PaymentExpired`, `CANCELLED` -> `PaymentCancelled`, `REFUNDED` -> `PaymentRefunded`.

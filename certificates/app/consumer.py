@@ -94,14 +94,14 @@ class AttendanceHandler:
         registration_id = _uuid(payload, "registration_id")
         activity_id = _uuid(payload, "activity_id")
         user_id = _uuid(payload, "user_id")
-        parent_event_id = _uuid(payload, "parent_event_id")
+        event_id = _uuid(payload, "event_id")
         _, _, attendance_percentage = _attendance(payload)
 
         trace_id = str(uuid.uuid4())
         log.info("attendance_eligible_received registration_id=%s trace_id=%s", registration_id, trace_id)
 
         try:
-            self._issue(registration_id, activity_id, user_id, parent_event_id, attendance_percentage, trace_id)
+            self._issue(registration_id, activity_id, user_id, event_id, attendance_percentage, trace_id)
         except (PoisonMessage, TransientError):
             raise
         except CertificateAlreadyExistsError:

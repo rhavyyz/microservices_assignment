@@ -100,7 +100,7 @@ test('unknown route is a problem+json 404', async () => {
 const REG = '44444444-4444-4444-8444-444444444444';
 const registration = (over: object = {}): Registration => ({
   registration_id: REG, user_id: USER, status: 'PENDING_PAYMENT', amount_minor: 4200, currency: 'USD',
-  expires_at: '2999-01-01T00:00:00Z', parent_event_id: 'ev-9', ...over,
+  expires_at: '2999-01-01T00:00:00Z', event_id: 'ev-9', ...over,
 });
 const found = (over: object = {}): FetchRegistration => async () => ({ kind: 'found', registration: registration(over) });
 
@@ -122,7 +122,7 @@ function createPool(existing: object[] = [], inserted: { params?: unknown[] } = 
 const post = (a: Awaited<ReturnType<typeof app>>, payload: unknown, headers: Record<string, string> = { 'x-user-id': USER }) =>
   a.inject({ method: 'POST', url: '/payments', headers, payload: payload as object });
 
-test('POST /payments: 201, amount/currency/user/parent event come from Subscription, own TTL, client body ignored', async () => {
+test('POST /payments: 201, amount/currency/user/event_id come from Subscription, own TTL, client body ignored', async () => {
   const inserted: { params?: unknown[] } = {};
   let seen: { id: string; rid: string } | undefined;
   const lookup: FetchRegistration = async (id, rid) => { seen = { id, rid }; return { kind: 'found', registration: registration() }; };
@@ -143,9 +143,9 @@ test('POST /payments: 201, amount/currency/user/parent event come from Subscript
   assert.ok(exp >= before + 900_000 - 1000 && exp <= Date.now() + 900_000 + 1000);
 });
 
-test('POST /payments: null parent_event_id is stored as NULL', async () => {
+test('POST /payments: null event_id is stored as NULL', async () => {
   const inserted: { params?: unknown[] } = {};
-  const a = await buildServer(createPool([], inserted), found({ parent_event_id: null }));
+  const a = await buildServer(createPool([], inserted), found({ event_id: null }));
   a.log.level = 'silent';
   const res = await post(a, { registration_id: REG });
   assert.equal(res.statusCode, 201);
@@ -186,7 +186,7 @@ test('POST /payments: 409 (not 503) for non-pending registrations with null expi
 
 test('POST /payments: end to end through the client, null expires_at is 409 when CONFIRMED, 503 when PENDING_PAYMENT or garbage', async () => {
   const { createSubscriptionClient } = await import('../src/subscription.ts');
-  const body = { registration_id: REG, user_id: USER, status: 'PENDING_PAYMENT', amount_minor: 100, currency: 'USD', parent_event_id: null };
+  const body = { registration_id: REG, user_id: USER, status: 'PENDING_PAYMENT', amount_minor: 100, currency: 'USD', event_id: null };
   const cases: [object, number, string][] = [
     [{ status: 'CONFIRMED', expires_at: null }, 409, 'REGISTRATION_NOT_PAYABLE'],
     [{ status: 'CANCELLED', expires_at: null, amount_minor: 0 }, 409, 'REGISTRATION_NOT_PAYABLE'],

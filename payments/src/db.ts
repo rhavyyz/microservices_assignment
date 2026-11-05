@@ -111,7 +111,7 @@ BEGIN
   END IF;
 END $$;
 
--- v7: REFUNDED status, and payments.event_id (the parent event) becomes nullable (Subscription may not know it for old rows).
+-- v7: REFUNDED status, and payments.event_id (the Events-service event) becomes nullable (Subscription may not know it for old rows).
 -- Replaces the status CHECK only when the current one does not mention REFUNDED yet; DROP NOT NULL is a no-op if already nullable.
 DO $$
 DECLARE c record;

@@ -29,7 +29,7 @@ export function eventTypeFor(status: string): string {
 
 /**
  * Flat envelope in Subscription's naming (see subscription/CONTRACTS.md): `message_id` is this message's unique id
- * (consumers dedupe by it); the payment's Events-service event is published as `parent_event_id`.
+ * (consumers dedupe by it); `event_id` is the Events-service event the payment belongs to.
  * See README, "Events published".
  */
 export function buildPaymentEvent(
@@ -50,7 +50,7 @@ export function buildPaymentEvent(
       payment_id: p.payment_id,
       registration_id: p.registration_id,
       user_id: p.user_id,
-      parent_event_id: p.event_id,
+      event_id: p.event_id,
       amount_minor: p.amount_minor,
       currency: p.currency,
       status: p.status,

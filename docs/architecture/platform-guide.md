@@ -238,7 +238,7 @@ organizer actions need role `ORGANIZER` **and** an Events permission check on th
 `subscription.events` (`Registration*`, `WaitlistOffered`, `AttendanceRecorded`, `AttendanceEligible`), `notifications`,
 and `subscription.dlq`. Transactional outbox, inbox dedupe by `message_id`, `aggregate_version` to reject stale states.
 Envelope: `message_id`, `schema_version=1`, `type`, `registration_id`, `activity_id`, `user_id`, `aggregate_version`,
-`occurred_at`, `status`, `trace_id` (nullable); `AttendanceEligible` adds `parent_event_id`, `attended_activities`, `total_activities`,
+`occurred_at`, `status`, `trace_id` (nullable); `AttendanceEligible` adds `event_id`, `attended_activities`, `total_activities`,
 `attendance_percentage`.
 
 **Config highlights:** `SUBSCRIPTION_DATABASE_URL`, `KAFKA_BROKERS`, `SERVICE_DISCOVERER_URL`, `RESERVATION_SECONDS`,

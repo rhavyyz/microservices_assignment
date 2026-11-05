@@ -101,15 +101,15 @@ autoridade sobre a vaga.
   "amount_minor": 2500,
   "currency": "BRL",
   "expires_at": "2026-11-01T22:15:00Z",
-  "parent_event_id": "88888888-8888-4888-8888-888888888888"
+  "event_id": "88888888-8888-4888-8888-888888888888"
 }
 ```
 
 `status` é o estado da inscrição (`PENDING_PAYMENT`, `CONFIRMED`, ...). `expires_at` é null fora de
-`OFFERED`/`PENDING_PAYMENT`. `parent_event_id` é o id do evento de Eventos ao qual a atividade pertence
+`OFFERED`/`PENDING_PAYMENT`. `event_id` é o id do evento de Eventos ao qual a atividade pertence
 (`event_id` da atividade, gravado na criação da inscrição); é null em inscrições anteriores à migração
-`004`. Id desconhecido ou que não seja UUID → 404 `REGISTRATION_NOT_FOUND` (`application/problem+json`).
-`message_id` identifica a mensagem Kafka; `parent_event_id` é o evento de Eventos.
+`004` (a coluna se chamava `parent_event_id` até a migração `006`). Id desconhecido ou que não seja UUID → 404 `REGISTRATION_NOT_FOUND` (`application/problem+json`).
+`message_id` identifica a mensagem Kafka; `event_id` é o evento de Eventos.
 
 ## Resultados financeiros
 
@@ -184,7 +184,7 @@ outra atividade do mesmo evento não gera segunda emissão (limitação conhecid
 encerradas antes da migração 003 não são reavaliadas.
 
 Campos adicionais (somente neste tipo; mudança aditiva, `schema_version` continua 1):
-`parent_event_id` (id do evento no serviço de Eventos, uuid), `attended_activities` (int),
+`event_id` (id do evento no serviço de Eventos, uuid), `attended_activities` (int),
 `total_activities` (int), `attendance_percentage` (número, até 2 casas). `message_id` continua sendo o
 uuid da mensagem, nunca o id do evento de Eventos. `registration_id`/`activity_id`/`aggregate_version`
 referem-se à inscrição da atividade cujo encerramento disparou a avaliação; a chave Kafka segue

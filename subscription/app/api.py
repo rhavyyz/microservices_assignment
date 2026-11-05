@@ -37,7 +37,7 @@ class InternalRegistration(BaseModel):
     amount_minor: int
     currency: str
     expires_at: datetime | None
-    parent_event_id: UUID | None
+    event_id: UUID | None
 
 
 def create_app(settings=None, database=None, services=None, authenticator=None):

@@ -104,7 +104,7 @@ def test_payment_event_ignores_extra_fields():
     extras = {
         "payment_id": str(uuid4()),
         "user_id": str(uuid4()),
-        "parent_event_id": str(uuid4()),
+        "event_id": str(uuid4()),
         "status": "APPROVED",
         "reason": "ok",
         "occurred_at": "2026-11-01T22:15:00+00:00",

@@ -76,7 +76,7 @@ class Conn:
                 "status": "WAITLISTED",
                 "amount_minor": params[3],
                 "currency": params[4],
-                "parent_event_id": params[5],
+                "event_id": params[5],
                 "expires_at": None,
                 "version": 1,
             }
@@ -117,7 +117,7 @@ def domain_types(conn, svc):
 # --- RegistrationPendingPayment -------------------------------------------------------------
 
 
-def test_paid_create_emits_pending_payment_with_trace_id_and_stores_parent_event():
+def test_paid_create_emits_pending_payment_with_trace_id_and_stores_event_id():
     act = activity(capacity=5, amount=1500)
     conn = Conn(act=act)
     svc = service_with(conn)
@@ -332,7 +332,7 @@ def test_internal_registration_returns_contract_shape_without_auth():
         "amount_minor": 2500,
         "currency": "BRL",
         "expires_at": expires,
-        "parent_event_id": uuid4(),
+        "event_id": uuid4(),
         "version": 9,
     }
     client, fake = internal_client(row)
@@ -346,10 +346,10 @@ def test_internal_registration_returns_contract_shape_without_auth():
         "amount_minor",
         "currency",
         "expires_at",
-        "parent_event_id",
+        "event_id",
     }
     assert body["registration_id"] == str(row["registration_id"]) and body["status"] == "PENDING_PAYMENT"
-    assert body["amount_minor"] == 2500 and body["parent_event_id"] == str(row["parent_event_id"])
+    assert body["amount_minor"] == 2500 and body["event_id"] == str(row["event_id"])
     assert datetime.fromisoformat(body["expires_at"]) == expires
     assert str(fake.asked[0]) == str(row["registration_id"])
 
@@ -362,11 +362,11 @@ def test_internal_registration_nullable_fields():
         "amount_minor": 0,
         "currency": "BRL",
         "expires_at": None,
-        "parent_event_id": None,
+        "event_id": None,
     }
     client, _ = internal_client(row)
     body = client.get(f"/internal/registrations/{row['registration_id']}").json()
-    assert body["expires_at"] is None and body["parent_event_id"] is None
+    assert body["expires_at"] is None and body["event_id"] is None
 
 
 @pytest.mark.parametrize("path", [str(uuid4()), "not-a-uuid"])

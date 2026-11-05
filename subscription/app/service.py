@@ -209,7 +209,7 @@ class SubscriptionService:
                 raise DomainError(409, "ACTIVITY_FULL")
             # Criar como WAITLISTED permite usar uma única função para todos os deltas.
             reg = conn.execute(
-                "INSERT INTO registrations(id,activity_id,user_id,status,amount_minor,currency,parent_event_id) "
+                "INSERT INTO registrations(id,activity_id,user_id,status,amount_minor,currency,event_id) "
                 "VALUES (%s,%s,%s,'WAITLISTED',%s,%s,%s) RETURNING *",
                 (
                     uuid4(),
@@ -345,7 +345,7 @@ class SubscriptionService:
                 "amount_minor": reg["amount_minor"],
                 "currency": reg["currency"],
                 "expires_at": reg["expires_at"],
-                "parent_event_id": reg["parent_event_id"],
+                "event_id": reg["event_id"],
             }
 
     def list(self, *, user_id=None, activity_id=None, limit=50, offset=0):
@@ -420,7 +420,7 @@ class SubscriptionService:
                     self.emit(conn, reg, "RegistrationCancelled" if cancelled else "RegistrationExpired")
             self.evaluate_event_attendance(conn, confirmed, inv["event_id"])
 
-    def evaluate_event_attendance(self, conn, triggers, parent_event_id):
+    def evaluate_event_attendance(self, conn, triggers, event_id):
         """RN06: certificado por evento com presença mínima, decidida quando a última atividade encerra.
 
         Roda no encerramento e também no cancelamento de uma atividade (a cancelada sai da conta).
@@ -431,14 +431,14 @@ class SubscriptionService:
         """
         # Encerramentos simultâneos de atividades do mesmo evento precisam enxergar um ao outro;
         # o lock por evento (liberado no commit) serializa a avaliação e evita que ambos desistam.
-        conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (str(parent_event_id),))
+        conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (str(event_id),))
         for trigger in triggers:
             rows = conn.execute(
                 "SELECT i.lifecycle, (a.registration_id IS NOT NULL) AS attended "
                 "FROM registrations r JOIN activity_inventory i ON i.activity_id=r.activity_id "
                 "LEFT JOIN attendance a ON a.registration_id=r.id "
                 "WHERE r.user_id=%s AND r.status='CONFIRMED' AND i.event_id=%s",
-                (trigger["user_id"], parent_event_id),
+                (trigger["user_id"], event_id),
             ).fetchall()
             if any(row["lifecycle"] != "ENDED" for row in rows):
                 continue  # será avaliado quando a última atividade confirmada da pessoa encerrar
@@ -451,7 +451,7 @@ class SubscriptionService:
             if not conn.execute(
                 "INSERT INTO event_attendance_emitted(user_id,event_id) VALUES (%s,%s) "
                 "ON CONFLICT DO NOTHING RETURNING user_id",
-                (trigger["user_id"], parent_event_id),
+                (trigger["user_id"], event_id),
             ).fetchone():
                 continue
             reg = conn.execute(
@@ -464,7 +464,7 @@ class SubscriptionService:
                 reg,
                 "AttendanceEligible",
                 extra={
-                    "parent_event_id": parent_event_id,
+                    "event_id": event_id,
                     "attended_activities": attended,
                     "total_activities": total,
                     "attendance_percentage": round(attended * 100 / total, 2),
