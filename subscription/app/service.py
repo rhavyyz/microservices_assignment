@@ -94,7 +94,7 @@ class SubscriptionService:
             (event_id, topic, str(key), Jsonb(serializable(payload))),
         )
 
-    def emit(self, conn, reg, event_type):
+    def emit(self, conn, reg, event_type, extra=None):
         """Evento de domínio e mensagem compatível com Notificações na mesma transação."""
         payload = {
             "event_id": str(uuid4()),
@@ -106,6 +106,7 @@ class SubscriptionService:
             "aggregate_version": reg["version"],
             "occurred_at": self.now(conn),
             "status": reg["status"],
+            **(extra or {}),
         }
         self.enqueue(conn, self.settings.domain_topic, reg["id"], payload)
         messages = {
@@ -457,25 +458,65 @@ class SubscriptionService:
                 "SELECT * FROM registrations WHERE activity_id=%s AND status=ANY(%s)",
                 (activity.activity_id, list(ACTIVE)),
             ).fetchall()
+            # Quem estava confirmado neste momento (antes de qualquer cancelamento) é reavaliado no fim.
+            confirmed = [reg for reg in rows if reg["status"] == "CONFIRMED"]
             for reg in rows:
                 if cancelled or reg["status"] != "CONFIRMED":
                     reg = self.transition(conn, reg, "CANCELLED" if cancelled else "EXPIRED")
                     self.compensate(conn, reg)
                     self.emit(conn, reg, "RegistrationCancelled" if cancelled else "RegistrationExpired")
-                else:
-                    # Critério inicial de presença: ao menos um check-in válido. Certificados emite o documento.
-                    present = conn.execute(
-                        "UPDATE attendance SET eligible_emitted=true WHERE registration_id=%s "
-                        "AND NOT eligible_emitted RETURNING registration_id",
-                        (reg["id"],),
-                    ).fetchone()
-                    if present:
-                        reg = conn.execute(
-                            "UPDATE registrations SET version=version+1, updated_at=clock_timestamp() "
-                            "WHERE id=%s RETURNING *",
-                            (reg["id"],),
-                        ).fetchone()
-                        self.emit(conn, reg, "AttendanceEligible")
+            self.evaluate_event_attendance(conn, confirmed, inv["event_id"])
+
+    def evaluate_event_attendance(self, conn, triggers, parent_event_id):
+        """RN06: certificado por evento com presença mínima, decidida quando a última atividade encerra.
+
+        Roda no encerramento e também no cancelamento de uma atividade (a cancelada sai da conta).
+        `triggers` são as inscrições confirmadas da atividade que acabou de encerrar/ser cancelada.
+
+        Só conta inscrições CONFIRMED. A primeira conclusão vence: inscrição confirmada depois da
+        emissão em outra atividade do mesmo evento não gera segunda emissão.
+        """
+        # Encerramentos simultâneos de atividades do mesmo evento precisam enxergar um ao outro;
+        # o lock por evento (liberado no commit) serializa a avaliação e evita que ambos desistam.
+        conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (str(parent_event_id),))
+        for trigger in triggers:
+            rows = conn.execute(
+                "SELECT i.lifecycle, (a.registration_id IS NOT NULL) AS attended "
+                "FROM registrations r JOIN activity_inventory i ON i.activity_id=r.activity_id "
+                "LEFT JOIN attendance a ON a.registration_id=r.id "
+                "WHERE r.user_id=%s AND r.status='CONFIRMED' AND i.event_id=%s",
+                (trigger["user_id"], parent_event_id),
+            ).fetchall()
+            if any(row["lifecycle"] != "ENDED" for row in rows):
+                continue  # será avaliado quando a última atividade confirmada da pessoa encerrar
+            total = len(rows)
+            if not total:
+                continue  # só havia a atividade cancelada: nada a certificar
+            attended = sum(row["attended"] for row in rows)
+            if attended * 100 < self.settings.attendance_min_percent * total:
+                continue
+            if not conn.execute(
+                "INSERT INTO event_attendance_emitted(user_id,event_id) VALUES (%s,%s) "
+                "ON CONFLICT DO NOTHING RETURNING user_id",
+                (trigger["user_id"], parent_event_id),
+            ).fetchone():
+                continue
+            reg = conn.execute(
+                "UPDATE registrations SET version=version+1, updated_at=clock_timestamp() "
+                "WHERE id=%s RETURNING *",
+                (trigger["id"],),
+            ).fetchone()
+            self.emit(
+                conn,
+                reg,
+                "AttendanceEligible",
+                {
+                    "parent_event_id": parent_event_id,
+                    "attended_activities": attended,
+                    "total_activities": total,
+                    "attendance_percentage": round(attended * 100 / total, 2),
+                },
+            )
 
     def reconciliation_candidates(self):
         with self.db.transaction() as conn:

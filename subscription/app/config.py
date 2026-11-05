@@ -21,6 +21,7 @@ class Settings:
     reconcile_seconds: int = 60
     workers_enabled: bool = True
     kafka_topic_partitions: int = 6
+    attendance_min_percent: float = 75.0
 
     @classmethod
     def from_env(cls):
@@ -31,6 +32,10 @@ class Settings:
             partitions = int(os.getenv("SUBSCRIPTION_TOPIC_PARTITIONS", "6"))
         except ValueError:
             raise ValueError("SUBSCRIPTION_TOPIC_PARTITIONS deve ser um inteiro pelo menos 1") from None
+        try:
+            min_percent = float(os.getenv("ATTENDANCE_MIN_PERCENT", "75"))
+        except ValueError:
+            raise ValueError("ATTENDANCE_MIN_PERCENT deve ser um número maior que 0 e até 100") from None
         settings = cls(
             database_url=url,
             brokers=os.getenv("KAFKA_BROKERS", "kafka:9092"),
@@ -47,9 +52,12 @@ class Settings:
             notifications_topic=os.getenv("NOTIFICATIONS_TOPIC", "notifications"),
             dlq_topic=os.getenv("SUBSCRIPTION_DLQ_TOPIC", "subscription.dlq"),
             kafka_topic_partitions=partitions,
+            attendance_min_percent=min_percent,
         )
         if min(settings.reservation_seconds, settings.offer_seconds, settings.reconcile_seconds) <= 0:
             raise ValueError("Os prazos devem ser positivos")
         if settings.kafka_topic_partitions < 1:
             raise ValueError("SUBSCRIPTION_TOPIC_PARTITIONS deve ser pelo menos 1")
+        if not 0 < settings.attendance_min_percent <= 100:
+            raise ValueError("ATTENDANCE_MIN_PERCENT deve ser um número maior que 0 e até 100")
         return settings

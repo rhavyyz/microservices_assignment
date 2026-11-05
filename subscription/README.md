@@ -43,8 +43,16 @@ em [CONTRACTS.md](CONTRACTS.md); Eventos e Pagamentos ainda são placeholders no
 - Pagamento aprovado após cancelamento/expiração gera `PaymentRefundRequested`.
   Cancelamento de tentativa ainda pendente gera `PaymentCancelRequested`.
 - Check-in exige inscrição confirmada, período da atividade e organizador responsável.
-  Critério de presença adotado nesta versão: **um check-in válido**. Após `ActivityEnded`,
-  emite `AttendanceEligible` apenas para confirmados presentes. Não emite certificados.
+  Critério de presença (RN06): o certificado é por **evento**, não por atividade. Percentual =
+  atividades do evento com inscrição `CONFIRMED` **e** check-in ÷ atividades do evento com inscrição
+  `CONFIRMED`. Inscrições em fila, expiradas, canceladas ou rejeitadas e atividades canceladas não
+  entram na conta. Com percentual >= `ATTENDANCE_MIN_PERCENT` (padrão 75, número em (0, 100]),
+  emite **um** `AttendanceEligible` por pessoa e evento, quando a última atividade confirmada da
+  pessoa nesse evento encerra (`ActivityEnded`) ou é cancelada (`ActivityCancelled`: a cancelada sai da conta e quem
+  estava confirmada nela é reavaliada; sem nenhuma atividade restante, nada é emitido). Abaixo do mínimo, nada é emitido. A tabela
+  `event_attendance_emitted` garante a unicidade; a primeira conclusão vence (inscrição confirmada
+  depois da emissão, em outra atividade do mesmo evento, não gera nova emissão). Atividades
+  encerradas antes da migração 003 não são reavaliadas (sem backfill). Não emite certificados.
 - `ActivityCancelled` cancela inscritos e fila, libera vagas e solicita compensações.
   Cancelamento voluntário após `ActivityEnded` é rejeitado.
 
