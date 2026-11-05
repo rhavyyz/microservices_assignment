@@ -63,8 +63,8 @@ export function createSeatService(deps: ServiceDeps) {
 
   return {
     /** Applies one seat command exactly once, however many times its message is delivered (Idempotent Consumer). */
-    handle: (messageId: string, correlationId: string | null, c: SeatCommand) =>
-      run(c.kind === 'reserve' ? 'SEAT_RESERVE' : 'SEAT_RELEASE', { actor: null, correlationId },
+    handle: (messageId: string, traceId: string | null, c: SeatCommand) =>
+      run(c.kind === 'reserve' ? 'SEAT_RESERVE' : 'SEAT_RELEASE', { actor: null, traceId },
         async (w): Promise<SeatOutcome> => {
           w.target.registration_id = c.registrationId;
           w.target.activity_id = c.activityId;

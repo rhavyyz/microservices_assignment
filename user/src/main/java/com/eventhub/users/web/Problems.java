@@ -24,7 +24,7 @@ public final class Problems {
     }
 
     public static String currentTraceId() {
-        String id = MDC.get(CorrelationIdFilter.MDC_KEY);
+        String id = MDC.get(TraceIdFilter.MDC_KEY);
         return id == null ? "unavailable" : id;
     }
 

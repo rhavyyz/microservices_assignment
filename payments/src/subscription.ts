@@ -9,7 +9,7 @@ export type Registration = {
   amount_minor: number | null; // null/0 only outside PENDING_PAYMENT
   currency: string;
   expires_at: string | null; // Subscription sends null outside OFFERED/PENDING_PAYMENT
-  parent_event_id: string | null;
+  event_id: string | null;
 };
 
 export type LookupResult =
@@ -17,7 +17,7 @@ export type LookupResult =
   | { kind: 'not_found' }
   | { kind: 'unavailable'; reason: string };
 
-export type FetchRegistration = (id: string, requestId: string) => Promise<LookupResult>;
+export type FetchRegistration = (id: string, traceId: string) => Promise<LookupResult>;
 
 type Options = { discovererUrl?: string; fetchFn?: typeof fetch; timeoutMs?: number };
 
@@ -37,7 +37,7 @@ function parseRegistration(b: unknown): Registration | null {
   const currency = s('currency');
   const rawExpires = o.expires_at;
   const amount = o.amount_minor;
-  const parent = o.parent_event_id;
+  const event_id = o.event_id;
   if (!registration_id || !user_id || !status || !currency) return null;
   const pending = status === 'PENDING_PAYMENT';
   const isInt = typeof amount === 'number' && Number.isSafeInteger(amount);
@@ -51,8 +51,8 @@ function parseRegistration(b: unknown): Registration | null {
     expires_at = rawExpires;
   }
   if (pending && expires_at === null) return null; // the deadline check needs it
-  if (parent !== undefined && parent !== null && typeof parent !== 'string') return null;
-  return { registration_id, user_id, status, amount_minor: isInt ? amount : null, currency: currency.toUpperCase(), expires_at, parent_event_id: parent ?? null };
+  if (event_id !== undefined && event_id !== null && typeof event_id !== 'string') return null;
+  return { registration_id, user_id, status, amount_minor: isInt ? amount : null, currency: currency.toUpperCase(), expires_at, event_id: event_id ?? null };
 }
 
 export function createSubscriptionClient(opts: Options = {}): FetchRegistration {
@@ -74,11 +74,11 @@ export function createSubscriptionClient(opts: Options = {}): FetchRegistration 
     return body.host.trim();
   }
 
-  async function attempt(host: string, id: string, requestId: string): Promise<LookupResult> {
+  async function attempt(host: string, id: string, traceId: string): Promise<LookupResult> {
     let res: Response;
     try {
       res = await doFetch(`http://${host}/internal/registrations/${encodeURIComponent(id)}`, {
-        headers: { 'x-request-id': requestId, accept: 'application/json' },
+        headers: { 'x-trace-id': traceId, accept: 'application/json' },
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (e) {
@@ -91,17 +91,17 @@ export function createSubscriptionClient(opts: Options = {}): FetchRegistration 
     return { kind: 'found', registration };
   }
 
-  return async (id, requestId) => {
+  return async (id, traceId) => {
     try {
       cachedHost ??= await consult();
       try {
-        return await attempt(cachedHost, id, requestId);
+        return await attempt(cachedHost, id, traceId);
       } catch (e) {
         if (!(e instanceof ConnectionFailure)) throw e;
         // The cached host may be stale (instance replaced): re-consult and retry once.
         cachedHost = null;
         cachedHost = await consult();
-        return await attempt(cachedHost, id, requestId);
+        return await attempt(cachedHost, id, traceId);
       }
     } catch (e) {
       if (e instanceof ConnectionFailure) cachedHost = null;

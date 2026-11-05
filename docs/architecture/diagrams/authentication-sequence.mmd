@@ -8,7 +8,7 @@ sequenceDiagram
 
     U->>FE: preenche cadastro
     FE->>GW: POST /user/api/v1/auth/register
-    GW->>US: POST /api/v1/auth/register (X-Request-Id)
+    GW->>US: POST /api/v1/auth/register (X-Trace-Id)
     US->>DB: INSERT users + user_roles(PARTICIPANT)
     alt e-mail já existe (inclui corrida: constraint única)
         US-->>FE: 409 EMAIL_ALREADY_REGISTERED

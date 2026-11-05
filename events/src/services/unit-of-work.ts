@@ -16,7 +16,7 @@ export type ServiceDeps = {
 };
 
 /** Who asked (null for anonymous reads and for messages) and the id that ties logs and messages together. */
-export type Ctx = { actor: Actor | null; correlationId: string | null };
+export type Ctx = { actor: Actor | null; traceId: string | null };
 /** Context of an authenticated request (the HTTP layer guarantees the actor). */
 export type AuthedCtx = Ctx & { actor: Actor };
 
@@ -36,7 +36,7 @@ export type Work = {
 export function createUnitOfWork(deps: ServiceDeps) {
   return async function run<T>(operation: string, ctx: Ctx, fn: (w: Work) => Promise<T>): Promise<T> {
     const target: Work['target'] = {};
-    const base = { operation, user_id: ctx.actor?.userId ?? null, correlation_id: ctx.correlationId };
+    const base = { operation, user_id: ctx.actor?.userId ?? null, trace_id: ctx.traceId };
     try {
       const result = await withTransaction(deps.pool, (tx) =>
         fn({
@@ -45,7 +45,7 @@ export function createUnitOfWork(deps: ServiceDeps) {
           publish: (m) => addToOutbox(tx, {
             topic: deps.topic,
             key: m.key,
-            envelope: envelope(m.type, m.data, ctx.correlationId, deps.now?.()),
+            envelope: envelope(m.type, m.data, ctx.traceId, deps.now?.()),
           }),
         }),
       );

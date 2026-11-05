@@ -13,7 +13,7 @@ exemplos; se os dois divergirem, vale o código. Decisões por trás destes cont
 | Ids | UUID v4 gerados pelo serviço. Ids de usuário (`organizer_id`, `user_id`) são o `sub` do token do serviço de Usuários. |
 | Dinheiro | `price_cents`: inteiro em centavos de BRL; `0` = gratuita. `paid = price_cents > 0`. |
 | Autenticação | `Authorization: Bearer <access token>` (JWT RS256 do serviço de Usuários), validado pelo próprio serviço porque ele precisa de `roles`. `X-User-Id` é ignorado, inclusive quando o Gateway passar a injetá-lo (P3): o Gateway precisa continuar repassando `Authorization`. |
-| Correlação | `X-Request-Id` do Gateway é reaproveitado se tiver 8–64 caracteres `[A-Za-z0-9._-]`; senão um UUID novo. Sempre devolvido no cabeçalho `X-Request-Id` da resposta. |
+| Correlação | `X-Trace-Id` do Gateway é reaproveitado se tiver 8–64 caracteres `[A-Za-z0-9._-]`; senão um UUID novo. Sempre devolvido no cabeçalho `X-Trace-Id` da resposta. |
 | Campos desconhecidos | Rejeitados com 400 (não são ignorados). |
 | Corpo vazio | `publish`, `cancel` e `DELETE` não têm corpo: não envie `Content-Type: application/json` sem corpo (400). |
 
@@ -179,7 +179,7 @@ Todas as mensagens, produzidas ou consumidas, usam o envelope comum do barrament
 
 ```json
 { "message_id": "0b6c…", "type": "seat.reserved", "version": 1, "occurred_at": "2027-03-01T12:00:00.000Z",
-  "correlation_id": "0f9a6c2e5b7d4e21a3c8b9d0e1f2a3b4", "data": { … } }
+  "trace_id": "0f9a6c2e5b7d4e21a3c8b9d0e1f2a3b4", "data": { … } }
 ```
 
 | Campo | Regra |
@@ -188,9 +188,9 @@ Todas as mensagens, produzidas ou consumidas, usam o envelope comum do barrament
 | `type` | Tipos abaixo; tipos desconhecidos são ignorados pelos consumidores. |
 | `version` | Sempre `1`. |
 | `occurred_at` | Quando a mudança aconteceu (ISO 8601, UTC). |
-| `correlation_id` | `X-Request-Id` da requisição HTTP que originou a mudança, ou o `correlation_id` da mensagem consumida. Pode ser `null`. |
+| `trace_id` | `X-Trace-Id` da requisição HTTP que originou a mudança, ou o `trace_id` da mensagem consumida. Pode ser `null`. |
 
-Cabeçalhos Kafka extras nas mensagens publicadas: `message-type` (= `type`) e `correlation-id`.
+Cabeçalhos Kafka extras nas mensagens publicadas: `message-type` (= `type`) e `trace-id`.
 
 ### 4.2 Publicadas em `events-events`
 

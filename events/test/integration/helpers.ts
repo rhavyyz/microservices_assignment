@@ -31,7 +31,7 @@ export async function outbox(pool: pg.Pool): Promise<(Envelope & { key: string; 
   return res.rows.map((r) => ({ ...(r.payload as Envelope), key: r.message_key as string, topic: r.topic as string }));
 }
 
-export const ctx = (userId: string, roles = ['ORGANIZER']): AuthedCtx => ({ actor: { userId, roles }, correlationId: 'corr-1' });
+export const ctx = (userId: string, roles = ['ORGANIZER']): AuthedCtx => ({ actor: { userId, roles }, traceId: 'trace-1' });
 export const organizer = ctx('organizer-1');
 export const otherOrganizer = ctx('organizer-2');
 

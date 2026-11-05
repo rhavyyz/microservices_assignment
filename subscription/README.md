@@ -28,7 +28,7 @@ em [CONTRACTS.md](CONTRACTS.md); Eventos e Pagamentos ainda são placeholders no
 - Contadores, inscrição e mensagens da outbox são confirmados juntos. Constraints impõem
   `reserved + confirmed <= capacity`, não negatividade e uma inscrição ativa por pessoa/atividade.
 - Capacidade é copiada da API confiável de Eventos. Um trigger proíbe sua alteração.
-- Atividade gratuita confirma imediatamente; paga reserva (`PENDING_PAYMENT`) e emite `RegistrationPendingPayment`; Pagamentos reage a esse evento.
+- Atividade gratuita confirma imediatamente; paga reserva (`PENDING_PAYMENT`) e emite `RegistrationPendingPayment` (Pagamentos o ignora: a cobrança é criada por `POST /payments`).
   O valor/moeda são fotografados na inscrição e preservados inclusive durante a fila.
 - A inscrição é idempotente por pessoa e atividade: repeti-la devolve a inscrição existente
   com 200 (sem consultar Eventos); uma nova é 201. Após cancelar ou expirar, nova inscrição é permitida.
@@ -85,7 +85,7 @@ python subscription/scripts/register_gateway.py --gateway http://localhost:8080
 
 O gateway verifica o JWT (`requireAuth=true`) e injeta `X-User-Id` (UUID do `sub`) e `X-User-Roles`
 (separados por vírgula); Inscrições **não valida JWT**: a identidade vem somente desses cabeçalhos,
-nunca do corpo. Sem `X-User-Id` válido a resposta é 401 `UNAUTHENTICATED`. Nas chamadas a Eventos em nome do usuário, o serviço repassa `X-User-Id`, `X-User-Roles`, `X-Request-Id` e o `Authorization` (sem verificá-lo); chamadas de fundo (Kafka) não levam identidade.
+nunca do corpo. Sem `X-User-Id` válido a resposta é 401 `UNAUTHENTICATED`. Nas chamadas a Eventos em nome do usuário, o serviço repassa `X-User-Id`, `X-User-Roles`, `X-Trace-Id` e o `Authorization` (sem verificá-lo); chamadas de fundo (Kafka) não levam identidade.
 O Gateway é a única porta publicada; os serviços internos não têm porta no host e confiam nos cabeçalhos `X-User-Id`/`X-User-Roles` que somente o Gateway define (ele descarta os enviados pelo cliente). `/healthcheck` e `/openapi.json`
 não são publicados pelo script. A execução do script altera apenas os registros dessas rotas.
 
@@ -149,7 +149,7 @@ a rede. Isso privilegia simplicidade: uma falha no primeiro registro impede avan
 até recuperar. A confirmação já persistida nunca é desfeita por falha de notificação.
 
 Notificações atual deduplica por offset, não por evento de negócio; republicação da outbox
-pode produzir duas notificações. O `payload.event_id` é estável, mas deduplicá-lo exigiria
+pode produzir duas notificações. O `payload.message_id` é estável, mas deduplicá-lo exigiria
 alteração naquele serviço, deliberadamente fora deste trabalho.
 
 Não há reconciliação financeira nem tabela de tentativas de pagamento (migração `004`): Pagamentos lê

@@ -21,13 +21,13 @@ PERCENTAGE_FIELDS = {"attended_activities": 3, "total_activities": 4, "attendanc
 
 def event(**overrides):
     payload = {
-        "event_id": str(uuid.uuid4()),
+        "message_id": str(uuid.uuid4()),
         "schema_version": 1,
         "type": "AttendanceEligible",
         "registration_id": str(REGISTRATION_ID),
         "activity_id": str(ACTIVITY_ID),
         "user_id": str(USER_ID),
-        "parent_event_id": str(EVENT_ID),
+        "event_id": str(EVENT_ID),
         **PERCENTAGE_FIELDS,
         "aggregate_version": 3,
         "occurred_at": "2026-11-04T11:00:00Z",
@@ -48,22 +48,22 @@ class FakeDirectory:
         self.name = "Alex Example"
         self.errors = {}
         self.calls = []
-        self.request_ids = []
+        self.trace_ids = []
         self.requested_event_ids = []
 
-    def _call(self, name, request_id):
+    def _call(self, name, trace_id):
         self.calls.append(name)
-        self.request_ids.append(request_id)
+        self.trace_ids.append(trace_id)
         if name in self.errors:
             raise self.errors[name]
 
-    def get_event(self, event_id, request_id):
-        self._call("event", request_id)
+    def get_event(self, event_id, trace_id):
+        self._call("event", trace_id)
         self.requested_event_ids.append(event_id)
         return self.event
 
-    def get_participant_name(self, user_id, request_id):
-        self._call("user", request_id)
+    def get_participant_name(self, user_id, trace_id):
+        self._call("user", trace_id)
         return self.name
 
 
@@ -118,9 +118,9 @@ def test_success_issues_certificate_with_event_data(env, monkeypatch):
     assert captured["event_name"] == "Software Week"
     # The date is taken in the event's own offset (22:00 at -03:00 on 2 Nov, which is already 3 Nov in UTC).
     assert captured["event_date"] == datetime(2026, 11, 2).date()
-    # One X-Request-Id per message, reused on every outbound call.
-    assert len(set(directory.request_ids)) == 1
-    uuid.UUID(directory.request_ids[0])
+    # One X-Trace-Id per message, reused on every outbound call.
+    assert len(set(directory.trace_ids)) == 1
+    uuid.UUID(directory.trace_ids[0])
 
 
 @pytest.mark.parametrize("kind", ["AttendanceRevoked", "SomethingNew", None, 5])
@@ -147,8 +147,8 @@ def test_other_types_are_ignored_without_lookups(env, kind):
         (event(registration_id="nope"), "INVALID_CONTRACT"),
         (event(activity_id=None), "INVALID_CONTRACT"),
         (event(user_id=""), "INVALID_CONTRACT"),
-        (event(parent_event_id="nope"), "INVALID_CONTRACT"),
-        (event(parent_event_id=None), "INVALID_CONTRACT"),
+        (event(event_id="nope"), "INVALID_CONTRACT"),
+        (event(event_id=None), "INVALID_CONTRACT"),
         (event(attended_activities=3.0), "INVALID_CONTRACT"),
         (event(attended_activities=True, total_activities=1, attendance_percentage=100), "INVALID_CONTRACT"),
         (event(total_activities=True, attended_activities=1, attendance_percentage=100), "INVALID_CONTRACT"),
@@ -179,7 +179,7 @@ def test_malformed_events_are_poison(env, raw, reason):
 
 @pytest.mark.parametrize(
     "field",
-    ["user_id", "parent_event_id", "attended_activities", "total_activities", "attendance_percentage"],
+    ["user_id", "event_id", "attended_activities", "total_activities", "attendance_percentage"],
 )
 def test_missing_field_is_poison(env, field):
     handler, directory, *_ = env
@@ -274,7 +274,7 @@ def test_redelivered_event_is_idempotent_and_skips_lookups(env):
 
     handler.handle(event())
     calls_after_first = list(directory.calls)
-    handler.handle(event(event_id=str(uuid.uuid4())))
+    handler.handle(event(message_id=str(uuid.uuid4())))
 
     assert len(certificates(factory)) == 1
     assert directory.calls == calls_after_first

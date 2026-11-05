@@ -473,21 +473,21 @@ func TestDefaultHeaders(t *testing.T) {
 	r.Host = "gw.example"
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
-	id := got.Get("X-Request-Id")
-	if len(id) != 32 || w.Header().Get("X-Request-Id") != id {
-		t.Errorf("request id %q, response %q", id, w.Header().Get("X-Request-Id"))
+	id := got.Get("X-Trace-Id")
+	if len(id) != 32 || w.Header().Get("X-Trace-Id") != id {
+		t.Errorf("trace id %q, response %q", id, w.Header().Get("X-Trace-Id"))
 	}
 	if got.Get("X-Forwarded-For") != "10.1.2.3" || got.Get("X-Forwarded-Host") != "gw.example" || got.Get("X-Gateway") != "gateway" {
 		t.Errorf("headers: %v", got)
 	}
 
 	r = httptest.NewRequest("GET", "/", nil)
-	r.Header.Set("X-Request-Id", "abc")
+	r.Header.Set("X-Trace-Id", "abc")
 	r.Header.Set("X-Forwarded-For", "1.1.1.1")
 	r.Header.Set("X-Forwarded-Host", "ui.example")
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, r)
-	if got.Get("X-Request-Id") != "abc" || w.Header().Get("X-Request-Id") != "abc" ||
+	if got.Get("X-Trace-Id") != "abc" || w.Header().Get("X-Trace-Id") != "abc" ||
 		got.Get("X-Forwarded-For") != "1.1.1.1" || got.Get("X-Forwarded-Host") != "ui.example" {
 		t.Errorf("incoming values not kept: %v", got)
 	}
@@ -542,8 +542,8 @@ func TestProxyStripsPrefix(t *testing.T) {
 		t.Errorf("status=%d body=%q path=%q query=%q down body=%q method=%q user=%q gw=%q",
 			resp.StatusCode, body, gotPath, gotQuery, gotBody, gotMethod, gotUser, gotGW)
 	}
-	if resp.Header.Get("X-Request-Id") == "" {
-		t.Error("response should echo X-Request-Id")
+	if resp.Header.Get("X-Trace-Id") == "" {
+		t.Error("response should echo X-Trace-Id")
 	}
 	if resp, _ := get(t, "GET", gw.URL+"/payments/charge/7", "", h); resp.StatusCode != 404 {
 		t.Errorf("method not registered: %d", resp.StatusCode)
@@ -899,7 +899,7 @@ func TestCors(t *testing.T) {
 		if v := resp.Header.Values("Access-Control-Allow-Credentials"); len(v) != 1 || v[0] != "true" {
 			t.Errorf("%s: Allow-Credentials = %v", name, v)
 		}
-		if resp.Header.Get("Access-Control-Expose-Headers") != "X-Request-Id" {
+		if resp.Header.Get("Access-Control-Expose-Headers") != "X-Trace-Id" {
 			t.Errorf("%s: Expose-Headers = %q", name, resp.Header.Get("Access-Control-Expose-Headers"))
 		}
 	}

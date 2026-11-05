@@ -5,7 +5,7 @@ export type Envelope = {
   type: string;
   version: number;
   occurred_at: string;
-  correlation_id: string | null;
+  trace_id: string | null;
 };
 
 export type Change =
@@ -173,9 +173,9 @@ export function parseMessage(raw: string): ParseResult {
     return { ok: false, error: `${type}: ${(e as Error).message}` };
   }
 
-  const correlationId = typeof o.correlation_id === 'string' && o.correlation_id.trim() ? o.correlation_id.trim() : null;
+  const traceId = typeof o.trace_id === 'string' && o.trace_id.trim() ? o.trace_id.trim() : null;
   return {
     ok: true,
-    value: { envelope: { message_id: messageId, type, version, occurred_at: o.occurred_at, correlation_id: correlationId }, change },
+    value: { envelope: { message_id: messageId, type, version, occurred_at: o.occurred_at, trace_id: traceId }, change },
   };
 }

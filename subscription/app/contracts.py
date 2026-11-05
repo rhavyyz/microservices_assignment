@@ -32,7 +32,7 @@ class PaymentEvent(BaseModel):
     """Resultado publicado por Pagamentos; campos adicionais são ignorados."""
 
     model_config = ConfigDict(extra="ignore")
-    event_id: UUID
+    message_id: UUID
     schema_version: Literal[1]
     type: Literal[
         "PaymentCreated",
@@ -45,13 +45,13 @@ class PaymentEvent(BaseModel):
     registration_id: UUID
     amount_minor: int = Field(ge=0, strict=True)
     currency: str
-    # Eco do request_id que originou o pagamento; nulo/ausente quando a origem foi trabalho de fundo.
-    request_id: str | None = None
+    # Eco do trace_id que originou o pagamento; nulo/ausente quando a origem foi trabalho de fundo.
+    trace_id: str | None = None
 
 
 class ActivityEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    event_id: UUID
+    message_id: UUID
     schema_version: Literal[1]
     type: Literal["ActivityEnded", "ActivityCancelled"]
     activity_id: UUID

@@ -21,12 +21,14 @@ test('payment event is a flat envelope keyed by registration', () => {
   assert.equal(e.key, 'r1');
   const body = JSON.parse(e.value);
   assert.deepEqual(body, {
-    event_id: 'm1', schema_version: 1, type: 'PaymentApproved', occurred_at: '2026-10-31T12:00:00.000Z', request_id: 'c1',
-    payment_id: 'p1', registration_id: 'r1', user_id: 'u1', parent_event_id: 'e1',
+    message_id: 'm1', schema_version: 1, type: 'PaymentApproved', occurred_at: '2026-10-31T12:00:00.000Z', trace_id: 'c1',
+    payment_id: 'p1', registration_id: 'r1', user_id: 'u1', event_id: 'e1',
     amount_minor: 2500, currency: 'BRL', status: 'APPROVED', reason: 'simulated_approval',
   });
   assert.equal('data' in body, false);
-  assert.equal(body.event_id, 'm1'); // message id, not the Events-service event ('e1' is parent_event_id)
+  assert.equal(body.message_id, 'm1'); // message id, not the Events-service event
+  assert.equal(body.event_id, 'e1');
+  assert.ok(!('parent_event_id' in body));
 });
 
 test('notifications: payload and payload_type go together, keyed by user', () => {
@@ -61,16 +63,16 @@ test('REFUNDED maps to PaymentRefunded and notifies the user in Portuguese', () 
   assert.equal(e.type, 'PaymentRefunded');
   assert.equal(e.status, 'REFUNDED');
   assert.equal(e.reason, 'registration_cancelled');
-  assert.equal(e.request_id, null);
+  assert.equal(e.trace_id, null);
   const n = JSON.parse(buildNotification(p('REFUNDED'))!.value);
   assert.match(n.message, /reembolsado/);
   assert.match(n.message, /BRL 25\.00/);
   assert.equal(n.payload.status, 'REFUNDED');
 });
 
-test('a payment without parent event publishes parent_event_id null', () => {
+test('a payment without an event publishes event_id null', () => {
   const e = JSON.parse(buildPaymentEvent({ ...p('PENDING'), event_id: null }, null, null, 'm3', new Date()).value);
-  assert.equal(e.parent_event_id, null);
+  assert.equal(e.event_id, null);
 });
 
 test('old CONFIRMED / REFUSED statuses are no longer mapped', () => {

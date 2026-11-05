@@ -26,12 +26,12 @@ const paymentSchema = {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const REQUEST_ID = /^[A-Za-z0-9._-]{8,64}$/;
+const TRACE_ID = /^[A-Za-z0-9._-]{8,64}$/;
 
-/** X-Request-Id: kept when it is 8-64 chars of [A-Za-z0-9._-], otherwise a fresh UUID. */
-export function requestIdFrom(header: string | string[] | undefined): string {
+/** X-Trace-Id: kept when it is 8-64 chars of [A-Za-z0-9._-], otherwise a fresh UUID. */
+export function traceIdFrom(header: string | string[] | undefined): string {
   const v = (Array.isArray(header) ? header[0] : header)?.trim();
-  return v && REQUEST_ID.test(v) ? v : randomUUID();
+  return v && TRACE_ID.test(v) ? v : randomUUID();
 }
 
 /** The caller's identity (X-User-Id, set by the gateway): must be a UUID, else null. */
@@ -50,7 +50,7 @@ const TITLES: Record<number, string> = {
   503: 'Service Unavailable',
 };
 
-/** Error response as application/problem+json; traceId is the request id. `extra` adds fields (e.g. payment_status). */
+/** Error response as application/problem+json; traceId is the trace id. `extra` adds fields (e.g. payment_status). */
 export function problem(
   reply: FastifyReply,
   status: number,
@@ -99,14 +99,14 @@ export async function buildServer(pool: Pool, lookup: FetchRegistration = fetchR
   const app = Fastify({
     logger: true,
     requestIdHeader: false,
-    genReqId: (req) => requestIdFrom(req.headers['x-request-id']),
+    genReqId: (req) => traceIdFrom(req.headers['x-trace-id']),
     ajv: { customOptions: { coerceTypes: false } },
   });
 
   await app.register(swagger, { openapi: { info: { title: 'Payments service', version: '1.0.0' } } });
 
   app.addHook('onSend', async (req, reply) => {
-    reply.header('x-request-id', req.id);
+    reply.header('x-trace-id', req.id);
   });
 
   app.setErrorHandler((err, req, reply) => {
@@ -184,7 +184,7 @@ export async function buildServer(pool: Pool, lookup: FetchRegistration = fetchR
     const { payment, created } = await createPayment(pool, {
       registrationId,
       userId: r.user_id,
-      eventId: r.parent_event_id,
+      eventId: r.event_id,
       amountMinor: r.amount_minor,
       currency: r.currency,
       expiresAt: new Date(now().getTime() + config.paymentTtlSeconds * 1000),

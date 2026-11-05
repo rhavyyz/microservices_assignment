@@ -25,7 +25,7 @@ início, fim e descrição.
 | Idempotent Consumer | `processed_messages` gravada na mesma transação do efeito + trava por inscrição. |
 | Health check API | `GET /healthcheck`: 200 só com schema migrado e banco respondendo. |
 | Audit logging | Uma linha estruturada (`audit: true`) por operação de escrita, inclusive recusas. |
-| Exception tracking | Erros em `application/problem+json` com `code` e `traceId` (= `X-Request-Id`); 500 genérico, detalhe só no log. |
+| Exception tracking | Erros em `application/problem+json` com `code` e `traceId` (= `X-Trace-Id`); 500 genérico, detalhe só no log. |
 | Querying (CQRS/API Composition) | Eventos publica o estado completo de eventos e atividades nas mensagens, para projeções de leitura (ex.: Relatórios). |
 
 ---
@@ -153,6 +153,10 @@ início, fim e descrição.
   em vez de ignorados.
 - **Consequências:** um erro reportado pelo usuário leva à linha de log exata; uma inscrição pode ser seguida de
   Inscrições a Eventos e de volta pelo mesmo id.
+- **Nota (renomeação):** o cabeçalho `X-Request-Id` citado acima passou a se chamar `X-Trace-Id` e o "id da requisição" a
+  "trace id" (`traceId`); `X-Request-Id` recebido é ignorado e não é devolvido. O texto acima é mantido como foi decidido.
+  Do mesmo modo, o `correlation_id` das mensagens Kafka (e o cabeçalho `correlation-id`) passou a se chamar `trace_id`
+  (cabeçalho `trace-id`); uma mensagem consumida que só traz `correlation_id` é aceita, mas o campo é ignorado (`trace_id` fica `null`).
 
 ---
 

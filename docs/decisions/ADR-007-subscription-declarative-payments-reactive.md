@@ -8,11 +8,11 @@ Inscrições dava ordens a Pagamentos: publicava comandos em `payments.commands`
 
 ## Decisão
 1. **Inscrições é declarativa:** só emite eventos de domínio e não envia comandos nem chama Pagamentos. Entrou em `PENDING_PAYMENT` (inscrição paga ou aceite de oferta paga) emite o novo `RegistrationPendingPayment`, sem campos extras.
-2. **Pagamentos reage:** consome `subscription.events`, cancela a cobrança pendente ou estorna a aprovada ao ver `RegistrationCancelled`/`RegistrationExpired`, e cria a cobrança ao ver `RegistrationPendingPayment`.
-3. **Criação via HTTP com consulta:** Pagamentos lê os fatos (valor, moeda, prazo, evento pai, estado) em `GET /internal/registrations/{registration_id}` de Inscrições, rota interna sem autenticação (isolamento de rede), fora do OpenAPI e do Gateway. Para servir o evento pai, a inscrição passa a gravar `parent_event_id` (migração `003`).
+2. **Pagamentos reage:** consome `subscription.events`, cancela a cobrança pendente ou estorna a aprovada ao ver `RegistrationCancelled`/`RegistrationExpired`. Ignora `RegistrationPendingPayment`: a cobrança não nasce de evento.
+3. **Criação via HTTP com consulta:** a cobrança é criada por `POST /payments` (só com o `registration_id`; a identidade vem de `X-User-Id`). Pagamentos lê os fatos (valor, moeda, prazo, evento, estado) em `GET /internal/registrations/{registration_id}` de Inscrições, rota interna sem autenticação (isolamento de rede), fora do OpenAPI e do Gateway. Para servir o evento, a inscrição passa a gravar o id do evento (migração `004`, coluna `parent_event_id`, renomeada para `event_id` na `006`).
 4. **Pagamentos tem a própria expiração** da cobrança, independente da de Inscrições.
 5. **Sem reconciliação:** removidos `payments.commands`, `payment_attempts` (migração `004` a elimina), `idempotency_key`, `payment_attempt_id`, `provider_version`, o job de reconciliação e `RECONCILE_SECONDS`.
-6. **Inscrições aplica regras sobre `payments.events`** (deduplicado por `event_id`, campos extras ignorados): `PaymentApproved` confirma só se a inscrição está `PENDING_PAYMENT`, dentro da reserva (relógio do banco) e com valor/moeda iguais ao snapshot, senão é ignorado; `PaymentDeclined` rejeita e promove a fila; `PaymentCreated`, `PaymentExpired`, `PaymentCancelled` e `PaymentRefunded` são informativos; `registration_id` desconhecido é ignorado.
+6. **Inscrições aplica regras sobre `payments.events`** (deduplicado por `message_id`, campos extras ignorados): `PaymentApproved` confirma só se a inscrição está `PENDING_PAYMENT`, dentro da reserva (relógio do banco) e com valor/moeda iguais ao snapshot, senão é ignorado; `PaymentDeclined` rejeita e promove a fila; `PaymentCreated`, `PaymentExpired`, `PaymentCancelled` e `PaymentRefunded` são informativos; `registration_id` desconhecido é ignorado.
 
 ## Alternativas
 - **Manter comandos e reconciliação:** funciona, mas mantém o acoplamento e duas fontes do estado financeiro.

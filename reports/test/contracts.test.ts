@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import { parseMessage } from '../src/contracts.ts';
 
 const env = (type: string, data: object, extra: object = {}) =>
-  JSON.stringify({ message_id: 'm1', type, version: 1, occurred_at: '2026-10-31T12:00:00Z', correlation_id: 'c1', data, ...extra });
+  JSON.stringify({ message_id: 'm1', type, version: 1, occurred_at: '2026-10-31T12:00:00Z', trace_id: 't1', data, ...extra });
 
 test('registration.confirmed maps to CONFIRMED', () => {
   const r = parseMessage(env('registration.confirmed', { registration_id: 'r1', event_id: 'e1', activity_id: 'a1', user_id: 'u1' }));
   assert.ok(r.ok);
   assert.deepEqual(r.value.change, { kind: 'registration', registrationId: 'r1', eventId: 'e1', activityId: 'a1', userId: 'u1', status: 'CONFIRMED' });
-  assert.equal(r.value.envelope.correlation_id, 'c1');
+  assert.equal(r.value.envelope.trace_id, 't1');
 });
 
 test('payment events map to their status', () => {
@@ -49,4 +49,11 @@ test('invalid messages are rejected with a reason', () => {
 test('unsupported versions are rejected', () => {
   const r = parseMessage(env('event.created', { event_id: 'e1' }, { version: 2 }));
   assert.ok(!r.ok && /unsupported version/.test(r.error));
+});
+
+test('a message with only the legacy correlation_id has no trace id', () => {
+  const raw = JSON.stringify({ message_id: 'm1', type: 'registration.confirmed', version: 1, occurred_at: '2026-10-31T12:00:00Z', correlation_id: 'c1', data: { registration_id: 'r1', event_id: 'e1', activity_id: 'a1', user_id: 'u1' } });
+  const r = parseMessage(raw);
+  assert.ok(r.ok);
+  assert.equal(r.value.envelope.trace_id, null);
 });

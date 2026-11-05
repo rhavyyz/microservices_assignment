@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createSubscriptionClient } from '../src/subscription.ts';
 
-const reg = { registration_id: 'r1', user_id: 'u1', status: 'PENDING_PAYMENT', amount_minor: 2500, currency: 'brl', expires_at: '2030-01-01T00:00:00Z', parent_event_id: null };
+const reg = { registration_id: 'r1', user_id: 'u1', status: 'PENDING_PAYMENT', amount_minor: 2500, currency: 'brl', expires_at: '2030-01-01T00:00:00Z', event_id: null };
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 type Call = { url: string; headers: Record<string, string> };
@@ -20,7 +20,7 @@ function fakeFetch(handler: (url: string, n: number) => Response | Error) {
 
 const client = (fn: typeof fetch) => createSubscriptionClient({ discovererUrl: 'http://disc:1', fetchFn: fn, timeoutMs: 50 });
 
-test('consults the discoverer for kind subscription, forwards X-Request-Id, caches the host', async () => {
+test('consults the discoverer for kind subscription, forwards X-Trace-Id, caches the host', async () => {
   const f = fakeFetch((url) => (url.includes('/consult') ? json(200, { host: 'sub-1:8000' }) : json(200, reg)));
   const lookup = client(f.fn);
   const r = await lookup('r1', 'req-12345678');
@@ -28,7 +28,7 @@ test('consults the discoverer for kind subscription, forwards X-Request-Id, cach
   assert.ok(r.kind === 'found' && r.registration.currency === 'BRL');
   assert.equal(f.calls[0].url, 'http://disc:1/consult?kind=subscription');
   assert.equal(f.calls[1].url, 'http://sub-1:8000/internal/registrations/r1');
-  assert.equal(f.calls[1].headers['x-request-id'], 'req-12345678');
+  assert.equal(f.calls[1].headers['x-trace-id'], 'req-12345678');
   await lookup('r1', 'req-12345678');
   assert.equal(f.calls.filter((c) => c.url.includes('/consult')).length, 1);
 });
@@ -37,7 +37,7 @@ test('404 is not_found; 5xx, odd statuses and invalid bodies are unavailable', a
   const cases: [Response, string][] = [
     [json(404, { code: 'X' }), 'not_found'], [json(500, {}), 'unavailable'], [json(403, {}), 'unavailable'],
     [json(200, { ...reg, amount_minor: '2500' }), 'unavailable'], [json(200, { nope: 1 }), 'unavailable'],
-    [json(200, { ...reg, parent_event_id: 5 }), 'unavailable'],
+    [json(200, { ...reg, event_id: 5 }), 'unavailable'],
     [json(200, { ...reg, expires_at: 'soon' }), 'unavailable'], [json(200, { ...reg, expires_at: '2030-13-45T00:00:00Z' }), 'unavailable'],
     [json(200, { ...reg, expires_at: '2030-01-01T00:00:00' }), 'unavailable'], [json(200, { ...reg, expires_at: 1893456000 }), 'unavailable'],
   ];

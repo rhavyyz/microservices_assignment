@@ -39,29 +39,33 @@ function assertProblem(res: Res, status: number, code: string) {
   assert.equal(b.status, status);
   assert.equal(b.code, code);
   assert.equal(typeof b.title, 'string');
-  assert.equal(b.traceId, res.headers['x-request-id']);
+  assert.equal(b.traceId, res.headers['x-trace-id']);
   return b;
 }
 
 
-test('X-Request-Id: valid value is kept and echoed', async () => {
+test('X-Trace-Id: valid value is kept and echoed', async () => {
   const a = await app();
-  const res = await a.inject({ method: 'GET', url: '/payments/' + PID, headers: { 'x-request-id': 'req-1234.abc_X', 'x-user-id': USER } });
-  assert.equal(res.headers['x-request-id'], 'req-1234.abc_X');
+  const res = await a.inject({ method: 'GET', url: '/payments/' + PID, headers: { 'x-trace-id': 'req-1234.abc_X', 'x-user-id': USER } });
+  assert.equal(res.headers['x-trace-id'], 'req-1234.abc_X');
 });
 
-test('X-Request-Id: missing or invalid values are replaced by a UUID', async () => {
+test('X-Trace-Id: missing or invalid values are replaced by a UUID', async () => {
   const a = await app();
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
   for (const bad of [undefined, 'short', 'x'.repeat(65), 'has space in it', 'bad/char/here!']) {
-    const res = await a.inject({ method: 'GET', url: '/healthcheck', headers: bad === undefined ? {} : { 'x-request-id': bad } });
-    assert.match(String(res.headers['x-request-id']), uuid, `generated for ${String(bad)}`);
+    const res = await a.inject({ method: 'GET', url: '/healthcheck', headers: bad === undefined ? {} : { 'x-trace-id': bad } });
+    assert.match(String(res.headers['x-trace-id']), uuid, `generated for ${String(bad)}`);
   }
-  const edge = await a.inject({ method: 'GET', url: '/healthcheck', headers: { 'x-request-id': 'x'.repeat(64) } });
-  assert.equal(edge.headers['x-request-id'], 'x'.repeat(64));
+  const edge = await a.inject({ method: 'GET', url: '/healthcheck', headers: { 'x-trace-id': 'x'.repeat(64) } });
+  assert.equal(edge.headers['x-trace-id'], 'x'.repeat(64));
   const old = await a.inject({ method: 'GET', url: '/healthcheck', headers: { 'x-correlation-id': 'corr-12345678' } });
-  assert.notEqual(old.headers['x-request-id'], 'corr-12345678');
+  assert.notEqual(old.headers['x-trace-id'], 'corr-12345678');
   assert.equal(old.headers['x-correlation-id'], undefined);
+  const legacy = await a.inject({ method: 'GET', url: '/healthcheck', headers: { 'x-request-id': 'valid-old-id-12345' } });
+  assert.match(String(legacy.headers['x-trace-id']), uuid);
+  assert.notEqual(legacy.headers['x-trace-id'], 'valid-old-id-12345');
+  assert.equal(legacy.headers['x-request-id'], undefined);
 });
 
 test('401 UNAUTHENTICATED when X-User-Id is missing or not a UUID', async () => {
@@ -96,7 +100,7 @@ test('unknown route is a problem+json 404', async () => {
 const REG = '44444444-4444-4444-8444-444444444444';
 const registration = (over: object = {}): Registration => ({
   registration_id: REG, user_id: USER, status: 'PENDING_PAYMENT', amount_minor: 4200, currency: 'USD',
-  expires_at: '2999-01-01T00:00:00Z', parent_event_id: 'ev-9', ...over,
+  expires_at: '2999-01-01T00:00:00Z', event_id: 'ev-9', ...over,
 });
 const found = (over: object = {}): FetchRegistration => async () => ({ kind: 'found', registration: registration(over) });
 
@@ -118,7 +122,7 @@ function createPool(existing: object[] = [], inserted: { params?: unknown[] } = 
 const post = (a: Awaited<ReturnType<typeof app>>, payload: unknown, headers: Record<string, string> = { 'x-user-id': USER }) =>
   a.inject({ method: 'POST', url: '/payments', headers, payload: payload as object });
 
-test('POST /payments: 201, amount/currency/user/parent event come from Subscription, own TTL, client body ignored', async () => {
+test('POST /payments: 201, amount/currency/user/event_id come from Subscription, own TTL, client body ignored', async () => {
   const inserted: { params?: unknown[] } = {};
   let seen: { id: string; rid: string } | undefined;
   const lookup: FetchRegistration = async (id, rid) => { seen = { id, rid }; return { kind: 'found', registration: registration() }; };
@@ -126,7 +130,7 @@ test('POST /payments: 201, amount/currency/user/parent event come from Subscript
   const a = await buildServer(createPool([], inserted), lookup);
   a.log.level = 'silent';
   const res = await post(a, { registration_id: REG, user_id: OTHER, amount_minor: 1, currency: 'EUR', event_id: 'x', expires_at: '2000-01-01T00:00:00Z' },
-    { 'x-user-id': USER, 'x-request-id': 'req-abcdef12' });
+    { 'x-user-id': USER, 'x-trace-id': 'req-abcdef12' });
   assert.equal(res.statusCode, 201);
   const b = res.json();
   assert.equal(b.status, 'PENDING');
@@ -139,9 +143,9 @@ test('POST /payments: 201, amount/currency/user/parent event come from Subscript
   assert.ok(exp >= before + 900_000 - 1000 && exp <= Date.now() + 900_000 + 1000);
 });
 
-test('POST /payments: null parent_event_id is stored as NULL', async () => {
+test('POST /payments: null event_id is stored as NULL', async () => {
   const inserted: { params?: unknown[] } = {};
-  const a = await buildServer(createPool([], inserted), found({ parent_event_id: null }));
+  const a = await buildServer(createPool([], inserted), found({ event_id: null }));
   a.log.level = 'silent';
   const res = await post(a, { registration_id: REG });
   assert.equal(res.statusCode, 201);
@@ -182,7 +186,7 @@ test('POST /payments: 409 (not 503) for non-pending registrations with null expi
 
 test('POST /payments: end to end through the client, null expires_at is 409 when CONFIRMED, 503 when PENDING_PAYMENT or garbage', async () => {
   const { createSubscriptionClient } = await import('../src/subscription.ts');
-  const body = { registration_id: REG, user_id: USER, status: 'PENDING_PAYMENT', amount_minor: 100, currency: 'USD', parent_event_id: null };
+  const body = { registration_id: REG, user_id: USER, status: 'PENDING_PAYMENT', amount_minor: 100, currency: 'USD', event_id: null };
   const cases: [object, number, string][] = [
     [{ status: 'CONFIRMED', expires_at: null }, 409, 'REGISTRATION_NOT_PAYABLE'],
     [{ status: 'CANCELLED', expires_at: null, amount_minor: 0 }, 409, 'REGISTRATION_NOT_PAYABLE'],

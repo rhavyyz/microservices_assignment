@@ -30,12 +30,12 @@ EVENT = (
 )
 
 
-def test_get_event_parses_and_sends_request_id(monkeypatch):
+def test_get_event_parses_and_sends_trace_id(monkeypatch):
     calls = respond(monkeypatch, body=EVENT % str(ID).encode())
 
     event = Directory().get_event(ID, "req-1")
 
-    assert calls == [("GET", Kind.EVENTS, f"/events/{ID}", {"headers": {"X-Request-Id": "req-1"}})]
+    assert calls == [("GET", Kind.EVENTS, f"/events/{ID}", {"headers": {"X-Trace-Id": "req-1"}})]
     assert event.id == ID
     assert event.title == "Software Week"
     assert event.starts_at.utcoffset().total_seconds() == -3 * 3600

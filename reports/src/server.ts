@@ -52,14 +52,14 @@ async function requireUser(req: FastifyRequest, reply: FastifyReply): Promise<st
 }
 
 export async function buildServer(pool: Pool) {
-  const app = Fastify({ logger: true, requestIdHeader: 'x-correlation-id', genReqId: () => randomUUID() });
+  const app = Fastify({ logger: true, requestIdHeader: 'x-trace-id', genReqId: () => randomUUID() });
 
   await app.register(swagger, {
     openapi: { info: { title: 'Reports service', version: '1.0.0' } },
   });
 
   app.addHook('onSend', async (req, reply) => {
-    reply.header('x-correlation-id', req.id);
+    reply.header('x-trace-id', req.id);
   });
 
   // Never leak internals on 5xx (same policy as the other services).

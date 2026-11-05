@@ -53,7 +53,7 @@ Definições dos indicadores:
 
 ## 5. Interface: o que o serviço recebe
 
-O serviço não recebe chamadas de outros serviços. Recebe eventos pelo Kafka, em três tópicos (um por serviço de origem), em envelope versionado: `message_id`, `type`, `version` (1), `occurred_at`, `correlation_id` e `data`.
+O serviço não recebe chamadas de outros serviços. Recebe eventos pelo Kafka, em três tópicos (um por serviço de origem), em envelope versionado: `message_id`, `type`, `version` (1), `occurred_at`, `trace_id` e `data`.
 
 | Tópico | Tipo de evento | Dados obrigatórios | Dados opcionais |
 | --- | --- | --- | --- |
@@ -128,7 +128,7 @@ O serviço também expõe `GET /healthcheck` (200 só se o banco responde, senã
 | RQ03 Disponibilidade e resiliência | O serviço sobe sem Postgres, Kafka ou discoverer e tenta de novo em segundo plano. O health check só olha o banco, então a queda do Kafka não o derruba. |
 | RQ04 Consistência | Os dados são eventualmente consistentes com os serviços de origem; duplicidade e desordem não corrompem os totais. |
 | RQ05 Interoperabilidade | Eventos JSON versionados e REST com OpenAPI. |
-| RQ06 Observabilidade | Logs estruturados, cabeçalho `x-correlation-id` nas respostas e `correlation_id` de cada mensagem nos logs do consumidor. |
+| RQ06 Observabilidade | Logs estruturados, cabeçalho `X-Trace-Id` nas respostas e `trace_id` de cada mensagem nos logs do consumidor. |
 | RQ07 Segurança | Senha do banco por variável de ambiente (o valor de desenvolvimento no compose deve ser trocado fora do repositório). |
 | RQ08 Operabilidade | Dockerfile, compose com o banco e README com o contrato de eventos e as instruções. |
 

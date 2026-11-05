@@ -16,7 +16,7 @@ MESSAGE_ID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen)
 NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 KAFKA_BIN=/opt/kafka/bin
 
-MESSAGE="{\"message_id\":\"$MESSAGE_ID\",\"type\":\"registration.$ACTION\",\"version\":1,\"occurred_at\":\"$NOW\",\"correlation_id\":\"demo-$MESSAGE_ID\",\"data\":{\"registration_id\":\"$REGISTRATION_ID\",\"event_id\":\"$EVENT_ID\",\"activity_id\":\"$ACTIVITY_ID\",\"user_id\":\"demo-user\"}}"
+MESSAGE="{\"message_id\":\"$MESSAGE_ID\",\"type\":\"registration.$ACTION\",\"version\":1,\"occurred_at\":\"$NOW\",\"trace_id\":\"demo-$MESSAGE_ID\",\"data\":{\"registration_id\":\"$REGISTRATION_ID\",\"event_id\":\"$EVENT_ID\",\"activity_id\":\"$ACTIVITY_ID\",\"user_id\":\"demo-user\"}}"
 
 echo "registration $REGISTRATION_ID: sending registration.$ACTION"
 echo "$REGISTRATION_ID|$MESSAGE" | docker compose exec -T kafka $KAFKA_BIN/kafka-console-producer.sh \

@@ -69,7 +69,7 @@ function byTopic(messages: OutboxMessage[]): TopicMessages[] {
     group.messages.push({
       key: m.key,
       value: JSON.stringify(m.envelope),
-      headers: { 'message-type': m.envelope.type, 'correlation-id': m.envelope.correlation_id ?? '' },
+      headers: { 'message-type': m.envelope.type, 'trace-id': m.envelope.trace_id ?? '' },
     });
     groups.set(m.topic, group);
   }

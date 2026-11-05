@@ -21,15 +21,15 @@ DECLINED, EXPIRED, CANCELLED, REFUNDED                        (final)
   `RegistrationExpired` for a registration whose payment is `APPROVED`. A refund never applies to PENDING, DECLINED, EXPIRED or CANCELLED.
 - An approval that arrives after `expires_at` is **not honored**: the payment becomes `EXPIRED` and a `PaymentExpired`
   event goes out (RN03), so a late approval cannot produce a confirmed registration.
-- Every change is stored in `payment_transitions` (from, to, reason, request id).
+- Every change is stored in `payment_transitions` (from, to, reason, trace id).
 - Payments is **reactive**: it creates payments itself (asking Subscription for the facts over HTTP) and reacts to
   Subscription's domain events. There is no command topic; Subscription neither sends commands nor calls Payments.
 - Payments has its **own expiry**: a new payment lives `PAYMENT_TTL_SECONDS` (default 900), independent of the reservation.
 
-## Request id and errors
-- `X-Request-Id`: an incoming value is kept only if it is 8-64 chars of `[A-Za-z0-9._-]`, otherwise a UUID is generated.
-  It is always echoed in the `X-Request-Id` response header, used in logs and written as `request_id` in the Kafka events and `payment_transitions`.
-- Every error is `application/problem+json`: `{"title","status","code","detail","traceId"}` (`traceId` = the request id).
+## Trace id and errors
+- `X-Trace-Id`: an incoming value is kept only if it is 8-64 chars of `[A-Za-z0-9._-]`, otherwise a UUID is generated.
+  It is always echoed in the `X-Trace-Id` response header, used in logs and written as `trace_id` in the Kafka events and `payment_transitions`.
+- Every error is `application/problem+json`: `{"title","status","code","detail","traceId"}` (`traceId` = the trace id).
   Codes: `UNAUTHENTICATED` (401), `VALIDATION_ERROR` (400), `PAYMENT_NOT_FOUND` / `REGISTRATION_NOT_FOUND` / `NOT_FOUND` (404),
   `REGISTRATION_NOT_PAYABLE` (409, registration not `PENDING_PAYMENT`), `PAYMENT_NOT_APPLIED` (409, simulate; adds `payment_status`),
   `UPSTREAM_UNAVAILABLE` (503, Subscription unreachable / 5xx / invalid answer; no internals in the body),
@@ -38,7 +38,9 @@ DECLINED, EXPIRED, CANCELLED, REFUNDED                        (final)
 ## Database migrations
 `migrate()` runs on boot and is idempotent. It converts older databases in place: `amount` -> `amount_minor`,
 statuses `CONFIRMED`/`REFUSED` -> `APPROVED`/`DECLINED` (rows, history, `simulated_*` reasons and the status CHECK),
-`processed_messages.message_id` -> `event_id`, and drops the old `payments.activity_id` column. v7 adds `REFUNDED` to the status CHECK and makes `payments.event_id` nullable.
+and drops the old `payments.activity_id` column. v7 adds `REFUNDED` to the status CHECK and makes `payments.event_id` nullable.
+v8 renames `processed_messages.event_id` back to `message_id` if (and only if) a database already ran the short-lived revision that had renamed it (there is no v4; that revision was removed).
+v9 renames `payment_transitions.request_id` to `trace_id` if (and only if) the old column exists and the new one does not. The `X-Request-Id` header is no longer read or echoed: only `X-Trace-Id` is (hard cut, no fallback).
 All are no-ops on a fresh database and on re-runs. (Not yet run against a real Postgres.)
 
 ## What this service receives
@@ -60,13 +62,13 @@ Set `SIMULATOR_ENABLED=false` to turn the simulator off.
 
     {"registration_id":"<uuid>"}
 
-- Only `registration_id` is read (missing / not a UUID = 400 `VALIDATION_ERROR`); unknown properties are ignored. Amount, currency, owner and parent event never come from the client.
-- Flow: Payments calls Subscription `GET /internal/registrations/{id}` (that endpoint belongs to Subscription, not Payments) with the caller's `X-Request-Id`, and uses the answer:
+- Only `registration_id` is read (missing / not a UUID = 400 `VALIDATION_ERROR`); unknown properties are ignored. Amount, currency, owner and event never come from the client.
+- Flow: Payments calls Subscription `GET /internal/registrations/{id}` (that endpoint belongs to Subscription, not Payments) with the caller's `X-Trace-Id`, and uses the answer:
   - Subscription 404, or the registration belongs to another user -> 404 `REGISTRATION_NOT_FOUND` (other users' registrations are never revealed);
   - status other than `PENDING_PAYMENT` -> 409 `REGISTRATION_NOT_PAYABLE`;
   - registration `expires_at` not in the future (checked against Payments' clock, after the owner and status checks; Subscription's expiry worker can lag a few seconds) -> 409 `REGISTRATION_NOT_PAYABLE`;
   - Subscription unreachable, 5xx or invalid body -> 503 `UPSTREAM_UNAVAILABLE`;
-  - otherwise the payment is created `PENDING` with `amount_minor`, `currency`, `user_id` and `parent_event_id` (stored in `event_id`, nullable) from Subscription's answer.
+  - otherwise the payment is created `PENDING` with `amount_minor`, `currency`, `user_id` and `event_id` (nullable) from Subscription's answer.
 - `expires_at = now + PAYMENT_TTL_SECONDS` (Payments' own deadline).
 - Idempotent by `registration_id`: if a payment already exists it is returned unchanged (200 instead of 201) after the owner check, without asking Subscription again.
 - Answer: `{payment_id, registration_id, user_id, event_id, amount_minor, currency, status:"PENDING", expires_at, created_at}`.
@@ -77,10 +79,10 @@ The host is cached; on a connection failure the discoverer is consulted again an
 
 ### Kafka (consumed)
 Topic `subscription.events` (env `SUBSCRIPTION_TOPIC`), group `PAYMENTS_CONSUMER_GROUP` (`payments-service`), read from the beginning, metadata refresh 10 s.
-Required fields of the flat envelope: `event_id`, `schema_version` (integer; > 1 is rejected), `type`, `registration_id`; extra fields and unknown types are tolerated.
+Required fields of the flat envelope: `message_id`, `schema_version` (integer; > 1 is rejected), `type`, `registration_id`; extra fields and unknown types are tolerated.
 - `RegistrationCancelled` / `RegistrationExpired`: payment `PENDING` -> `CANCELLED`, `APPROVED` -> `REFUNDED` (reason `registration_cancelled` / `registration_expired`); any other state, or no payment, is a no-op.
 - Every other type (including `RegistrationPendingPayment`) is ignored.
-- Deduped by `event_id` in `processed_messages`, committed in the same transaction as the effect (at-least-once). A database error throws, so the offset is not committed. Invalid messages are logged (ids only, never payloads) and skipped.
+- Deduped by `message_id` in `processed_messages`, committed in the same transaction as the effect (at-least-once). A database error throws, so the offset is not committed. Invalid messages are logged (ids only, never payloads) and skipped.
 
 At startup Payments creates (if absent, 1 replica, `PAYMENTS_TOPIC_PARTITIONS` partitions) `payments.events`, `notifications` and `subscription.events`. There is no `payments.commands` topic.
 
@@ -91,15 +93,15 @@ At startup Payments creates (if absent, 1 replica, `PAYMENTS_TOPIC_PARTITIONS` p
 ### Kafka: topic `payments.events` (key = `registration_id`, env `PAYMENT_EVENTS_TOPIC`)
 Flat envelope, no nested `data`:
 
-    {"event_id","schema_version":1,"type","occurred_at","request_id","registration_id","amount_minor","currency",
-     "payment_id","user_id","parent_event_id","status","reason"}
+    {"message_id","schema_version":1,"type","occurred_at","trace_id","registration_id","amount_minor","currency",
+     "payment_id","user_id","event_id","status","reason"}
 
-- `event_id` is the unique id of the message (consumers dedupe by it). The Events-service event the payment belongs to
-  is published as `parent_event_id` (the HTTP API still calls it `event_id`).
+- `message_id` is the unique id of the message (consumers dedupe by it). The Events-service event the payment belongs to
+  is published as `event_id` (same name in the HTTP API and the `payments.event_id` column).
 - `amount_minor` is an integer in minor units (2500 = 25.00).
 - `type` by status: `PENDING` -> `PaymentCreated`, `APPROVED` -> `PaymentApproved`, `DECLINED` -> `PaymentDeclined`,
   `EXPIRED` -> `PaymentExpired`, `CANCELLED` -> `PaymentCancelled`, `REFUNDED` -> `PaymentRefunded`.
-  Subscription reads only `event_id`, `schema_version`, `type`, `registration_id`, `amount_minor`, `currency`, `request_id`.
+  Subscription reads only `message_id`, `schema_version`, `type`, `registration_id`, `amount_minor`, `currency`, `trace_id`.
 
 `reason` says why (null on `PaymentCreated`): `simulated_approval`, `simulated_decline`, `simulated_expiration`,
 `payment_deadline` (expired by the job), `expired_before_confirmation` (late approval), `registration_cancelled`,
@@ -109,7 +111,7 @@ Who is expected to act on them:
 - **Subscription**: `PaymentApproved` confirms the registration; `PaymentDeclined` and `PaymentExpired` release the seat (RN02, RN03).
 - **Reports**: counts payments and revenue (already consumes this contract).
 - `activity_id` is no longer published (Reports will be updated separately).
-- Delivery is at-least-once, so consumers must dedupe by `event_id`.
+- Delivery is at-least-once, so consumers must dedupe by `message_id`.
 
 ### Kafka: topic `notifications` (key = `user_id`)
 On `APPROVED`, `DECLINED` and `EXPIRED` the user gets a notification (format of the Notifications service:
@@ -138,4 +140,4 @@ The three routes below are the ones the existing script publishes:
 `PAYMENTS_DB_PASSWORD` (compose) sets the DB password; if you change it, also set `DATABASE_URL` on the `payments` service.
 
 ## Tests
-    npm test      # node:test, no dependencies (state machine, event/notification builders, input validation, discovery, config defaults, HTTP errors/request id via `inject` with a fake pool)
+    npm test      # node:test, no dependencies (state machine, event/notification builders, input validation, discovery, config defaults, HTTP errors/trace id via `inject` with a fake pool)

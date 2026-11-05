@@ -44,7 +44,7 @@ export async function startConsumer(pool: Pool, log: Log): Promise<Consumer> {
         const result = await processMessage(pool, parsed.value);
         log.info(
           { ...where, type: parsed.value.envelope.type, message_id: parsed.value.envelope.message_id,
-            correlation_id: parsed.value.envelope.correlation_id, result },
+            trace_id: parsed.value.envelope.trace_id, result },
           'message processed',
         );
       },
