@@ -20,8 +20,8 @@ export async function handleRecord(raw: string | undefined, where: RecordRef, se
     log.warn({ ...where, error: parsed.error }, 'invalid message skipped');
     return;
   }
-  const { messageId, type, correlationId, command } = parsed.value;
+  const { messageId, type, traceId, command } = parsed.value;
   if (!command) return;
-  const outcome = await seats.handle(messageId, correlationId, command);
-  log.info({ ...where, type, message_id: messageId, correlation_id: correlationId, outcome }, 'message processed');
+  const outcome = await seats.handle(messageId, traceId, command);
+  log.info({ ...where, type, message_id: messageId, trace_id: traceId, outcome }, 'message processed');
 }

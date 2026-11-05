@@ -14,7 +14,7 @@ describe('seat reservation saga (RN01, RN03, RN04, idempotent consumer)', { skip
 
   const command = (kind: SeatCommand['kind'], a: { id: string; event_id: string }, registrationId = randomUUID()): SeatCommand =>
     ({ kind, registrationId, eventId: a.event_id, activityId: a.id, userId: 'user-1' });
-  const send = (c: SeatCommand, messageId: string = randomUUID()) => env.seats.handle(messageId, 'corr-9', c);
+  const send = (c: SeatCommand, messageId: string = randomUUID()) => env.seats.handle(messageId, 'trace-9', c);
 
   async function seatState(activityId: string) {
     const res = await env.pool.query(
@@ -36,7 +36,7 @@ describe('seat reservation saga (RN01, RN03, RN04, idempotent consumer)', { skip
     const [m] = await seatMessages();
     assert.equal(m.type, 'seat.reserved');
     assert.equal(m.key, c.registrationId);
-    assert.equal(m.correlation_id, 'corr-9');
+    assert.equal(m.trace_id, 'trace-9');
     assert.deepEqual(m.data, {
       registration_id: c.registrationId, event_id: activity.event_id, activity_id: activity.id, user_id: 'user-1',
       price_cents: 3500, currency: 'BRL', paid: true, available: 9,

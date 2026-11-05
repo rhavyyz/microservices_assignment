@@ -20,17 +20,17 @@ function fakes(handle: SeatService['handle'] = async () => 'RESERVED') {
 }
 
 const record = (type: string) => JSON.stringify({
-  message_id: 'm1', type, version: 1, occurred_at: '2030-01-01T00:00:00Z', correlation_id: 'c1',
+  message_id: 'm1', type, version: 1, occurred_at: '2030-01-01T00:00:00Z', trace_id: 'c1',
   data: { registration_id: 'r1', event_id: 'e1', activity_id: 'a1', user_id: 'u1' },
 });
 
-test('seat requests go to the seat service and the outcome is logged with the correlation id', async () => {
+test('seat requests go to the seat service and the outcome is logged with the trace id', async () => {
   const f = fakes();
   await handleRecord(record('registration.requested'), where, f.seats, f.log);
   assert.deepEqual(f.calls, [['m1', 'c1', { kind: 'reserve', registrationId: 'r1', eventId: 'e1', activityId: 'a1', userId: 'u1' }]]);
   assert.deepEqual(f.logs, [{
     level: 'info', msg: 'message processed',
-    obj: { ...where, type: 'registration.requested', message_id: 'm1', correlation_id: 'c1', outcome: 'RESERVED' },
+    obj: { ...where, type: 'registration.requested', message_id: 'm1', trace_id: 'c1', outcome: 'RESERVED' },
   }]);
 });
 

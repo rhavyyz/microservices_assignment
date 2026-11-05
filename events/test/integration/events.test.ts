@@ -28,11 +28,11 @@ describe('events and schedule (RF02, RF03, RF04, RN07)', { skip }, () => {
     assert.equal(m.topic, TOPIC);
     assert.equal(m.type, 'event.created');
     assert.equal(m.key, e.id);
-    assert.equal(m.correlation_id, 'corr-1');
+    assert.equal(m.trace_id, 'trace-1');
     assert.equal(m.data.organizer_id, 'organizer-1');
     assert.equal(m.data.name, 'Semana de Computação');
     assert.deepEqual(env.audits.at(-1), {
-      operation: 'EVENT_CREATE', user_id: 'organizer-1', correlation_id: 'corr-1', event_id: e.id, result: 'SUCCESS',
+      operation: 'EVENT_CREATE', user_id: 'organizer-1', trace_id: 'trace-1', event_id: e.id, result: 'SUCCESS',
     });
   });
 

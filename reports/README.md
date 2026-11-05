@@ -39,7 +39,7 @@ Names are configurable (`EVENTS_TOPIC`, `SUBSCRIPTION_TOPIC`, `PAYMENTS_TOPIC`).
 Envelope (JSON, `version` must be 1):
 
     {"message_id":"uuid","type":"payment.confirmed","version":1,"occurred_at":"2026-10-31T12:00:00Z",
-     "correlation_id":"uuid","data":{...}}
+     "trace_id":"uuid","data":{...}}
 
 | `type` | Producer | Required in `data` | Optional |
 |---|---|---|---|

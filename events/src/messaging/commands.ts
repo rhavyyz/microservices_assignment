@@ -10,7 +10,7 @@ export type SeatCommand = {
   userId: string | null;
 };
 
-export type ParsedCommand = { messageId: string; type: string; correlationId: string | null; command: SeatCommand | null };
+export type ParsedCommand = { messageId: string; type: string; traceId: string | null; command: SeatCommand | null };
 export type ParseResult = { ok: true; value: ParsedCommand } | { ok: false; error: string };
 
 /** What each consumed type asks for; any other type is ignored (command null), never an error. */
@@ -50,9 +50,9 @@ export function parseCommand(raw: string): ParseResult {
     const type = text(json, 'type', true)!;
     const version = json.version ?? 1;
     if (version !== 1) throw new Error(`unsupported version ${String(version)}`);
-    const correlationId = text(json, 'correlation_id', false);
+    const traceId = text(json, 'trace_id', false);
 
-    if (!Object.hasOwn(KIND_BY_TYPE, type)) return { ok: true, value: { messageId, type, correlationId, command: null } };
+    if (!Object.hasOwn(KIND_BY_TYPE, type)) return { ok: true, value: { messageId, type, traceId, command: null } };
     const kind = KIND_BY_TYPE[type];
     if (!isObj(json.data)) throw new Error('data must be an object');
 
@@ -63,7 +63,7 @@ export function parseCommand(raw: string): ParseResult {
       activityId: text(json.data, 'activity_id', true)!,
       userId: text(json.data, 'user_id', false),
     };
-    return { ok: true, value: { messageId, type, correlationId, command } };
+    return { ok: true, value: { messageId, type, traceId, command } };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
   }

@@ -179,7 +179,7 @@ Todas as mensagens, produzidas ou consumidas, usam o envelope comum do barrament
 
 ```json
 { "message_id": "0b6c…", "type": "seat.reserved", "version": 1, "occurred_at": "2027-03-01T12:00:00.000Z",
-  "correlation_id": "0f9a6c2e5b7d4e21a3c8b9d0e1f2a3b4", "data": { … } }
+  "trace_id": "0f9a6c2e5b7d4e21a3c8b9d0e1f2a3b4", "data": { … } }
 ```
 
 | Campo | Regra |
@@ -188,9 +188,9 @@ Todas as mensagens, produzidas ou consumidas, usam o envelope comum do barrament
 | `type` | Tipos abaixo; tipos desconhecidos são ignorados pelos consumidores. |
 | `version` | Sempre `1`. |
 | `occurred_at` | Quando a mudança aconteceu (ISO 8601, UTC). |
-| `correlation_id` | `X-Trace-Id` da requisição HTTP que originou a mudança, ou o `correlation_id` da mensagem consumida. Pode ser `null`. |
+| `trace_id` | `X-Trace-Id` da requisição HTTP que originou a mudança, ou o `trace_id` da mensagem consumida. Pode ser `null`. |
 
-Cabeçalhos Kafka extras nas mensagens publicadas: `message-type` (= `type`) e `correlation-id`.
+Cabeçalhos Kafka extras nas mensagens publicadas: `message-type` (= `type`) e `trace-id`.
 
 ### 4.2 Publicadas em `events-events`
 

@@ -18,7 +18,7 @@ export async function buildServer(deps: ServerDeps) {
   const app = Fastify({
     logger: deps.logger ?? true,
     // The gateway's X-Trace-Id becomes the trace id (req.id): it is on every log line, in error bodies and
-    // in the correlation_id of the messages this request produces (RQ06).
+    // in the trace_id of the messages this request produces (RQ06).
     requestIdHeader: false,
     requestIdLogLabel: 'traceId',
     genReqId: (req) => traceIdFrom(req.headers['x-trace-id'], randomUUID),

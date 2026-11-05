@@ -20,10 +20,10 @@ const act: ActivityRow = {
 const ref = { registration_id: 'r1', event_id: 'e1', activity_id: 'a1', user_id: 'u1' };
 
 test('envelope has the shared contract fields', () => {
-  const e = envelope('event.created', { a: 1 }, 'corr', d('2030-01-01T00:00:00Z'));
+  const e = envelope('event.created', { a: 1 }, 'trace', d('2030-01-01T00:00:00Z'));
   assert.match(e.message_id, /^[0-9a-f-]{36}$/);
   assert.deepEqual({ ...e, message_id: 'x' }, {
-    message_id: 'x', type: 'event.created', version: 1, occurred_at: '2030-01-01T00:00:00.000Z', correlation_id: 'corr', data: { a: 1 },
+    message_id: 'x', type: 'event.created', version: 1, occurred_at: '2030-01-01T00:00:00.000Z', trace_id: 'trace', data: { a: 1 },
   });
   assert.notEqual(envelope('t', {}, null).message_id, envelope('t', {}, null).message_id);
 });
@@ -57,14 +57,14 @@ test('seat answers are keyed by registration and say what the subscription servi
 });
 
 const msg = (type: string, data: object | null, extra: object = {}) =>
-  JSON.stringify({ message_id: 'm1', type, version: 1, occurred_at: '2030-01-01T00:00:00Z', correlation_id: 'c1', data, ...extra });
+  JSON.stringify({ message_id: 'm1', type, version: 1, occurred_at: '2030-01-01T00:00:00Z', trace_id: 'c1', data, ...extra });
 const seat = { registration_id: 'r1', event_id: 'e1', activity_id: 'a1', user_id: 'u1' };
 
 test('registration.requested asks for a seat; cancelled and expired give it back', () => {
   const r = parseCommand(msg('registration.requested', seat));
   assert.ok(r.ok);
   assert.deepEqual(r.value, {
-    messageId: 'm1', type: 'registration.requested', correlationId: 'c1',
+    messageId: 'm1', type: 'registration.requested', traceId: 'c1',
     command: { kind: 'reserve', registrationId: 'r1', eventId: 'e1', activityId: 'a1', userId: 'u1' },
   });
   for (const type of ['registration.cancelled', 'registration.expired']) {
@@ -73,11 +73,16 @@ test('registration.requested asks for a seat; cancelled and expired give it back
   }
 });
 
-test('other types are ignored, not errors; user_id and correlation_id are optional', () => {
+test('other types are ignored, not errors; user_id and trace_id are optional', () => {
   const r = parseCommand(msg('checkin.registered', { anything: 1 }));
   assert.ok(r.ok && r.value.command === null);
-  const p = parseCommand(msg('registration.requested', { ...seat, user_id: undefined }, { correlation_id: undefined }));
-  assert.ok(p.ok && p.value.command?.userId === null && p.value.correlationId === null);
+  const p = parseCommand(msg('registration.requested', { ...seat, user_id: undefined }, { trace_id: undefined }));
+  assert.ok(p.ok && p.value.command?.userId === null && p.value.traceId === null);
+});
+
+test('the old correlation_id field is ignored: the message parses with a null trace id', () => {
+  const p = parseCommand(msg('registration.requested', seat, { trace_id: undefined, correlation_id: 'old' }));
+  assert.ok(p.ok && p.value.traceId === null && p.value.command?.kind === 'reserve');
 });
 
 test('malformed messages are rejected with a reason', () => {

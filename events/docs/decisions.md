@@ -155,6 +155,8 @@ início, fim e descrição.
   Inscrições a Eventos e de volta pelo mesmo id.
 - **Nota (renomeação):** o cabeçalho `X-Request-Id` citado acima passou a se chamar `X-Trace-Id` e o "id da requisição" a
   "trace id" (`traceId`); `X-Request-Id` recebido é ignorado e não é devolvido. O texto acima é mantido como foi decidido.
+  Do mesmo modo, o `correlation_id` das mensagens Kafka (e o cabeçalho `correlation-id`) passou a se chamar `trace_id`
+  (cabeçalho `trace-id`); uma mensagem consumida que só traz `correlation_id` é aceita, mas o campo é ignorado (`trace_id` fica `null`).
 
 ---
 

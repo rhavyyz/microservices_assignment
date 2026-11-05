@@ -30,7 +30,7 @@ export function registerRoutes(app: FastifyInstance, deps: { events: EventServic
   async function authed(req: FastifyRequest): Promise<AuthedCtx> {
     const actor = await viewer(req);
     if (!actor) throw unauthorized();
-    return { actor, correlationId: req.id };
+    return { actor, traceId: req.id };
   }
 
   const eventId = (req: FastifyRequest) => (req.params as { eventId: string }).eventId;
