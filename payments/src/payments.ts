@@ -10,21 +10,21 @@ export type PaymentRow = {
   payment_id: string;
   registration_id: string;
   user_id: string;
-  event_id: string;
-  activity_id: string;
-  amount: number;
+  event_id: string | null;
+  amount_minor: number;
   currency: string;
   status: Status;
   expires_at: Date;
   created_at: Date;
 };
 
-const COLS = 'payment_id, registration_id, user_id, event_id, activity_id, amount, currency, status, expires_at, created_at';
+const COLS = 'payment_id, registration_id, user_id, event_id, amount_minor, currency, status, expires_at, created_at';
 
-type RawRow = Omit<PaymentRow, 'amount'> & { amount: string };
+// bigint comes back from pg as a string.
+type RawRow = Omit<PaymentRow, 'amount_minor'> & { amount_minor: string };
 
 function map(r: RawRow): PaymentRow {
-  return { ...r, amount: Number(r.amount) };
+  return { ...r, amount_minor: Number(r.amount_minor) };
 }
 
 export async function getById(pool: Pool, id: string): Promise<PaymentRow | null> {
@@ -38,10 +38,10 @@ export async function getByRegistration(pool: Pool, registrationId: string): Pro
 }
 
 /** What goes to Kafka for a payment that just reached `p.status`: the event and, when needed, a user notice. */
-function outboxFor(p: PaymentRow, reason: string | null, correlationId: string | null): OutboxMessage[] {
+function outboxFor(p: PaymentRow, reason: string | null, requestId: string | null): OutboxMessage[] {
   const now = new Date();
-  const ev = buildPaymentEvent(p, reason, correlationId, randomUUID(), now);
-  const out: OutboxMessage[] = [{ topic: config.paymentsTopic, ...ev }];
+  const ev = buildPaymentEvent(p, reason, requestId, randomUUID(), now);
+  const out: OutboxMessage[] = [{ topic: config.paymentEventsTopic, ...ev }];
   const note = buildNotification(p);
   if (note) out.push({ topic: config.notificationsTopic, ...note });
   return out;
@@ -53,14 +53,14 @@ export type Settled = { outcome: Outcome; payment: PaymentRow; detail?: string }
 /**
  * Moves a locked payment toward `target` following the state machine. Must run inside a transaction
  * where `row` was read FOR UPDATE; the caller commits (also when the outcome is 'rejected': a late
- * confirmation turns the payment into EXPIRED, and that change must be kept).
+ * approval turns the payment into EXPIRED, and that change must be kept).
  */
 export async function applyTarget(
   client: PoolClient,
   row: PaymentRow,
   target: Status,
   reason: string,
-  correlationId: string | null,
+  requestId: string | null,
   now: Date,
 ): Promise<Settled> {
   const d = decide(row.status, target, reason, row.expires_at, now);
@@ -73,10 +73,10 @@ export async function applyTarget(
   );
   const payment = map(upd.rows[0]);
   await client.query(
-    'INSERT INTO payment_transitions (payment_id, from_status, to_status, reason, correlation_id) VALUES ($1, $2, $3, $4, $5)',
-    [row.payment_id, row.status, d.to, d.reason, correlationId],
+    'INSERT INTO payment_transitions (payment_id, from_status, to_status, reason, request_id) VALUES ($1, $2, $3, $4, $5)',
+    [row.payment_id, row.status, d.to, d.reason, requestId],
   );
-  await enqueue(client, outboxFor(payment, d.reason, correlationId));
+  await enqueue(client, outboxFor(payment, d.reason, requestId));
   return d.granted
     ? { outcome: 'applied', payment }
     : { outcome: 'rejected', payment, detail: `payment ${d.to}: ${d.reason}` };
@@ -106,23 +106,23 @@ async function inTransaction<T>(pool: Pool, fn: (c: PoolClient) => Promise<T>): 
 export async function createPayment(
   pool: Pool,
   input: CreateInput,
-  correlationId: string | null,
+  requestId: string | null,
 ): Promise<{ payment: PaymentRow; created: boolean }> {
   return inTransaction(pool, async (client) => {
     const ins = await client.query<RawRow>(
-      `INSERT INTO payments (payment_id, registration_id, user_id, event_id, activity_id, amount, currency, status, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'PENDING', $8)
+      `INSERT INTO payments (payment_id, registration_id, user_id, event_id, amount_minor, currency, status, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, 'PENDING', $7)
        ON CONFLICT (registration_id) DO NOTHING
        RETURNING ${COLS}`,
-      [randomUUID(), input.registrationId, input.userId, input.eventId, input.activityId, input.amount, input.currency, input.expiresAt],
+      [randomUUID(), input.registrationId, input.userId, input.eventId, input.amountMinor, input.currency, input.expiresAt],
     );
     if (ins.rows[0]) {
       const payment = map(ins.rows[0]);
       await client.query(
-        'INSERT INTO payment_transitions (payment_id, from_status, to_status, reason, correlation_id) VALUES ($1, NULL, $2, $3, $4)',
-        [payment.payment_id, 'PENDING', 'created', correlationId],
+        'INSERT INTO payment_transitions (payment_id, from_status, to_status, reason, request_id) VALUES ($1, NULL, $2, $3, $4)',
+        [payment.payment_id, 'PENDING', 'created', requestId],
       );
-      await enqueue(client, outboxFor(payment, null, correlationId));
+      await enqueue(client, outboxFor(payment, null, requestId));
       return { payment, created: true };
     }
     const existing = await client.query<RawRow>(`SELECT ${COLS} FROM payments WHERE registration_id = $1`, [input.registrationId]);
@@ -136,32 +136,35 @@ export async function settleById(
   id: string,
   target: Status,
   reason: string,
-  correlationId: string | null,
+  requestId: string | null,
 ): Promise<Settled | null> {
   return inTransaction(pool, async (client) => {
     const row = await lock(client, 'payment_id', id);
     if (!row) return null;
-    return applyTarget(client, row, target, reason, correlationId, new Date());
+    return applyTarget(client, row, target, reason, requestId, new Date());
   });
 }
 
 /**
- * Idempotent consumer for registration.cancelled / registration.expired: the message id and its effect
- * are committed together. A payment that is no longer PENDING is left alone (refunds are out of scope).
+ * Idempotent consumer step for Subscription's RegistrationCancelled / RegistrationExpired: the event id (dedupe in
+ * processed_messages) and its effect are committed together. PENDING -> CANCELLED, APPROVED -> REFUNDED;
+ * a payment in any other state, or no payment at all, is a no-op.
  */
-export async function cancelForRegistration(
+export async function closeForRegistration(
   pool: Pool,
-  messageId: string,
+  eventId: string,
   registrationId: string,
   reason: string,
-  correlationId: string | null,
+  requestId: string | null,
 ): Promise<'duplicate' | 'no_payment' | Outcome> {
   return inTransaction(pool, async (client) => {
-    const seen = await client.query('INSERT INTO processed_messages (message_id) VALUES ($1) ON CONFLICT DO NOTHING', [messageId]);
+    const seen = await client.query('INSERT INTO processed_messages (event_id) VALUES ($1) ON CONFLICT DO NOTHING', [eventId]);
     if (seen.rowCount === 0) return 'duplicate';
     const row = await lock(client, 'registration_id', registrationId);
     if (!row) return 'no_payment';
-    const res = await applyTarget(client, row, 'CANCELLED', reason, correlationId, new Date());
+    if (row.status !== 'PENDING' && row.status !== 'APPROVED') return 'noop';
+    const target = row.status === 'APPROVED' ? 'REFUNDED' : 'CANCELLED';
+    const res = await applyTarget(client, row, target, reason, requestId, new Date());
     return res.outcome;
   });
 }

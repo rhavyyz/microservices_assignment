@@ -3,39 +3,48 @@ import type { Pool } from 'pg';
 import { config } from './config.ts';
 import { parseSubscriptionMessage } from './contracts.ts';
 import { kafka } from './kafka.ts';
-import { cancelForRegistration } from './payments.ts';
+import { closeForRegistration } from './payments.ts';
 
 type Log = { info: (o: object, m: string) => void; warn: (o: object, m: string) => void };
 
-/** Reads registration.cancelled / registration.expired and cancels the registration's pending payment. */
+/**
+ * Handles one raw message of `subscription.events`. Invalid messages are logged (ids only, never the payload) and
+ * skipped; unknown types are ignored. A database error throws, so the offset is not committed and the message is
+ * redelivered (the processed_messages dedupe makes that safe).
+ */
+export async function handleSubscriptionMessage(
+  pool: Pool,
+  raw: string | undefined,
+  where: Record<string, unknown>,
+  log: Log,
+): Promise<string> {
+  if (!raw) {
+    log.warn(where, 'empty message skipped');
+    return 'invalid';
+  }
+  const parsed = parseSubscriptionMessage(raw);
+  if (!parsed.ok) {
+    // Poison message: skip it, otherwise one bad record would block the partition forever.
+    log.warn({ ...where, error: parsed.error }, 'invalid message skipped');
+    return 'invalid';
+  }
+  const m = parsed.value;
+  if (!m.closeReason) return 'ignored'; // not a type we react to: no effect, nothing to dedupe
+  const result = await closeForRegistration(pool, m.eventId, m.registrationId, m.closeReason, m.requestId);
+  log.info({ ...where, type: m.type, event_id: m.eventId, registration_id: m.registrationId, request_id: m.requestId, result }, 'message processed');
+  return result;
+}
+
+/** Reads Subscription's domain events and closes the registration's payment (cancel if pending, refund if approved). */
 export async function startConsumer(pool: Pool, log: Log): Promise<Consumer> {
-  const consumer = kafka.consumer({ groupId: config.consumerGroup });
+  // metadataMaxAge = topic.metadata.refresh.interval.ms (ADR-005): picks up a topic created after we subscribed.
+  const consumer = kafka.consumer({ groupId: config.consumerGroup, metadataMaxAge: 10000 });
   try {
     await consumer.connect();
     await consumer.subscribe({ topics: [config.subscriptionTopic], fromBeginning: true });
     await consumer.run({
       eachMessage: async ({ topic, partition, message }) => {
-        const where = { topic, partition, offset: message.offset };
-        const raw = message.value?.toString('utf8');
-        if (!raw) {
-          log.warn(where, 'empty message skipped');
-          return;
-        }
-        const parsed = parseSubscriptionMessage(raw);
-        if (!parsed.ok) {
-          // Poison message: skip it, otherwise one bad record would block the partition forever.
-          log.warn({ ...where, error: parsed.error }, 'invalid message skipped');
-          return;
-        }
-        const m = parsed.value;
-        // A database error throws: the offset is not committed and kafkajs redelivers (idempotent).
-        let result: string;
-        if (m.cancel) {
-          result = await cancelForRegistration(pool, m.messageId, m.cancel.registrationId, m.cancel.reason, m.correlationId);
-        } else {
-          result = 'ignored'; // no effect, so nothing to dedupe
-        }
-        log.info({ ...where, type: m.type, message_id: m.messageId, correlation_id: m.correlationId, result }, 'message processed');
+        await handleSubscriptionMessage(pool, message.value?.toString('utf8'), { topic, partition, offset: message.offset }, log);
       },
     });
   } catch (e) {

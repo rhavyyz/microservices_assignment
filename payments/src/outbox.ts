@@ -13,7 +13,7 @@ export async function enqueue(client: PoolClient, messages: OutboxMessage[]): Pr
 
 /**
  * Sends a batch of pending rows to Kafka and marks them published, in one transaction. If Kafka fails the
- * rows stay pending and are retried (at-least-once: consumers are idempotent by message_id).
+ * rows stay pending and are retried (at-least-once: consumers are idempotent by event_id).
  * No SKIP LOCKED on purpose: a second replica waits instead of overtaking, which keeps the order per key.
  */
 export async function publishPending(pool: Pool, producer: Producer, batch = 100): Promise<number> {

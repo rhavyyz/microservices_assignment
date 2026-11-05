@@ -20,13 +20,16 @@ export const config = {
   databaseUrl: str('DATABASE_URL', 'postgres://payments:change-me@payments-db:5432/payments'),
   kafkaBrokers: str('KAFKA_BROKERS', 'kafka:9092').split(',').map((s) => s.trim()).filter(Boolean),
   consumerGroup: str('PAYMENTS_CONSUMER_GROUP', 'payments-service'),
-  paymentsTopic: str('PAYMENTS_TOPIC', 'payments-events'),
-  subscriptionTopic: str('SUBSCRIPTION_TOPIC', 'subscription-events'),
+  paymentEventsTopic: str('PAYMENT_EVENTS_TOPIC', 'payments.events'),
+  // Subscription's domain events: Payments reacts to RegistrationCancelled / RegistrationExpired.
+  subscriptionTopic: str('SUBSCRIPTION_TOPIC', 'subscription.events'),
   notificationsTopic: str('NOTIFICATIONS_TOPIC', 'notifications'),
   topicPartitions: int('PAYMENTS_TOPIC_PARTITIONS', 6),
+  // Payments' own deadline for a new payment (independent from the reservation's).
+  paymentTtlSeconds: int('PAYMENT_TTL_SECONDS', 900),
   expiryIntervalMs: int('EXPIRY_INTERVAL_MS', 5000),
   outboxIntervalMs: int('OUTBOX_INTERVAL_MS', 500),
-  // The simulated provider endpoint (confirm / refuse / expire). Turn it off with SIMULATOR_ENABLED=false.
+  // The simulated provider endpoint (approve / decline / expire). Turn it off with SIMULATOR_ENABLED=false.
   simulatorEnabled: str('SIMULATOR_ENABLED', 'true').toLowerCase() !== 'false',
   discovererUrl: str('SERVICE_DISCOVERER_URL', 'http://service-discoverer:8080'),
   serviceHost: str('SERVICE_HOST', `${os.hostname()}:${port}`),
