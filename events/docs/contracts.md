@@ -248,6 +248,6 @@ Garantias:
 
 | Com | Contrato |
 |---|---|
-| Service-discoverer | Registra `{"kind":"events","host":"<SERVICE_HOST>"}` em `POST /register` ao iniciar e a cada 30 s; `GET /healthcheck` responde 200 só com o banco migrado e acessível. |
+| Service-discoverer | Registra `{"kind":"events","host":"<SERVICE_HOST>"}` em `POST /register` (via a biblioteca TypeScript compartilhada `discovery`) uma única vez ao iniciar, com as tentativas padrão da biblioteca; `GET /healthcheck` responde 200 só com o banco migrado e acessível. |
 | Gateway | Lê `GET /openapi.json`. As rotas da seção 3 são abertas por `events/scripts/register-gateway-routes.sh` com `isPublic=true`, `requireAuth=false` (a autenticação é feita no serviço) e `rateLimitBy=ip`. Quando o Gateway validar o JWT e injetar `X-User-Id` (P3), as rotas de escrita podem passar a `requireAuth=true` e `rateLimitBy=user_or_ip`. |
-| Serviço de Usuários | `GET http://<host de consult?kind=user>/.well-known/jwks.json` (ou `JWT_JWKS_URL`); exige `alg=RS256`, `kid`, `iss = JWT_ISSUER` (`eventhub-users`), `exp`, `sub`; lê `roles`. |
+| Serviço de Usuários | `GET /.well-known/jwks.json` via `request` da biblioteca compartilhada (descoberta, cache do host e nova tentativa; ou URL fixa em `JWT_JWKS_URL`, que a substitui); exige `alg=RS256`, `kid`, `iss = JWT_ISSUER` (`eventhub-users`), `exp`, `sub`; lê `roles`. |

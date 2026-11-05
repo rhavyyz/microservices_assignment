@@ -112,7 +112,11 @@ services:
     <<: *app
     deploy:
       replicas: 1
-    build: ./events
+    # additional_contexts gives the build access to the TypeScript discovery lib, which lives outside ./events
+    build:
+      context: ./events
+      additional_contexts:
+        discovery: ./service-discoverer/Libs/typescript
     networks: [backbone, events-net]
     depends_on:
       kafka:
@@ -147,7 +151,11 @@ services:
     <<: *app
     deploy:
       replicas: 1
-    build: ./payments
+    # additional_contexts gives the build access to the TypeScript discovery lib, which lives outside ./payments
+    build:
+      context: ./payments
+      additional_contexts:
+        discovery: ./service-discoverer/Libs/typescript
     networks: [backbone, payments-net]
   user:
     <<: *app
@@ -205,7 +213,11 @@ services:
     <<: *app
     deploy:
       replicas: 1
-    build: ./reports
+    # additional_contexts gives the build access to the TypeScript discovery lib, which lives outside ./reports
+    build:
+      context: ./reports
+      additional_contexts:
+        discovery: ./service-discoverer/Libs/typescript
     networks: [backbone, reports-net]
 
   # Identical replicas: just raise `deploy.replicas` on the service.
@@ -214,7 +226,10 @@ services:
   #   <<: *app
   #   deploy:
   #     replicas: 1
-  #   build: ./payments
+  #   build:
+  #     context: ./payments
+  #     additional_contexts:
+  #       discovery: ./service-discoverer/Libs/typescript
   #   networks: [backbone, payments-net]
   #   environment:
   #     INSTANCE_ID: 2

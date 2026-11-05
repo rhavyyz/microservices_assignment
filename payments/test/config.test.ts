@@ -11,6 +11,8 @@ test('defaults: topics, consumer group and payment TTL; no commands topic', asyn
   assert.equal(config.subscriptionTopic, 'subscription.events');
   assert.equal(config.consumerGroup, 'payments-service');
   assert.equal(config.paymentTtlSeconds, 900);
+  assert.equal('discovererUrl' in config, false);
+  assert.equal('serviceHost' in config, false);
   assert.equal('paymentCommandsTopic' in config, false);
 });
 

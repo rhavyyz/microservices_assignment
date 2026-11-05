@@ -1,5 +1,3 @@
-import os from 'node:os';
-
 type Env = Record<string, string | undefined>;
 
 function str(env: Env, name: string, def: string): string {
@@ -40,9 +38,6 @@ export function loadConfig(env: Env = process.env) {
     outboxIntervalMs: int(env, 'OUTBOX_INTERVAL_MS', 500),
     outboxBatchSize: int(env, 'OUTBOX_BATCH_SIZE', 100),
     outboxRetentionHours: int(env, 'OUTBOX_RETENTION_HOURS', 24),
-    discovererUrl: str(env, 'SERVICE_DISCOVERER_URL', 'http://service-discoverer:8080'),
-    serviceHost: str(env, 'SERVICE_HOST', `${os.hostname()}:${port}`),
-    reregisterIntervalMs: int(env, 'REREGISTER_INTERVAL_MS', 30000),
     jwtIssuer: str(env, 'JWT_ISSUER', 'eventhub-users'),
     /** Fixed JWKS URL; when absent the user service is located through the service-discoverer. */
     jwksUrl: optStr(env, 'JWT_JWKS_URL'),

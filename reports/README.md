@@ -3,7 +3,7 @@
 Read-only indicators for organizers (RF11): registrations, payments, occupancy and attendance per event and per activity.
 It never reads another service's database: it builds its own read model (PostgreSQL `reports-db`) from Kafka events.
 
-- Kind `reports`, registered in the service-discoverer with the raw protocol (no TypeScript lib exists).
+- Kind `reports`, registered in the service-discoverer with the shared TypeScript lib (`discovery`, `service-discoverer/Libs/typescript`, linked as a `file:` dependency).
 - `GET /healthcheck`: 200 only when Postgres answers a ping, else 503. Kafka being down does **not** fail it (RQ03).
 - `GET /openapi.json`: generated from the routes; the gateway reads it at startup.
 - Boots even if Postgres, Kafka or the discoverer are down; migration, consumer and registration retry in the background.
@@ -62,8 +62,8 @@ state at query time, never kept as counters, so replays cannot corrupt them.
 
 ## Env
 `PORT` (8080), `DATABASE_URL` (`postgres://reports:reports@reports-db:5432/reports`, dev default), `KAFKA_BROKERS` (`kafka:9092`),
-`REPORTS_CONSUMER_GROUP`, `REPORTS_TOPIC_PARTITIONS` (6), the three topic names above, `SERVICE_DISCOVERER_URL`, `SERVICE_HOST`
-(`<hostname>:<PORT>`). `REPORTS_DB_PASSWORD` (compose) sets the DB password; if you change it, also set `DATABASE_URL` on the `reports` service.
+`REPORTS_CONSUMER_GROUP`, `REPORTS_TOPIC_PARTITIONS` (6), the three topic names above. The `discovery` lib reads `SERVICE_DISCOVERER_URL`
+(`http://service-discoverer:8080`) and `SERVICE_HOST` (`<hostname>:<PORT>`) itself. `REPORTS_DB_PASSWORD` (compose) sets the DB password; if you change it, also set `DATABASE_URL` on the `reports` service.
 
 ## Tests
-    npm test      # node:test, no dependencies (contract parsing, discovery registration/backoff, metrics)
+    npm test      # node:test, no dependencies (contract parsing, metrics)

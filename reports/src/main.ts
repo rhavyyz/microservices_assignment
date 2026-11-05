@@ -1,8 +1,8 @@
+import { Kind, register } from 'discovery';
 import type { Consumer } from 'kafkajs';
 import { config } from './config.ts';
 import { startConsumer } from './consumer.ts';
 import { createPool, migrate } from './db.ts';
-import { registerService } from './discovery.ts';
 import { buildServer } from './server.ts';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -39,9 +39,10 @@ void (async () => {
   });
 })();
 
-void registerService('reports', { url: config.discovererUrl, host: config.serviceHost, log: (m) => log.warn(m) })
-  .then(() => log.info({ host: config.serviceHost }, 'registered in the service-discoverer'))
-  .catch((e) => log.error({ err: (e as Error).message }, 'registration gave up'));
+// Fire and forget, never awaited before listening.
+register(Kind.REPORTS)
+  .then(() => log.info('registered in the service-discoverer'))
+  .catch((e: Error) => log.warn({ err: e.message }, 'could not register in the service-discoverer'));
 
 async function shutdown(): Promise<void> {
   await app.close().catch(() => {});

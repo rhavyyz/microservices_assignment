@@ -110,7 +110,7 @@ O serviço também expõe `GET /healthcheck` (200 só se o banco responde, senã
 | --- | --- | --- |
 | Database per service | PostgreSQL próprio, sem acesso de outros serviços | Implementado |
 | API Gateway | Rotas liberadas por endpoint, com autenticação exigida | Implementado (liberação por script de administrador) |
-| Server-side discovery | Registro no discoverer com o protocolo bruto e a política de retentativa das bibliotecas (10 tentativas, de 1 s a 30 s) | Implementado |
+| Server-side discovery | Registro no discoverer pela biblioteca TypeScript compartilhada `discovery` (10 tentativas, de 1 s a 30 s) | Implementado |
 | Messaging com consumidor idempotente | `message_id` gravado na mesma transação do efeito | Implementado |
 | Health check API | `GET /healthcheck` com ping no banco | Implementado |
 | Access token | Identidade por `X-User-Id` repassado pelo gateway, sem verificação, como no resto do monorepo; autorização por dono do evento | Parcial |
@@ -134,7 +134,7 @@ O serviço também expõe `GET /healthcheck` (200 só se o banco responde, senã
 
 ## 10. Testes e validação
 
-Testes unitários (11, todos passando): leitura e validação das mensagens, registro no discoverer com retentativas e cálculo das taxas.
+Testes unitários (todos passando): leitura e validação das mensagens e cálculo das taxas.
 
 Validação com Postgres, Kafka e gateway reais, usando mensagens enviadas manualmente (evento `e1` do organizador `o1`, atividade com 2 vagas, 2 inscrições, 1 pagamento de 50 e 1 check-in):
 

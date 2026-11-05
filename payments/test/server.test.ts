@@ -158,10 +158,8 @@ test('POST /payments: null event_id is stored as NULL', async () => {
 test('POST /payments: a lookup without activity_id is an invalid upstream body, 503', async () => {
   const { createSubscriptionClient } = await import('../src/subscription.ts');
   const body = { registration_id: REG, user_id: USER, status: 'PENDING_PAYMENT', amount_minor: 100, currency: 'USD', expires_at: '2999-01-01T00:00:00Z', event_id: null };
-  const fn = (async (url: string) => String(url).includes('/consult')
-    ? new Response(JSON.stringify({ host: 'h:1' }), { status: 200 })
-    : new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch;
-  const a = await buildServer(createPool(), createSubscriptionClient({ discovererUrl: 'http://d:1', fetchFn: fn }));
+  const fn = (async () => new Response(JSON.stringify(body), { status: 200 })) as never;
+  const a = await buildServer(createPool(), createSubscriptionClient({ request: fn }));
   a.log.level = 'silent';
   assertProblem(await post(a, { registration_id: REG }), 503, 'UPSTREAM_UNAVAILABLE');
 });
@@ -207,10 +205,8 @@ test('POST /payments: end to end through the client, null expires_at is 409 when
     [{ status: 'CONFIRMED', expires_at: 'garbage' }, 503, 'UPSTREAM_UNAVAILABLE'],
   ];
   for (const [over, status, code] of cases) {
-    const fn = (async (url: string) => String(url).includes('/consult')
-      ? new Response(JSON.stringify({ host: 'h:1' }), { status: 200 })
-      : new Response(JSON.stringify({ ...body, ...over }), { status: 200 })) as unknown as typeof fetch;
-    const a = await clocked(createPool(), createSubscriptionClient({ discovererUrl: 'http://d:1', fetchFn: fn, timeoutMs: 50 }));
+    const fn = (async () => new Response(JSON.stringify({ ...body, ...over }), { status: 200 })) as never;
+    const a = await clocked(createPool(), createSubscriptionClient({ request: fn }));
     assertProblem(await post(a, { registration_id: REG }), status, code);
   }
 });

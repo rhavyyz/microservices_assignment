@@ -1,5 +1,6 @@
 FROM node:22-alpine AS build
 WORKDIR /app
+COPY --from=discovery . /service-discoverer/Libs/typescript
 COPY package.json package-lock.json* ./
 # Uses the lockfile when it exists (commit package-lock.json after the first `npm install`).
 RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
@@ -10,6 +11,7 @@ RUN npm run build && npm prune --omit=dev
 FROM node:22-alpine
 WORKDIR /app
 ENV NODE_ENV=production
+COPY --from=discovery . /service-discoverer/Libs/typescript
 COPY --from=build /app/package.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist

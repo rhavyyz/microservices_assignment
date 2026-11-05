@@ -18,7 +18,7 @@ início, fim e descrição.
 |---|---|
 | Database per Service | PostgreSQL próprio (`events-db`), só na rede `events-net`; nenhum outro serviço lê suas tabelas. |
 | API Gateway | Rotas expostas como `/events/...` pelo Gateway; `GET /openapi.json` alimenta a tabela de endpoints; script abre as rotas. |
-| Server-side discovery | Registro como `events` no service-discoverer (re-registro a cada 30 s); a chave pública do serviço de Usuários é localizada via `consult`. |
+| Server-side discovery | Registro como `events` no service-discoverer (registro único ao iniciar, pela biblioteca compartilhada); a chave pública do serviço de Usuários é obtida com `request` da biblioteca compartilhada (`JWT_JWKS_URL` a substitui por uma URL fixa). |
 | Access Token | JWT RS256 emitido pelo serviço de Usuários, validado localmente com o JWKS (ADR-E4). |
 | Messaging (Kafka) | Publica `event.*`, `activity.*`, `seat.*` em `events-events`; consome `registration.*` de `subscription-events`. |
 | Saga / consistência de dados | Lado de capacidade da saga de inscrição, coreografada por mensagens (ADR-E2). |
@@ -141,6 +141,7 @@ início, fim e descrição.
   que o Gateway consome, de uma só fonte.
 - **Consequências:** não há biblioteca TypeScript do discoverer (o protocolo é usado direto, como em Relatórios); o
   código de registro poderia virar `service-discoverer/Libs/typescript` e ser compartilhado pelos dois serviços.
+  *Atualização:* essa biblioteca passou a existir e Eventos a usa (pacote `discovery`); o cliente próprio foi removido. Eventos agora usa a biblioteca TypeScript compartilhada e se registra uma única vez ao iniciar, com as tentativas padrão da biblioteca; não se registra mais periodicamente.
 
 ## ADR-E6 — Contrato de erros e de correlação
 
