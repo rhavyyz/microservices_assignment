@@ -11,6 +11,7 @@ export type PaymentRow = {
   registration_id: string;
   user_id: string;
   event_id: string | null;
+  activity_id: string | null; // null for payments created while Payments did not store it
   amount_minor: number;
   currency: string;
   status: Status;
@@ -18,7 +19,7 @@ export type PaymentRow = {
   created_at: Date;
 };
 
-const COLS = 'payment_id, registration_id, user_id, event_id, amount_minor, currency, status, expires_at, created_at';
+const COLS = 'payment_id, registration_id, user_id, event_id, activity_id, amount_minor, currency, status, expires_at, created_at';
 
 // bigint comes back from pg as a string.
 type RawRow = Omit<PaymentRow, 'amount_minor'> & { amount_minor: string };
@@ -110,11 +111,11 @@ export async function createPayment(
 ): Promise<{ payment: PaymentRow; created: boolean }> {
   return inTransaction(pool, async (client) => {
     const ins = await client.query<RawRow>(
-      `INSERT INTO payments (payment_id, registration_id, user_id, event_id, amount_minor, currency, status, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, 'PENDING', $7)
+      `INSERT INTO payments (payment_id, registration_id, user_id, event_id, activity_id, amount_minor, currency, status, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'PENDING', $8)
        ON CONFLICT (registration_id) DO NOTHING
        RETURNING ${COLS}`,
-      [randomUUID(), input.registrationId, input.userId, input.eventId, input.amountMinor, input.currency, input.expiresAt],
+      [randomUUID(), input.registrationId, input.userId, input.eventId, input.activityId, input.amountMinor, input.currency, input.expiresAt],
     );
     if (ins.rows[0]) {
       const payment = map(ins.rows[0]);

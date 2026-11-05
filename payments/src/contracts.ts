@@ -19,6 +19,7 @@ export type CreateInput = {
   registrationId: string;
   userId: string;
   eventId: string | null;
+  activityId: string;
   amountMinor: number;
   currency: string;
   expiresAt: Date;

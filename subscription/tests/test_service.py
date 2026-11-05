@@ -549,6 +549,7 @@ def test_internal_registration_exposes_facts_and_event_id(service):
     facts = service.internal_registration(reg["id"])
     assert facts == {
         "registration_id": reg["id"],
+        "activity_id": reg["activity_id"],
         "user_id": reg["user_id"],
         "status": "PENDING_PAYMENT",
         "amount_minor": 100,

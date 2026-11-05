@@ -10,6 +10,7 @@ export type Registration = {
   currency: string;
   expires_at: string | null; // Subscription sends null outside OFFERED/PENDING_PAYMENT
   event_id: string | null;
+  activity_id: string;
 };
 
 export type LookupResult =
@@ -35,10 +36,11 @@ function parseRegistration(b: unknown): Registration | null {
   const user_id = s('user_id');
   const status = s('status');
   const currency = s('currency');
+  const activity_id = s('activity_id');
   const rawExpires = o.expires_at;
   const amount = o.amount_minor;
   const event_id = o.event_id;
-  if (!registration_id || !user_id || !status || !currency) return null;
+  if (!registration_id || !user_id || !status || !currency || !activity_id) return null;
   const pending = status === 'PENDING_PAYMENT';
   const isInt = typeof amount === 'number' && Number.isSafeInteger(amount);
   // Only a payable registration needs a positive amount; others may be free (0) or carry none.
@@ -52,7 +54,7 @@ function parseRegistration(b: unknown): Registration | null {
   }
   if (pending && expires_at === null) return null; // the deadline check needs it
   if (event_id !== undefined && event_id !== null && typeof event_id !== 'string') return null;
-  return { registration_id, user_id, status, amount_minor: isInt ? amount : null, currency: currency.toUpperCase(), expires_at, event_id: event_id ?? null };
+  return { registration_id, user_id, status, amount_minor: isInt ? amount : null, currency: currency.toUpperCase(), expires_at, event_id: event_id ?? null, activity_id };
 }
 
 export function createSubscriptionClient(opts: Options = {}): FetchRegistration {

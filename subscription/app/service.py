@@ -340,6 +340,7 @@ class SubscriptionService:
             reg = self.registration(conn, registration_id)
             return {
                 "registration_id": reg["id"],
+                "activity_id": reg["activity_id"],
                 "user_id": reg["user_id"],
                 "status": reg["status"],
                 "amount_minor": reg["amount_minor"],

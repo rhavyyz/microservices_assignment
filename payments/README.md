@@ -38,9 +38,10 @@ DECLINED, EXPIRED, CANCELLED, REFUNDED                        (final)
 ## Database migrations
 `migrate()` runs on boot and is idempotent. It converts older databases in place: `amount` -> `amount_minor`,
 statuses `CONFIRMED`/`REFUSED` -> `APPROVED`/`DECLINED` (rows, history, `simulated_*` reasons and the status CHECK),
-and drops the old `payments.activity_id` column. v7 adds `REFUNDED` to the status CHECK and makes `payments.event_id` nullable.
+and v7 adds `REFUNDED` to the status CHECK and makes `payments.event_id` nullable.
 v8 renames `processed_messages.event_id` back to `message_id` if (and only if) a database already ran the short-lived revision that had renamed it (there is no v4; that revision was removed).
 v9 renames `payment_transitions.request_id` to `trace_id` if (and only if) the old column exists and the new one does not. The `X-Request-Id` header is no longer read or echoed: only `X-Trace-Id` is (hard cut, no fallback).
+v6 is retired (there is no v6, like v4): it used to drop `payments.activity_id`, which Payments keeps. v10 restores it: it adds `payments.activity_id text` if the column is missing (databases that ran the old v6) and drops its NOT NULL if present (databases from `main`), because payments created while the column was gone cannot be backfilled. The column is nullable.
 All are no-ops on a fresh database and on re-runs. (Not yet run against a real Postgres.)
 
 ## What this service receives
@@ -68,10 +69,10 @@ Set `SIMULATOR_ENABLED=false` to turn the simulator off.
   - status other than `PENDING_PAYMENT` -> 409 `REGISTRATION_NOT_PAYABLE`;
   - registration `expires_at` not in the future (checked against Payments' clock, after the owner and status checks; Subscription's expiry worker can lag a few seconds) -> 409 `REGISTRATION_NOT_PAYABLE`;
   - Subscription unreachable, 5xx or invalid body -> 503 `UPSTREAM_UNAVAILABLE`;
-  - otherwise the payment is created `PENDING` with `amount_minor`, `currency`, `user_id` and `event_id` (nullable) from Subscription's answer.
+  - otherwise the payment is created `PENDING` with `amount_minor`, `currency`, `user_id`, `event_id` (nullable) and `activity_id` from Subscription's answer (`activity_id` is required there: a lookup body without it is invalid, 503; it is never read from the client body).
 - `expires_at = now + PAYMENT_TTL_SECONDS` (Payments' own deadline).
 - Idempotent by `registration_id`: if a payment already exists it is returned unchanged (200 instead of 201) after the owner check, without asking Subscription again.
-- Answer: `{payment_id, registration_id, user_id, event_id, amount_minor, currency, status:"PENDING", expires_at, created_at}`.
+- Answer: `{payment_id, registration_id, user_id, event_id, activity_id, amount_minor, currency, status:"PENDING", expires_at, created_at}`.
 - The route must be opened on the gateway by an admin script later (out of scope here).
 
 Subscription lookup (`src/subscription.ts`): `GET {SERVICE_DISCOVERER_URL}/consult?kind=subscription` -> `{"host":"host:port"}`, then `GET http://<host>/internal/registrations/{id}`.
@@ -94,7 +95,7 @@ At startup Payments creates (if absent, 1 replica, `PAYMENTS_TOPIC_PARTITIONS` p
 Flat envelope, no nested `data`:
 
     {"message_id","schema_version":1,"type","occurred_at","trace_id","registration_id","amount_minor","currency",
-     "payment_id","user_id","event_id","status","reason"}
+     "payment_id","user_id","event_id","activity_id","status","reason"}
 
 - `message_id` is the unique id of the message (consumers dedupe by it). The Events-service event the payment belongs to
   is published as `event_id` (same name in the HTTP API and the `payments.event_id` column).
@@ -110,7 +111,7 @@ Flat envelope, no nested `data`:
 Who is expected to act on them:
 - **Subscription**: `PaymentApproved` confirms the registration; `PaymentDeclined` and `PaymentExpired` release the seat (RN02, RN03).
 - **Reports**: counts payments and revenue (already consumes this contract).
-- `activity_id` is no longer published (Reports will be updated separately).
+- `activity_id` (the registration's activity, taken from Subscription's lookup) is published again, next to `registration_id`, `user_id` and `event_id`; it is `null` for payments created while Payments did not store it.
 - Delivery is at-least-once, so consumers must dedupe by `message_id`.
 
 ### Kafka: topic `notifications` (key = `user_id`)

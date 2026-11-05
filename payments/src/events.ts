@@ -5,6 +5,7 @@ export type PaymentView = {
   registration_id: string;
   user_id: string;
   event_id: string | null;
+  activity_id: string | null;
   amount_minor: number;
   currency: string;
   status: string;
@@ -51,6 +52,7 @@ export function buildPaymentEvent(
       registration_id: p.registration_id,
       user_id: p.user_id,
       event_id: p.event_id,
+      activity_id: p.activity_id,
       amount_minor: p.amount_minor,
       currency: p.currency,
       status: p.status,

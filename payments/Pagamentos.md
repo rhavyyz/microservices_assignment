@@ -92,7 +92,7 @@ O serviço consome `subscription.events` (variável `SUBSCRIPTION_TOPIC`; grupo 
 
 Na inicialização o serviço cria, se não existirem, `payments.events`, `notifications` e `subscription.events`. Não existe tópico `payments.commands`.
 
-O `activity_id` saiu do serviço: o pagamento se relaciona com a inscrição, não com a atividade. A coluna antiga é removida na migração.
+O `activity_id` vem da consulta ao Subscription (`GET /internal/registrations/{id}`, campo obrigatório: sem ele a resposta é inválida e `POST /payments` devolve 503). Nunca vem do cliente (um `activity_id` no corpo é ignorado). É gravado em `payments.activity_id` (coluna anulável: pagamentos criados enquanto a coluna não existia ficam com `null`), devolvido pela API e publicado nos eventos.
 
 O serviço guarda no máximo um pagamento por `registration_id` (deduplicado por ele).
 
@@ -100,7 +100,7 @@ O serviço guarda no máximo um pagamento por `registration_id` (deduplicado por
 
 ### Tópico `payments.events` (chave: `registration_id`)
 
-Eventos `PaymentCreated` (`PENDING`), `PaymentApproved` (`APPROVED`), `PaymentDeclined` (`DECLINED`), `PaymentExpired` (`EXPIRED`), `PaymentCancelled` (`CANCELLED`) e `PaymentRefunded` (`REFUNDED`), em envelope plano e versionado: `message_id` (id único da mensagem), `schema_version` (1), `type`, `occurred_at`, `trace_id`, `registration_id`, `amount_minor` (inteiro em unidades menores), `currency`, `payment_id`, `user_id`, `event_id`, `status` e `reason`. `event_id` é o evento do serviço de eventos a que o pagamento pertence (mesmo nome na API HTTP e na coluna `payments.event_id`); `message_id` identifica a mensagem. O `activity_id` não é mais publicado (o serviço de relatórios será atualizado à parte).
+Eventos `PaymentCreated` (`PENDING`), `PaymentApproved` (`APPROVED`), `PaymentDeclined` (`DECLINED`), `PaymentExpired` (`EXPIRED`), `PaymentCancelled` (`CANCELLED`) e `PaymentRefunded` (`REFUNDED`), em envelope plano e versionado: `message_id` (id único da mensagem), `schema_version` (1), `type`, `occurred_at`, `trace_id`, `registration_id`, `amount_minor` (inteiro em unidades menores), `currency`, `payment_id`, `user_id`, `event_id`, `activity_id` (a atividade da inscrição; `null` em pagamentos antigos), `status` e `reason`. `event_id` é o evento do serviço de eventos a que o pagamento pertence (mesmo nome na API HTTP e na coluna `payments.event_id`); `message_id` identifica a mensagem.
 
 O campo `reason` explica a causa: `simulated_approval`, `simulated_decline`, `simulated_expiration`, `payment_deadline` (prazo vencido), `expired_before_confirmation` (aprovação tardia), `registration_cancelled` e `registration_expired`.
 

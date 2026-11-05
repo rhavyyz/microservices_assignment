@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { buildNotification, buildPaymentEvent, eventTypeFor, formatAmount, type PaymentView } from '../src/events.ts';
 
 const p = (status: string): PaymentView => ({
-  payment_id: 'p1', registration_id: 'r1', user_id: 'u1', event_id: 'e1',
+  payment_id: 'p1', registration_id: 'r1', user_id: 'u1', event_id: 'e1', activity_id: 'a1',
   amount_minor: 2500, currency: 'BRL', status,
 });
 
@@ -22,12 +22,13 @@ test('payment event is a flat envelope keyed by registration', () => {
   const body = JSON.parse(e.value);
   assert.deepEqual(body, {
     message_id: 'm1', schema_version: 1, type: 'PaymentApproved', occurred_at: '2026-10-31T12:00:00.000Z', trace_id: 'c1',
-    payment_id: 'p1', registration_id: 'r1', user_id: 'u1', event_id: 'e1',
+    payment_id: 'p1', registration_id: 'r1', user_id: 'u1', event_id: 'e1', activity_id: 'a1',
     amount_minor: 2500, currency: 'BRL', status: 'APPROVED', reason: 'simulated_approval',
   });
   assert.equal('data' in body, false);
   assert.equal(body.message_id, 'm1'); // message id, not the Events-service event
   assert.equal(body.event_id, 'e1');
+  assert.equal(body.activity_id, 'a1');
   assert.ok(!('parent_event_id' in body));
 });
 

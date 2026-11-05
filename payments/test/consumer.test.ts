@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import type { Pool } from 'pg';
 import { handleSubscriptionMessage } from '../src/consumer.ts';
 
-type Row = { payment_id: string; registration_id: string; user_id: string; event_id: string | null; amount_minor: string; currency: string; status: string; expires_at: Date; created_at: Date };
+type Row = { payment_id: string; registration_id: string; user_id: string; event_id: string | null; activity_id: string | null; amount_minor: string; currency: string; status: string; expires_at: Date; created_at: Date };
 
 const payment = (status: string): Row => ({
-  payment_id: 'p1', registration_id: 'r1', user_id: 'u1', event_id: 'e1', amount_minor: '2500', currency: 'BRL', status,
+  payment_id: 'p1', registration_id: 'r1', user_id: 'u1', event_id: 'e1', activity_id: 'a1', amount_minor: '2500', currency: 'BRL', status,
   expires_at: new Date('2030-01-01T00:00:00Z'), created_at: new Date('2026-01-01T00:00:00Z'),
 });
 
