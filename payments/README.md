@@ -21,15 +21,15 @@ DECLINED, EXPIRED, CANCELLED, REFUNDED                        (final)
   `RegistrationExpired` for a registration whose payment is `APPROVED`. A refund never applies to PENDING, DECLINED, EXPIRED or CANCELLED.
 - An approval that arrives after `expires_at` is **not honored**: the payment becomes `EXPIRED` and a `PaymentExpired`
   event goes out (RN03), so a late approval cannot produce a confirmed registration.
-- Every change is stored in `payment_transitions` (from, to, reason, request id).
+- Every change is stored in `payment_transitions` (from, to, reason, trace id).
 - Payments is **reactive**: it creates payments itself (asking Subscription for the facts over HTTP) and reacts to
   Subscription's domain events. There is no command topic; Subscription neither sends commands nor calls Payments.
 - Payments has its **own expiry**: a new payment lives `PAYMENT_TTL_SECONDS` (default 900), independent of the reservation.
 
-## Request id and errors
-- `X-Request-Id`: an incoming value is kept only if it is 8-64 chars of `[A-Za-z0-9._-]`, otherwise a UUID is generated.
-  It is always echoed in the `X-Request-Id` response header, used in logs and written as `request_id` in the Kafka events and `payment_transitions`.
-- Every error is `application/problem+json`: `{"title","status","code","detail","traceId"}` (`traceId` = the request id).
+## Trace id and errors
+- `X-Trace-Id`: an incoming value is kept only if it is 8-64 chars of `[A-Za-z0-9._-]`, otherwise a UUID is generated.
+  It is always echoed in the `X-Trace-Id` response header, used in logs and written as `trace_id` in the Kafka events and `payment_transitions`.
+- Every error is `application/problem+json`: `{"title","status","code","detail","traceId"}` (`traceId` = the trace id).
   Codes: `UNAUTHENTICATED` (401), `VALIDATION_ERROR` (400), `PAYMENT_NOT_FOUND` / `REGISTRATION_NOT_FOUND` / `NOT_FOUND` (404),
   `REGISTRATION_NOT_PAYABLE` (409, registration not `PENDING_PAYMENT`), `PAYMENT_NOT_APPLIED` (409, simulate; adds `payment_status`),
   `UPSTREAM_UNAVAILABLE` (503, Subscription unreachable / 5xx / invalid answer; no internals in the body),
@@ -40,6 +40,7 @@ DECLINED, EXPIRED, CANCELLED, REFUNDED                        (final)
 statuses `CONFIRMED`/`REFUSED` -> `APPROVED`/`DECLINED` (rows, history, `simulated_*` reasons and the status CHECK),
 and drops the old `payments.activity_id` column. v7 adds `REFUNDED` to the status CHECK and makes `payments.event_id` nullable.
 v8 renames `processed_messages.event_id` back to `message_id` if (and only if) a database already ran the short-lived revision that had renamed it (there is no v4; that revision was removed).
+v9 renames `payment_transitions.request_id` to `trace_id` if (and only if) the old column exists and the new one does not. The `X-Request-Id` header is no longer read or echoed: only `X-Trace-Id` is (hard cut, no fallback).
 All are no-ops on a fresh database and on re-runs. (Not yet run against a real Postgres.)
 
 ## What this service receives
@@ -62,7 +63,7 @@ Set `SIMULATOR_ENABLED=false` to turn the simulator off.
     {"registration_id":"<uuid>"}
 
 - Only `registration_id` is read (missing / not a UUID = 400 `VALIDATION_ERROR`); unknown properties are ignored. Amount, currency, owner and parent event never come from the client.
-- Flow: Payments calls Subscription `GET /internal/registrations/{id}` (that endpoint belongs to Subscription, not Payments) with the caller's `X-Request-Id`, and uses the answer:
+- Flow: Payments calls Subscription `GET /internal/registrations/{id}` (that endpoint belongs to Subscription, not Payments) with the caller's `X-Trace-Id`, and uses the answer:
   - Subscription 404, or the registration belongs to another user -> 404 `REGISTRATION_NOT_FOUND` (other users' registrations are never revealed);
   - status other than `PENDING_PAYMENT` -> 409 `REGISTRATION_NOT_PAYABLE`;
   - registration `expires_at` not in the future (checked against Payments' clock, after the owner and status checks; Subscription's expiry worker can lag a few seconds) -> 409 `REGISTRATION_NOT_PAYABLE`;
@@ -92,7 +93,7 @@ At startup Payments creates (if absent, 1 replica, `PAYMENTS_TOPIC_PARTITIONS` p
 ### Kafka: topic `payments.events` (key = `registration_id`, env `PAYMENT_EVENTS_TOPIC`)
 Flat envelope, no nested `data`:
 
-    {"message_id","schema_version":1,"type","occurred_at","request_id","registration_id","amount_minor","currency",
+    {"message_id","schema_version":1,"type","occurred_at","trace_id","registration_id","amount_minor","currency",
      "payment_id","user_id","parent_event_id","status","reason"}
 
 - `message_id` is the unique id of the message (consumers dedupe by it). The Events-service event the payment belongs to
@@ -100,7 +101,7 @@ Flat envelope, no nested `data`:
 - `amount_minor` is an integer in minor units (2500 = 25.00).
 - `type` by status: `PENDING` -> `PaymentCreated`, `APPROVED` -> `PaymentApproved`, `DECLINED` -> `PaymentDeclined`,
   `EXPIRED` -> `PaymentExpired`, `CANCELLED` -> `PaymentCancelled`, `REFUNDED` -> `PaymentRefunded`.
-  Subscription reads only `message_id`, `schema_version`, `type`, `registration_id`, `amount_minor`, `currency`, `request_id`.
+  Subscription reads only `message_id`, `schema_version`, `type`, `registration_id`, `amount_minor`, `currency`, `trace_id`.
 
 `reason` says why (null on `PaymentCreated`): `simulated_approval`, `simulated_decline`, `simulated_expiration`,
 `payment_deadline` (expired by the job), `expired_before_confirmation` (late approval), `registration_cancelled`,
@@ -139,4 +140,4 @@ The three routes below are the ones the existing script publishes:
 `PAYMENTS_DB_PASSWORD` (compose) sets the DB password; if you change it, also set `DATABASE_URL` on the `payments` service.
 
 ## Tests
-    npm test      # node:test, no dependencies (state machine, event/notification builders, input validation, discovery, config defaults, HTTP errors/request id via `inject` with a fake pool)
+    npm test      # node:test, no dependencies (state machine, event/notification builders, input validation, discovery, config defaults, HTTP errors/trace id via `inject` with a fake pool)

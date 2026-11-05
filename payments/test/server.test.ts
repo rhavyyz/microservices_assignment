@@ -39,29 +39,33 @@ function assertProblem(res: Res, status: number, code: string) {
   assert.equal(b.status, status);
   assert.equal(b.code, code);
   assert.equal(typeof b.title, 'string');
-  assert.equal(b.traceId, res.headers['x-request-id']);
+  assert.equal(b.traceId, res.headers['x-trace-id']);
   return b;
 }
 
 
-test('X-Request-Id: valid value is kept and echoed', async () => {
+test('X-Trace-Id: valid value is kept and echoed', async () => {
   const a = await app();
-  const res = await a.inject({ method: 'GET', url: '/payments/' + PID, headers: { 'x-request-id': 'req-1234.abc_X', 'x-user-id': USER } });
-  assert.equal(res.headers['x-request-id'], 'req-1234.abc_X');
+  const res = await a.inject({ method: 'GET', url: '/payments/' + PID, headers: { 'x-trace-id': 'req-1234.abc_X', 'x-user-id': USER } });
+  assert.equal(res.headers['x-trace-id'], 'req-1234.abc_X');
 });
 
-test('X-Request-Id: missing or invalid values are replaced by a UUID', async () => {
+test('X-Trace-Id: missing or invalid values are replaced by a UUID', async () => {
   const a = await app();
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
   for (const bad of [undefined, 'short', 'x'.repeat(65), 'has space in it', 'bad/char/here!']) {
-    const res = await a.inject({ method: 'GET', url: '/healthcheck', headers: bad === undefined ? {} : { 'x-request-id': bad } });
-    assert.match(String(res.headers['x-request-id']), uuid, `generated for ${String(bad)}`);
+    const res = await a.inject({ method: 'GET', url: '/healthcheck', headers: bad === undefined ? {} : { 'x-trace-id': bad } });
+    assert.match(String(res.headers['x-trace-id']), uuid, `generated for ${String(bad)}`);
   }
-  const edge = await a.inject({ method: 'GET', url: '/healthcheck', headers: { 'x-request-id': 'x'.repeat(64) } });
-  assert.equal(edge.headers['x-request-id'], 'x'.repeat(64));
+  const edge = await a.inject({ method: 'GET', url: '/healthcheck', headers: { 'x-trace-id': 'x'.repeat(64) } });
+  assert.equal(edge.headers['x-trace-id'], 'x'.repeat(64));
   const old = await a.inject({ method: 'GET', url: '/healthcheck', headers: { 'x-correlation-id': 'corr-12345678' } });
-  assert.notEqual(old.headers['x-request-id'], 'corr-12345678');
+  assert.notEqual(old.headers['x-trace-id'], 'corr-12345678');
   assert.equal(old.headers['x-correlation-id'], undefined);
+  const legacy = await a.inject({ method: 'GET', url: '/healthcheck', headers: { 'x-request-id': 'valid-old-id-12345' } });
+  assert.match(String(legacy.headers['x-trace-id']), uuid);
+  assert.notEqual(legacy.headers['x-trace-id'], 'valid-old-id-12345');
+  assert.equal(legacy.headers['x-request-id'], undefined);
 });
 
 test('401 UNAUTHENTICATED when X-User-Id is missing or not a UUID', async () => {
@@ -126,7 +130,7 @@ test('POST /payments: 201, amount/currency/user/parent event come from Subscript
   const a = await buildServer(createPool([], inserted), lookup);
   a.log.level = 'silent';
   const res = await post(a, { registration_id: REG, user_id: OTHER, amount_minor: 1, currency: 'EUR', event_id: 'x', expires_at: '2000-01-01T00:00:00Z' },
-    { 'x-user-id': USER, 'x-request-id': 'req-abcdef12' });
+    { 'x-user-id': USER, 'x-trace-id': 'req-abcdef12' });
   assert.equal(res.statusCode, 201);
   const b = res.json();
   assert.equal(b.status, 'PENDING');

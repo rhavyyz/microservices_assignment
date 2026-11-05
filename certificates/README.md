@@ -76,7 +76,7 @@ The consumer is the only way a certificate is created. It runs in a daemon threa
 
 - **Topic:** `subscription.events` (group `certificates-service`, manual offset commit **after** processing, `topic.metadata.refresh.interval.ms=10000`).
 - **Topic provisioning (ADR-005):** before consuming, the service creates `subscription.events` and `certificates.dlq` if absent (replication 1, `CERTIFICATES_TOPIC_PARTITIONS` partitions, existing topics are never altered), retrying with backoff in the background until Kafka is up.
-- **Envelope (JSON):** `message_id`, `schema_version` (must be `1`), `type`, `registration_id`, `activity_id`, `user_id`, `aggregate_version`, `occurred_at`, `status`, `request_id`, plus the event-level fields `parent_event_id` (UUID of the Events event), `attended_activities` and `total_activities` (integers, `total >= 1`, `0 <= attended <= total`) and `attendance_percentage` (finite number, `attended * 100 / total` rounded to 2 decimals). `registration_id` and `activity_id` are those of the triggering registration (the last one to end).
+- **Envelope (JSON):** `message_id`, `schema_version` (must be `1`), `type`, `registration_id`, `activity_id`, `user_id`, `aggregate_version`, `occurred_at`, `status`, `trace_id`, plus the event-level fields `parent_event_id` (UUID of the Events event), `attended_activities` and `total_activities` (integers, `total >= 1`, `0 <= attended <= total`) and `attendance_percentage` (finite number, `attended * 100 / total` rounded to 2 decimals). `registration_id` and `activity_id` are those of the triggering registration (the last one to end).
 - **Only `type == "AttendanceEligible"` is acted on.** Every other type, including unknown ones, is acknowledged and ignored.
 
 For an `AttendanceEligible` event the service does its own validations before issuing:
@@ -88,7 +88,7 @@ For an `AttendanceEligible` event the service does its own validations before is
 5. `GET /internal/users/{user_id}` on Users for the participant name (`200 {"id","name"}`; `404` is poison). This endpoint is unauthenticated and protected by network isolation; it is never registered on the gateway.
 6. `CertificateService.issue_certificate` applies the eligibility rule to the validated percentage (below 75% is poison, `NOT_ELIGIBLE`), renders the PDF (event name = event title, date = date of the event's `starts_at` in its own offset), stores it and saves the row.
 
-All outbound calls carry one `X-Request-Id` per message. Names and payloads are never logged; logs carry ids only.
+All outbound calls carry one `X-Trace-Id` per message. Names and payloads are never logged; logs carry ids only.
 
 **Failure handling**
 
@@ -201,7 +201,7 @@ The same library is used to call Events (`Kind.EVENTS`) and Users (`Kind.USER`) 
 
 The service sits behind the gateway. The gateway verifies the JWT and injects `X-User-Id` (UUID) and `X-User-Roles`; Certificates trusts only those headers and never sees the token. A missing or non-UUID `X-User-Id` is answered with `401` and the problem code `UNAUTHENTICATED`.
 
-Errors are `application/problem+json` with `status`, `title`, `code` and `traceId`. `X-Request-Id` is echoed (a valid inbound value is kept, otherwise one is generated) and is the `traceId`.
+Errors are `application/problem+json` with `status`, `title`, `code` and `traceId`. `X-Trace-Id` is echoed (a valid inbound value is kept, otherwise one is generated) and is the `traceId`.
 
 ### `GET /api/v1/certificates/me?limit=&offset=`
 

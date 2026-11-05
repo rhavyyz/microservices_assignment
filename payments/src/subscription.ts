@@ -17,7 +17,7 @@ export type LookupResult =
   | { kind: 'not_found' }
   | { kind: 'unavailable'; reason: string };
 
-export type FetchRegistration = (id: string, requestId: string) => Promise<LookupResult>;
+export type FetchRegistration = (id: string, traceId: string) => Promise<LookupResult>;
 
 type Options = { discovererUrl?: string; fetchFn?: typeof fetch; timeoutMs?: number };
 
@@ -74,11 +74,11 @@ export function createSubscriptionClient(opts: Options = {}): FetchRegistration 
     return body.host.trim();
   }
 
-  async function attempt(host: string, id: string, requestId: string): Promise<LookupResult> {
+  async function attempt(host: string, id: string, traceId: string): Promise<LookupResult> {
     let res: Response;
     try {
       res = await doFetch(`http://${host}/internal/registrations/${encodeURIComponent(id)}`, {
-        headers: { 'x-request-id': requestId, accept: 'application/json' },
+        headers: { 'x-trace-id': traceId, accept: 'application/json' },
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (e) {
@@ -91,17 +91,17 @@ export function createSubscriptionClient(opts: Options = {}): FetchRegistration 
     return { kind: 'found', registration };
   }
 
-  return async (id, requestId) => {
+  return async (id, traceId) => {
     try {
       cachedHost ??= await consult();
       try {
-        return await attempt(cachedHost, id, requestId);
+        return await attempt(cachedHost, id, traceId);
       } catch (e) {
         if (!(e instanceof ConnectionFailure)) throw e;
         // The cached host may be stale (instance replaced): re-consult and retry once.
         cachedHost = null;
         cachedHost = await consult();
-        return await attempt(cachedHost, id, requestId);
+        return await attempt(cachedHost, id, traceId);
       }
     } catch (e) {
       if (e instanceof ConnectionFailure) cachedHost = null;

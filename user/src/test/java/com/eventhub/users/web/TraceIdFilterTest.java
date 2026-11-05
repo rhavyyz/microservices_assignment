@@ -9,19 +9,19 @@ import org.slf4j.MDC;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
-class CorrelationIdFilterTest {
+class TraceIdFilterTest {
 
-    private final CorrelationIdFilter filter = new CorrelationIdFilter();
+    private final TraceIdFilter filter = new TraceIdFilter();
 
     private String run(String incoming, AtomicReference<String> mdcInside) throws Exception {
         MockHttpServletRequest req = new MockHttpServletRequest();
         if (incoming != null) {
-            req.addHeader(CorrelationIdFilter.HEADER, incoming);
+            req.addHeader(TraceIdFilter.HEADER, incoming);
         }
         MockHttpServletResponse res = new MockHttpServletResponse();
-        filter.doFilter(req, res, (r, s) -> mdcInside.set(MDC.get(CorrelationIdFilter.MDC_KEY)));
-        assertThat(MDC.get(CorrelationIdFilter.MDC_KEY)).isNull(); // limpo após a requisição
-        return res.getHeader(CorrelationIdFilter.HEADER);
+        filter.doFilter(req, res, (r, s) -> mdcInside.set(MDC.get(TraceIdFilter.MDC_KEY)));
+        assertThat(MDC.get(TraceIdFilter.MDC_KEY)).isNull(); // limpo após a requisição
+        return res.getHeader(TraceIdFilter.HEADER);
     }
 
     @Test

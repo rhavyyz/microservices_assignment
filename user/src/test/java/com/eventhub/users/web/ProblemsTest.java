@@ -13,7 +13,7 @@ class ProblemsTest {
 
     @Test
     void producesValidJsonWithCodeTraceIdAndEscaping() {
-        MDC.put(CorrelationIdFilter.MDC_KEY, "trace-12345678");
+        MDC.put(TraceIdFilter.MDC_KEY, "trace-12345678");
         try {
             String json = Problems.json(400, "Dados \"inválidos\"", "linha1\nlinha2\\", "VALIDATION_ERROR",
                     List.of(new Problems.FieldIssue("email", "Informe um e-mail válido.")));
@@ -24,7 +24,7 @@ class ProblemsTest {
             assertThat(JsonPath.<String>read(json, "$.detail")).isEqualTo("linha1\nlinha2\\");
             assertThat(JsonPath.<String>read(json, "$.errors[0].field")).isEqualTo("email");
         } finally {
-            MDC.remove(CorrelationIdFilter.MDC_KEY);
+            MDC.remove(TraceIdFilter.MDC_KEY);
         }
     }
 }

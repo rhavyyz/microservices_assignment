@@ -30,7 +30,7 @@ func Cors() Middleware {
 				return
 			}
 			if origin != "" {
-				h.Set("Access-Control-Expose-Headers", "X-Request-Id")
+				h.Set("Access-Control-Expose-Headers", "X-Trace-Id")
 			}
 			next.ServeHTTP(w, r)
 		})

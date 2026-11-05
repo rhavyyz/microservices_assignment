@@ -38,9 +38,9 @@ export async function getByRegistration(pool: Pool, registrationId: string): Pro
 }
 
 /** What goes to Kafka for a payment that just reached `p.status`: the event and, when needed, a user notice. */
-function outboxFor(p: PaymentRow, reason: string | null, requestId: string | null): OutboxMessage[] {
+function outboxFor(p: PaymentRow, reason: string | null, traceId: string | null): OutboxMessage[] {
   const now = new Date();
-  const ev = buildPaymentEvent(p, reason, requestId, randomUUID(), now);
+  const ev = buildPaymentEvent(p, reason, traceId, randomUUID(), now);
   const out: OutboxMessage[] = [{ topic: config.paymentEventsTopic, ...ev }];
   const note = buildNotification(p);
   if (note) out.push({ topic: config.notificationsTopic, ...note });
@@ -60,7 +60,7 @@ export async function applyTarget(
   row: PaymentRow,
   target: Status,
   reason: string,
-  requestId: string | null,
+  traceId: string | null,
   now: Date,
 ): Promise<Settled> {
   const d = decide(row.status, target, reason, row.expires_at, now);
@@ -73,10 +73,10 @@ export async function applyTarget(
   );
   const payment = map(upd.rows[0]);
   await client.query(
-    'INSERT INTO payment_transitions (payment_id, from_status, to_status, reason, request_id) VALUES ($1, $2, $3, $4, $5)',
-    [row.payment_id, row.status, d.to, d.reason, requestId],
+    'INSERT INTO payment_transitions (payment_id, from_status, to_status, reason, trace_id) VALUES ($1, $2, $3, $4, $5)',
+    [row.payment_id, row.status, d.to, d.reason, traceId],
   );
-  await enqueue(client, outboxFor(payment, d.reason, requestId));
+  await enqueue(client, outboxFor(payment, d.reason, traceId));
   return d.granted
     ? { outcome: 'applied', payment }
     : { outcome: 'rejected', payment, detail: `payment ${d.to}: ${d.reason}` };
@@ -106,7 +106,7 @@ async function inTransaction<T>(pool: Pool, fn: (c: PoolClient) => Promise<T>): 
 export async function createPayment(
   pool: Pool,
   input: CreateInput,
-  requestId: string | null,
+  traceId: string | null,
 ): Promise<{ payment: PaymentRow; created: boolean }> {
   return inTransaction(pool, async (client) => {
     const ins = await client.query<RawRow>(
@@ -119,10 +119,10 @@ export async function createPayment(
     if (ins.rows[0]) {
       const payment = map(ins.rows[0]);
       await client.query(
-        'INSERT INTO payment_transitions (payment_id, from_status, to_status, reason, request_id) VALUES ($1, NULL, $2, $3, $4)',
-        [payment.payment_id, 'PENDING', 'created', requestId],
+        'INSERT INTO payment_transitions (payment_id, from_status, to_status, reason, trace_id) VALUES ($1, NULL, $2, $3, $4)',
+        [payment.payment_id, 'PENDING', 'created', traceId],
       );
-      await enqueue(client, outboxFor(payment, null, requestId));
+      await enqueue(client, outboxFor(payment, null, traceId));
       return { payment, created: true };
     }
     const existing = await client.query<RawRow>(`SELECT ${COLS} FROM payments WHERE registration_id = $1`, [input.registrationId]);
@@ -136,12 +136,12 @@ export async function settleById(
   id: string,
   target: Status,
   reason: string,
-  requestId: string | null,
+  traceId: string | null,
 ): Promise<Settled | null> {
   return inTransaction(pool, async (client) => {
     const row = await lock(client, 'payment_id', id);
     if (!row) return null;
-    return applyTarget(client, row, target, reason, requestId, new Date());
+    return applyTarget(client, row, target, reason, traceId, new Date());
   });
 }
 
@@ -155,7 +155,7 @@ export async function closeForRegistration(
   messageId: string,
   registrationId: string,
   reason: string,
-  requestId: string | null,
+  traceId: string | null,
 ): Promise<'duplicate' | 'no_payment' | Outcome> {
   return inTransaction(pool, async (client) => {
     const seen = await client.query('INSERT INTO processed_messages (message_id) VALUES ($1) ON CONFLICT DO NOTHING', [messageId]);
@@ -164,7 +164,7 @@ export async function closeForRegistration(
     if (!row) return 'no_payment';
     if (row.status !== 'PENDING' && row.status !== 'APPROVED') return 'noop';
     const target = row.status === 'APPROVED' ? 'REFUNDED' : 'CANCELLED';
-    const res = await applyTarget(client, row, target, reason, requestId, new Date());
+    const res = await applyTarget(client, row, target, reason, traceId, new Date());
     return res.outcome;
   });
 }

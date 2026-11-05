@@ -20,7 +20,7 @@ function fakeFetch(handler: (url: string, n: number) => Response | Error) {
 
 const client = (fn: typeof fetch) => createSubscriptionClient({ discovererUrl: 'http://disc:1', fetchFn: fn, timeoutMs: 50 });
 
-test('consults the discoverer for kind subscription, forwards X-Request-Id, caches the host', async () => {
+test('consults the discoverer for kind subscription, forwards X-Trace-Id, caches the host', async () => {
   const f = fakeFetch((url) => (url.includes('/consult') ? json(200, { host: 'sub-1:8000' }) : json(200, reg)));
   const lookup = client(f.fn);
   const r = await lookup('r1', 'req-12345678');
@@ -28,7 +28,7 @@ test('consults the discoverer for kind subscription, forwards X-Request-Id, cach
   assert.ok(r.kind === 'found' && r.registration.currency === 'BRL');
   assert.equal(f.calls[0].url, 'http://disc:1/consult?kind=subscription');
   assert.equal(f.calls[1].url, 'http://sub-1:8000/internal/registrations/r1');
-  assert.equal(f.calls[1].headers['x-request-id'], 'req-12345678');
+  assert.equal(f.calls[1].headers['x-trace-id'], 'req-12345678');
   await lookup('r1', 'req-12345678');
   assert.equal(f.calls.filter((c) => c.url.includes('/consult')).length, 1);
 });

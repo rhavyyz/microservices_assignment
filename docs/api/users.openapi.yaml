@@ -12,7 +12,7 @@ info:
     Convenções:
     - Autenticação: `Authorization: Bearer <access token>` (JWT RS256, ver ADR-001).
     - Todo corpo JSON rejeita campos desconhecidos com `400 MALFORMED_REQUEST`.
-    - Todas as respostas incluem `X-Request-Id`. Erros seguem `application/problem+json`.
+    - Todas as respostas incluem `X-Trace-Id`. Erros seguem `application/problem+json`.
     - Exemplos usam valores fictícios; nenhum token ou senha é válido.
 servers:
   - url: "{gatewayUrl}"
@@ -36,7 +36,7 @@ paths:
       description: Cria sempre um usuário com o papel `PARTICIPANT`. Papéis enviados pelo cliente são rejeitados.
       security: []
       parameters:
-        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/TraceId"
       requestBody:
         required: true
         content:
@@ -47,8 +47,8 @@ paths:
         "201":
           description: Conta criada.
           headers:
-            X-Request-Id:
-              $ref: "#/components/headers/RequestId"
+            X-Trace-Id:
+              $ref: "#/components/headers/TraceId"
           content:
             application/json:
               schema:
@@ -87,7 +87,7 @@ paths:
         resposta `401 INVALID_CREDENTIALS`, sem indicar se o e-mail existe.
       security: []
       parameters:
-        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/TraceId"
       requestBody:
         required: true
         content:
@@ -98,8 +98,8 @@ paths:
         "200":
           description: Autenticado.
           headers:
-            X-Request-Id:
-              $ref: "#/components/headers/RequestId"
+            X-Trace-Id:
+              $ref: "#/components/headers/TraceId"
           content:
             application/json:
               schema:
@@ -139,13 +139,13 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/TraceId"
       responses:
         "200":
           description: Perfil do usuário autenticado.
           headers:
-            X-Request-Id:
-              $ref: "#/components/headers/RequestId"
+            X-Trace-Id:
+              $ref: "#/components/headers/TraceId"
           content:
             application/json:
               schema:
@@ -172,7 +172,7 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/TraceId"
       requestBody:
         required: true
         content:
@@ -183,8 +183,8 @@ paths:
         "200":
           description: Perfil atualizado.
           headers:
-            X-Request-Id:
-              $ref: "#/components/headers/RequestId"
+            X-Trace-Id:
+              $ref: "#/components/headers/TraceId"
           content:
             application/json:
               schema:
@@ -269,7 +269,7 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/TraceId"
         - name: id
           in: query
           required: false
@@ -314,8 +314,8 @@ paths:
         "200":
           description: Página de resultados (pode ser vazia).
           headers:
-            X-Request-Id:
-              $ref: "#/components/headers/RequestId"
+            X-Trace-Id:
+              $ref: "#/components/headers/TraceId"
           content:
             application/json:
               schema:
@@ -340,7 +340,7 @@ paths:
         Qualquer usuário existente é devolvido, ativo ou não. O nome não é gravado nos logs.
       security: []
       parameters:
-        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/TraceId"
         - name: id
           in: path
           required: true
@@ -352,8 +352,8 @@ paths:
         "200":
           description: Id e nome do usuário.
           headers:
-            X-Request-Id:
-              $ref: "#/components/headers/RequestId"
+            X-Trace-Id:
+              $ref: "#/components/headers/TraceId"
           content:
             application/json:
               schema:
@@ -379,8 +379,8 @@ components:
       scheme: bearer
       bearerFormat: JWT
   parameters:
-    RequestId:
-      name: X-Request-Id
+    TraceId:
+      name: X-Trace-Id
       in: header
       required: false
       description: |
@@ -390,7 +390,7 @@ components:
         type: string
         pattern: "^[A-Za-z0-9._-]{8,64}$"
   headers:
-    RequestId:
+    TraceId:
       description: Identificador de correlação da requisição (também presente em `traceId` nos erros).
       schema:
         type: string
@@ -613,7 +613,7 @@ components:
             - INTERNAL_ERROR
         traceId:
           type: string
-          description: Mesmo valor de `X-Request-Id`.
+          description: Mesmo valor de `X-Trace-Id`.
         errors:
           type: array
           description: Presente em `VALIDATION_ERROR`.

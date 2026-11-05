@@ -28,7 +28,7 @@ JWT RS256 com claims `sub`, `roles`, `iss`, `iat`, `exp`, `jti`; validade `USERS
 ## Observabilidade
 - `GET /healthcheck` (Actuator, só `UP`/`DOWN`, inclui o banco). Contrato do discoverer.
 - Auditoria: logger `AUDIT` com `operation`, `result`, `userId`, `emailFingerprint`; JSON em Docker (`LOGGING_STRUCTURED_FORMAT_CONSOLE=logstash`).
-- `X-Request-Id` aceito se `^[A-Za-z0-9._-]{8,64}$`, senão gerado; vai ao MDC, aos logs e ao `traceId` dos erros.
+- `X-Trace-Id` aceito se `^[A-Za-z0-9._-]{8,64}$`, senão gerado; vai ao MDC, aos logs e ao `traceId` dos erros.
 
 ## Estrutura do código (`user/src/main/java/com/eventhub/users`)
 `web` (controllers, DTOs, erros, filtro) · `user` (entidade, repositório, `UserService`) · `security` (cadeia, JWT, chaves) · `audit` · `discovery` · `dev` (seed) · `config`.

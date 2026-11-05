@@ -97,11 +97,11 @@ class AttendanceHandler:
         parent_event_id = _uuid(payload, "parent_event_id")
         _, _, attendance_percentage = _attendance(payload)
 
-        request_id = str(uuid.uuid4())
-        log.info("attendance_eligible_received registration_id=%s request_id=%s", registration_id, request_id)
+        trace_id = str(uuid.uuid4())
+        log.info("attendance_eligible_received registration_id=%s trace_id=%s", registration_id, trace_id)
 
         try:
-            self._issue(registration_id, activity_id, user_id, parent_event_id, attendance_percentage, request_id)
+            self._issue(registration_id, activity_id, user_id, parent_event_id, attendance_percentage, trace_id)
         except (PoisonMessage, TransientError):
             raise
         except CertificateAlreadyExistsError:
@@ -121,7 +121,7 @@ class AttendanceHandler:
         user_id: uuid.UUID,
         event_id: uuid.UUID,
         attendance_percentage: float,
-        request_id: str,
+        trace_id: str,
     ) -> None:
         session = self.session_factory()
         try:
@@ -136,12 +136,12 @@ class AttendanceHandler:
                 log.info("certificate_already_issued registration_id=%s", registration_id)
                 return
 
-            event = self.directory.get_event(event_id, request_id)
+            event = self.directory.get_event(event_id, trace_id)
             if self.clock() < event.ends_at:
                 # Subscription only emits after the last activity ends, so this is clock skew or an early event.
                 raise TransientError("event has not ended yet")
 
-            participant_name = self.directory.get_participant_name(user_id, request_id)
+            participant_name = self.directory.get_participant_name(user_id, trace_id)
 
             service.issue_certificate(
                 registration_id=registration_id,

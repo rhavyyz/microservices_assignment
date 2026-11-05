@@ -31,7 +31,7 @@ Node.js 22 com TypeScript, Fastify (contrato OpenAPI gerado pelo código), Postg
 | Tabela | Função |
 | --- | --- |
 | `payments` | Um pagamento por inscrição (`registration_id` único), com valor, moeda, estado e prazo (`expires_at`). |
-| `payment_transitions` | Histórico de toda mudança de estado: de, para, motivo e identificador da requisição (`request_id`). |
+| `payment_transitions` | Histórico de toda mudança de estado: de, para, motivo e identificador de rastreio (`trace_id`). |
 | `outbox` | Eventos a publicar no Kafka, gravados na mesma transação da mudança de estado. |
 | `processed_messages` | `message_id` das mensagens já tratadas (deduplicação do consumidor de `subscription.events`). |
 
@@ -68,7 +68,7 @@ Corpo de `POST /payments`:
 {"registration_id":"<uuid>"}
 ```
 
-Só `registration_id` é lido (ausente ou fora do formato UUID resulta em 400 `VALIDATION_ERROR`); propriedades desconhecidas são ignoradas. Valor, moeda, dono e evento de origem vêm sempre da resposta do serviço de inscrições (`GET /internal/registrations/{id}`, endpoint dele, descoberto pelo kind `subscription` e chamado com o `X-Request-Id` do pedido), nunca do cliente. Resultados:
+Só `registration_id` é lido (ausente ou fora do formato UUID resulta em 400 `VALIDATION_ERROR`); propriedades desconhecidas são ignoradas. Valor, moeda, dono e evento de origem vêm sempre da resposta do serviço de inscrições (`GET /internal/registrations/{id}`, endpoint dele, descoberto pelo kind `subscription` e chamado com o `X-Trace-Id` do pedido), nunca do cliente. Resultados:
 
 - inscrição inexistente ou de outro usuário: 404 `REGISTRATION_NOT_FOUND` (nunca revela inscrições alheias);
 - inscrição que não está em `PENDING_PAYMENT`: 409 `REGISTRATION_NOT_PAYABLE`;
@@ -80,7 +80,7 @@ O host do serviço de inscrições fica em cache; numa falha de conexão o disco
 
 As consultas e a simulação exigem o cabeçalho `X-User-Id`, que deve ser um UUID (ausente ou inválido resulta em 401 `UNAUTHENTICATED`), e só respondem ao dono do pagamento. Qualquer outro usuário recebe 404, igual a um pagamento inexistente (RN07). A simulação responde 409 `PAYMENT_NOT_APPLIED`, com o estado real em `payment_status`, quando o pedido não pôde ser atendido.
 
-O cabeçalho `X-Request-Id` (8 a 64 caracteres de `[A-Za-z0-9._-]`, senão é gerado um UUID) é sempre devolvido na resposta e vira o `request_id` dos eventos e do histórico. Todo erro sai como `application/problem+json` com `title`, `status`, `code` (`UNAUTHENTICATED`, `VALIDATION_ERROR`, `PAYMENT_NOT_FOUND`, `REGISTRATION_NOT_FOUND`, `REGISTRATION_NOT_PAYABLE`, `PAYMENT_NOT_APPLIED`, `UPSTREAM_UNAVAILABLE`, `INTERNAL_ERROR`), `detail` e `traceId` (o id da requisição); o erro 500 não expõe detalhes internos.
+O cabeçalho `X-Trace-Id` (8 a 64 caracteres de `[A-Za-z0-9._-]`, senão é gerado um UUID) é sempre devolvido na resposta e vira o `trace_id` dos eventos e do histórico. O antigo `X-Request-Id` é ignorado (não é lido nem devolvido). A migração v9 renomeia `payment_transitions.request_id` para `trace_id`. Todo erro sai como `application/problem+json` com `title`, `status`, `code` (`UNAUTHENTICATED`, `VALIDATION_ERROR`, `PAYMENT_NOT_FOUND`, `REGISTRATION_NOT_FOUND`, `REGISTRATION_NOT_PAYABLE`, `PAYMENT_NOT_APPLIED`, `UPSTREAM_UNAVAILABLE`, `INTERNAL_ERROR`), `detail` e `traceId` (o id de rastreio); o erro 500 não expõe detalhes internos.
 
 ### Kafka
 
@@ -100,7 +100,7 @@ O serviço guarda no máximo um pagamento por `registration_id` (deduplicado por
 
 ### Tópico `payments.events` (chave: `registration_id`)
 
-Eventos `PaymentCreated` (`PENDING`), `PaymentApproved` (`APPROVED`), `PaymentDeclined` (`DECLINED`), `PaymentExpired` (`EXPIRED`), `PaymentCancelled` (`CANCELLED`) e `PaymentRefunded` (`REFUNDED`), em envelope plano e versionado: `message_id` (id único da mensagem), `schema_version` (1), `type`, `occurred_at`, `request_id`, `registration_id`, `amount_minor` (inteiro em unidades menores), `currency`, `payment_id`, `user_id`, `parent_event_id`, `status` e `reason`. O evento do serviço de eventos a que o pagamento pertence sai como `parent_event_id`, para não se confundir com `message_id`, que identifica a mensagem; na API HTTP e na coluna `payments.event_id` o campo é `event_id`. O `activity_id` não é mais publicado (o serviço de relatórios será atualizado à parte).
+Eventos `PaymentCreated` (`PENDING`), `PaymentApproved` (`APPROVED`), `PaymentDeclined` (`DECLINED`), `PaymentExpired` (`EXPIRED`), `PaymentCancelled` (`CANCELLED`) e `PaymentRefunded` (`REFUNDED`), em envelope plano e versionado: `message_id` (id único da mensagem), `schema_version` (1), `type`, `occurred_at`, `trace_id`, `registration_id`, `amount_minor` (inteiro em unidades menores), `currency`, `payment_id`, `user_id`, `parent_event_id`, `status` e `reason`. O evento do serviço de eventos a que o pagamento pertence sai como `parent_event_id`, para não se confundir com `message_id`, que identifica a mensagem; na API HTTP e na coluna `payments.event_id` o campo é `event_id`. O `activity_id` não é mais publicado (o serviço de relatórios será atualizado à parte).
 
 O campo `reason` explica a causa: `simulated_approval`, `simulated_decline`, `simulated_expiration`, `payment_deadline` (prazo vencido), `expired_before_confirmation` (aprovação tardia), `registration_cancelled` e `registration_expired`.
 
@@ -165,7 +165,7 @@ Ao receber `RegistrationCancelled` ou `RegistrationExpired` em `subscription.eve
 | RQ03 Resiliência | O serviço sobe e responde sem Kafka. Os eventos aguardam na outbox até o Kafka voltar. |
 | RQ04 Consistência | Transições controladas por máquina de estados, com bloqueio de linha e evento na mesma transação. |
 | RQ05 Interoperabilidade | REST com OpenAPI e eventos JSON versionados. |
-| RQ06 Observabilidade | Logs estruturados e `X-Request-Id` (`request_id`) em requisições, eventos e histórico de transições. |
+| RQ06 Observabilidade | Logs estruturados e `X-Trace-Id` (`trace_id`) em requisições, eventos e histórico de transições. |
 | RQ07 Segurança | Senha do banco por variável de ambiente (o valor de desenvolvimento no compose deve ser trocado fora do repositório). |
 | RQ08 Operabilidade | Dockerfile, compose com o banco e README com instruções. |
 

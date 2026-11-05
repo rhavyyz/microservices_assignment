@@ -14,7 +14,7 @@ monorepo. Pagamentos reage aos eventos de Inscrições e lê fatos pelo endpoint
   (separados por vírgula; ausente sem papéis). Inscrições não valida JWT e só aceita a
   identidade desses cabeçalhos (401 `UNAUTHENTICATED` se `X-User-Id` faltar ou for inválido).
 - Chamadas a Eventos feitas em nome de um usuário enviam `X-User-Id`, `X-User-Roles` (somente
-  se houver papéis), `X-Request-Id` e o `Authorization` do usuário (repassado sem verificação).
+  se houver papéis), `X-Trace-Id` e o `Authorization` do usuário (repassado sem verificação).
   Chamadas de fundo (reação a `events.events` e a `payments.events`) não carregam identidade.
   Os endpoints `/internal/...` são protegidos por isolamento de rede, não por token; ficam fora do
   OpenAPI e do `scripts/register_gateway.py`, e não são destinados ao Gateway.
@@ -123,14 +123,14 @@ Pagamentos publica em `payments.events` mensagens planas:
   "registration_id": "55555555-5555-4555-8555-555555555555",
   "amount_minor": 2500,
   "currency": "BRL",
-  "request_id": "req-a1b2c3d4"
+  "trace_id": "req-a1b2c3d4"
 }
 ```
 
 Tipos: `PaymentCreated`, `PaymentApproved`, `PaymentDeclined`, `PaymentExpired`, `PaymentCancelled`,
 `PaymentRefunded`. Obrigatórios: `message_id`, `schema_version` (1), `type`, `registration_id`,
 `amount_minor` (inteiro >= 0) e `currency` (texto, sem validação de padrão em Inscrições).
-`request_id` é opcional/nulo (string de 8–64 caracteres `[A-Za-z0-9._-]` quando presente) e é propagado
+`trace_id` é opcional/nulo (string de 8–64 caracteres `[A-Za-z0-9._-]` quando presente) e é propagado
 aos eventos resultantes. Campos adicionais são ignorados. Mensagem inválida vai para a DLQ.
 Inscrições deduplica por `message_id`. Nenhum cliente HTTP público pode enviar esse resultado.
 
@@ -163,7 +163,7 @@ API após encerramento/cancelamento. Encerramento antecipado à data final não 
 ## Eventos de Inscrições
 
 Envelope: `message_id`, `schema_version=1`, `type`, `registration_id`, `activity_id`, `user_id`,
-`aggregate_version`, `occurred_at`, `status`, `request_id` (opcional/nulo em trabalho de fundo; Pagamentos
+`aggregate_version`, `occurred_at`, `status`, `trace_id` (opcional/nulo em trabalho de fundo; Pagamentos
 devolve o mesmo valor nos resultados; ausente das mensagens de Notificações). Tipos:
 
 - `RegistrationWaitlisted`, `WaitlistOffered`;

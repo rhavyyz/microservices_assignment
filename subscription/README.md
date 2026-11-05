@@ -85,7 +85,7 @@ python subscription/scripts/register_gateway.py --gateway http://localhost:8080
 
 O gateway verifica o JWT (`requireAuth=true`) e injeta `X-User-Id` (UUID do `sub`) e `X-User-Roles`
 (separados por vírgula); Inscrições **não valida JWT**: a identidade vem somente desses cabeçalhos,
-nunca do corpo. Sem `X-User-Id` válido a resposta é 401 `UNAUTHENTICATED`. Nas chamadas a Eventos em nome do usuário, o serviço repassa `X-User-Id`, `X-User-Roles`, `X-Request-Id` e o `Authorization` (sem verificá-lo); chamadas de fundo (Kafka) não levam identidade.
+nunca do corpo. Sem `X-User-Id` válido a resposta é 401 `UNAUTHENTICATED`. Nas chamadas a Eventos em nome do usuário, o serviço repassa `X-User-Id`, `X-User-Roles`, `X-Trace-Id` e o `Authorization` (sem verificá-lo); chamadas de fundo (Kafka) não levam identidade.
 O Gateway é a única porta publicada; os serviços internos não têm porta no host e confiam nos cabeçalhos `X-User-Id`/`X-User-Roles` que somente o Gateway define (ele descarta os enviados pelo cliente). `/healthcheck` e `/openapi.json`
 não são publicados pelo script. A execução do script altera apenas os registros dessas rotas.
 

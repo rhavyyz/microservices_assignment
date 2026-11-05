@@ -45,8 +45,8 @@ class PaymentEvent(BaseModel):
     registration_id: UUID
     amount_minor: int = Field(ge=0, strict=True)
     currency: str
-    # Eco do request_id que originou o pagamento; nulo/ausente quando a origem foi trabalho de fundo.
-    request_id: str | None = None
+    # Eco do trace_id que originou o pagamento; nulo/ausente quando a origem foi trabalho de fundo.
+    trace_id: str | None = None
 
 
 class ActivityEvent(BaseModel):

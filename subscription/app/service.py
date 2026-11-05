@@ -94,10 +94,10 @@ class SubscriptionService:
             (message_id, topic, str(key), Jsonb(serializable(payload))),
         )
 
-    def emit(self, conn, reg, event_type, request_id=None, extra=None):
+    def emit(self, conn, reg, event_type, trace_id=None, extra=None):
         """Evento de domínio e mensagem compatível com Notificações na mesma transação.
 
-        request_id só existe em ações originadas por HTTP; trabalho de fundo envia null.
+        trace_id só existe em ações originadas por HTTP; trabalho de fundo envia null.
         extra acrescenta campos próprios do tipo (ex.: AttendanceEligible).
         """
         payload = {
@@ -110,7 +110,7 @@ class SubscriptionService:
             "aggregate_version": reg["version"],
             "occurred_at": self.now(conn),
             "status": reg["status"],
-            "request_id": request_id,
+            "trace_id": trace_id,
             **(extra or {}),
         }
         self.enqueue(conn, self.settings.domain_topic, reg["id"], payload)
@@ -181,7 +181,7 @@ class SubscriptionService:
             self.emit(conn, updated, "RegistrationExpired")
         self.promote(conn, activity_id)
 
-    def create(self, user_id, activity, join_waitlist=True, request_id=None):
+    def create(self, user_id, activity, join_waitlist=True, trace_id=None):
         with self.db.transaction() as conn:
             if not activity.registration_open or activity.starts_at <= self.now(conn):
                 raise DomainError(409, "REGISTRATION_CLOSED")
@@ -228,10 +228,10 @@ class SubscriptionService:
                         "PENDING_PAYMENT",
                         self.now(conn) + timedelta(seconds=self.settings.reservation_seconds),
                     )
-                    self.emit(conn, reg, "RegistrationPendingPayment", request_id)
+                    self.emit(conn, reg, "RegistrationPendingPayment", trace_id)
                 else:
                     reg = self.transition(conn, reg, "CONFIRMED")
-                    self.emit(conn, reg, "RegistrationConfirmed", request_id)
+                    self.emit(conn, reg, "RegistrationConfirmed", trace_id)
             else:
                 position = conn.execute(
                     "UPDATE activity_inventory SET next_position=next_position+1 "
@@ -242,10 +242,10 @@ class SubscriptionService:
                     "INSERT INTO waitlist_entries VALUES (%s,%s,%s)",
                     (reg["id"], activity.activity_id, position["next_position"]),
                 )
-                self.emit(conn, reg, "RegistrationWaitlisted", request_id)
+                self.emit(conn, reg, "RegistrationWaitlisted", trace_id)
             return serializable(reg)
 
-    def cancel(self, registration_id, user_id, request_id=None):
+    def cancel(self, registration_id, user_id, trace_id=None):
         with self.db.transaction() as conn:
             inv, reg = self.locked_registration(conn, registration_id)
             self.owner(reg, user_id)
@@ -253,11 +253,11 @@ class SubscriptionService:
                 raise DomainError(409, "ACTIVITY_ENDED")
             if reg["status"] in ACTIVE:
                 reg = self.transition(conn, reg, "CANCELLED")
-                self.emit(conn, reg, "RegistrationCancelled", request_id)
+                self.emit(conn, reg, "RegistrationCancelled", trace_id)
                 self.promote(conn, reg["activity_id"])
             return serializable(reg)
 
-    def accept(self, registration_id, user_id, activity, request_id=None):
+    def accept(self, registration_id, user_id, activity, trace_id=None):
         with self.db.transaction() as conn:
             inv, reg = self.locked_registration(conn, registration_id)
             self.owner(reg, user_id)
@@ -279,15 +279,15 @@ class SubscriptionService:
                     "PENDING_PAYMENT",
                     self.now(conn) + timedelta(seconds=self.settings.reservation_seconds),
                 )
-                self.emit(conn, reg, "RegistrationPendingPayment", request_id)
+                self.emit(conn, reg, "RegistrationPendingPayment", trace_id)
             else:
                 reg = self.transition(conn, reg, "CONFIRMED")
-                self.emit(conn, reg, "RegistrationConfirmed", request_id)
+                self.emit(conn, reg, "RegistrationConfirmed", trace_id)
             return serializable(reg)
 
     def payment_event(self, event):
         """Regras declarativas: Pagamentos reage aos eventos de Inscrições, aqui só se aplica o resultado."""
-        rid = event.request_id
+        rid = event.trace_id
         with self.db.transaction() as conn:
             ref = conn.execute("SELECT * FROM registrations WHERE id=%s", (event.registration_id,)).fetchone()
             if not ref:
@@ -359,7 +359,7 @@ class SubscriptionService:
             ).fetchall()
             return serializable(rows)
 
-    def check_in(self, registration_id, organizer_id, activity, request_id=None):
+    def check_in(self, registration_id, organizer_id, activity, trace_id=None):
         with self.db.transaction() as conn:
             inv, reg = self.locked_registration(conn, registration_id)
             now = self.now(conn)
@@ -378,7 +378,7 @@ class SubscriptionService:
                     "WHERE id=%s RETURNING *",
                     (registration_id,),
                 ).fetchone()
-                self.emit(conn, reg, "AttendanceRecorded", request_id)
+                self.emit(conn, reg, "AttendanceRecorded", trace_id)
             else:
                 attendance = conn.execute(
                     "SELECT * FROM attendance WHERE registration_id=%s", (registration_id,)

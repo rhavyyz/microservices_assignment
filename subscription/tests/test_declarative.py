@@ -11,8 +11,8 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from test_api_security import FakeEvents
-from test_request_id import Result, reg
 from test_service import activity
+from test_trace_id import Result, reg
 
 from app.api import create_app
 from app.config import Settings
@@ -117,7 +117,7 @@ def domain_types(conn, svc):
 # --- RegistrationPendingPayment -------------------------------------------------------------
 
 
-def test_paid_create_emits_pending_payment_with_request_id_and_stores_parent_event():
+def test_paid_create_emits_pending_payment_with_trace_id_and_stores_parent_event():
     act = activity(capacity=5, amount=1500)
     conn = Conn(act=act)
     svc = service_with(conn)
@@ -126,7 +126,7 @@ def test_paid_create_emits_pending_payment_with_request_id_and_stores_parent_eve
     assert conn.inserted[5] == act.event_id
     events = conn.topic(svc.settings.domain_topic)
     assert [e["type"] for e in events] == ["RegistrationPendingPayment"]
-    assert events[0]["request_id"] == RID and events[0]["status"] == "PENDING_PAYMENT"
+    assert events[0]["trace_id"] == RID and events[0]["status"] == "PENDING_PAYMENT"
     # Nada para Pagamentos: só o evento de domínio (este tipo não gera notificação).
     assert [t for t, _ in conn.outbox] == [svc.settings.domain_topic]
 
@@ -151,7 +151,7 @@ def test_accept_offer_emits_pending_payment_only_when_paid(amount, status, expec
     assert result["status"] == status
     events = conn.topic(svc.settings.domain_topic)
     assert [e["type"] for e in events] == [expected]
-    assert events[0]["request_id"] == RID
+    assert events[0]["trace_id"] == RID
 
 
 # --- PaymentEvent relaxado ------------------------------------------------------------------
@@ -177,7 +177,7 @@ def test_payment_event_accepts_all_six_types(kind):
 def test_payment_event_ignores_extras_and_attempt_fields_are_gone():
     event = PaymentEvent.model_validate(
         message(
-            request_id=RID,
+            trace_id=RID,
             payment_id=str(uuid4()),
             reason="x",
             payment_attempt_id=str(uuid4()),
@@ -185,7 +185,7 @@ def test_payment_event_ignores_extras_and_attempt_fields_are_gone():
         )
     )
     dumped = event.model_dump()
-    assert event.request_id == RID
+    assert event.trace_id == RID
     for name in ("payment_id", "reason", "payment_attempt_id", "provider_version"):
         assert name not in dumped and name not in PaymentEvent.model_fields
 
@@ -216,17 +216,17 @@ def pending(**overrides):
 def apply(registration, kind, db_now=None, **changes):
     conn = Conn(registration, db_now)
     svc = service_with(conn)
-    data = message(kind, registration_id=str(registration["id"]), request_id=RID) | changes
+    data = message(kind, registration_id=str(registration["id"]), trace_id=RID) | changes
     svc.payment_event(PaymentEvent.model_validate(data))
     return conn, svc
 
 
-def test_approved_confirms_pending_registration_and_propagates_request_id():
+def test_approved_confirms_pending_registration_and_propagates_trace_id():
     conn, svc = apply(pending(), "PaymentApproved")
     assert conn.reg["status"] == "CONFIRMED"
     events = conn.topic(svc.settings.domain_topic)
     assert [e["type"] for e in events] == ["RegistrationConfirmed"]
-    assert events[0]["request_id"] == RID
+    assert events[0]["trace_id"] == RID
     assert len(conn.topic(svc.settings.notifications_topic)) == 1
 
 
@@ -263,11 +263,11 @@ def test_declined_rejects_and_promotes_waitlist():
 
     conn = WithWaitlist(registration)
     svc = service_with(conn)
-    data = message("PaymentDeclined", registration_id=str(registration["id"]), request_id=RID)
+    data = message("PaymentDeclined", registration_id=str(registration["id"]), trace_id=RID)
     svc.payment_event(PaymentEvent.model_validate(data))
     events = conn.topic(svc.settings.domain_topic)
     assert [e["type"] for e in events] == ["RegistrationRejected", "WaitlistOffered"]
-    assert events[0]["request_id"] == RID and events[1]["request_id"] is None
+    assert events[0]["trace_id"] == RID and events[1]["trace_id"] is None
 
 
 def test_declined_ignored_when_not_pending_payment():

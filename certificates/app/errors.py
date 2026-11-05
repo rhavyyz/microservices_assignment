@@ -1,4 +1,4 @@
-"""Uniform application/problem+json errors and X-Request-Id handling."""
+"""Uniform application/problem+json errors and X-Trace-Id handling."""
 
 import logging
 import re
@@ -64,11 +64,11 @@ def problem_docs(*statuses: int) -> dict:
 
 def install_error_handling(app: FastAPI) -> None:
     @app.middleware("http")
-    async def request_id(request: Request, call_next):
-        supplied = request.headers.get("X-Request-Id", "")
+    async def trace_id_middleware(request: Request, call_next):
+        supplied = request.headers.get("X-Trace-Id", "")
         request.state.trace_id = supplied if re.fullmatch(r"[A-Za-z0-9._-]{8,64}", supplied) else str(uuid4())
         response = await call_next(request)
-        response.headers["X-Request-Id"] = request.state.trace_id
+        response.headers["X-Trace-Id"] = request.state.trace_id
         return response
 
     @app.exception_handler(ApiError)

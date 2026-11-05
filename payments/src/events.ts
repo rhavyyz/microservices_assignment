@@ -35,7 +35,7 @@ export function eventTypeFor(status: string): string {
 export function buildPaymentEvent(
   p: PaymentView,
   reason: string | null,
-  requestId: string | null,
+  traceId: string | null,
   messageId: string,
   occurredAt: Date,
 ): Outgoing {
@@ -46,7 +46,7 @@ export function buildPaymentEvent(
       schema_version: 1,
       type: eventTypeFor(p.status),
       occurred_at: occurredAt.toISOString(),
-      request_id: requestId,
+      trace_id: traceId,
       payment_id: p.payment_id,
       registration_id: p.registration_id,
       user_id: p.user_id,

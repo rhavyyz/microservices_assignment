@@ -31,10 +31,10 @@ class Event:
     ends_at: datetime
 
 
-def _get_json(kind: Kind, path: str, request_id: str, *, missing_reason: str | None) -> dict | None:
+def _get_json(kind: Kind, path: str, trace_id: str, *, missing_reason: str | None) -> dict | None:
     """GET and decode a JSON object. 404 is poison (or None when `missing_reason` is None); anything else is transient."""
     try:
-        response = request("GET", kind, path, {"headers": {"X-Request-Id": request_id}})
+        response = request("GET", kind, path, {"headers": {"X-Trace-Id": trace_id}})
     except Exception as exc:  # transport errors, discoverer unavailable
         raise TransientError(f"{kind.value} unreachable ({type(exc).__name__})") from None
 
@@ -64,8 +64,8 @@ def _aware(value: object) -> datetime:
 class Directory:
     """Thin client for the other services. Tests replace it with a fake."""
 
-    def get_event(self, event_id: uuid.UUID, request_id: str) -> Event:
-        body = _get_json(Kind.EVENTS, f"/events/{event_id}", request_id, missing_reason="EVENT_NOT_FOUND")
+    def get_event(self, event_id: uuid.UUID, trace_id: str) -> Event:
+        body = _get_json(Kind.EVENTS, f"/events/{event_id}", trace_id, missing_reason="EVENT_NOT_FOUND")
         try:
             title = body["title"]
             if not isinstance(title, str) or not title.strip():
@@ -79,8 +79,8 @@ class Directory:
         except (KeyError, ValueError):
             raise TransientError("events answered an invalid event") from None
 
-    def get_participant_name(self, user_id: uuid.UUID, request_id: str) -> str:
-        body = _get_json(Kind.USER, f"/internal/users/{user_id}", request_id, missing_reason="USER_NOT_FOUND")
+    def get_participant_name(self, user_id: uuid.UUID, trace_id: str) -> str:
+        body = _get_json(Kind.USER, f"/internal/users/{user_id}", trace_id, missing_reason="USER_NOT_FOUND")
         name = body.get("name")
         if not isinstance(name, str) or not name.strip():
             raise TransientError("user answered an invalid user")

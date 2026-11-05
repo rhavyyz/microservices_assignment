@@ -72,7 +72,7 @@ class AuthFlowIT extends PostgresIT {
         assertThat(r.status()).isEqualTo(status);
         assertThat(r.header("Content-Type")).startsWith("application/problem+json");
         assertThat(r.<String>json("$.code")).isEqualTo(code);
-        assertThat(r.<String>json("$.traceId")).isEqualTo(r.header("X-Request-Id"));
+        assertThat(r.<String>json("$.traceId")).isEqualTo(r.header("X-Trace-Id"));
     }
 
     // ---------- cadastro ----------
@@ -266,13 +266,13 @@ class AuthFlowIT extends PostgresIT {
     // ---------- erros e rastreabilidade ----------
 
     @Test
-    void correlationIdIsPropagatedWhenSafeAndReplacedWhenNot() {
-        Http.Result kept = http().send("GET", "/api/v1/users/me", null, null, "X-Request-Id", "req-abc-12345");
-        assertThat(kept.header("X-Request-Id")).isEqualTo("req-abc-12345");
+    void traceIdIsPropagatedWhenSafeAndReplacedWhenNot() {
+        Http.Result kept = http().send("GET", "/api/v1/users/me", null, null, "X-Trace-Id", "req-abc-12345");
+        assertThat(kept.header("X-Trace-Id")).isEqualTo("req-abc-12345");
         assertThat(kept.<String>json("$.traceId")).isEqualTo("req-abc-12345");
 
-        Http.Result replaced = http().send("GET", "/api/v1/users/me", null, null, "X-Request-Id", "curto");
-        assertThat(replaced.header("X-Request-Id")).isNotEqualTo("curto").matches("[0-9a-f-]{36}");
+        Http.Result replaced = http().send("GET", "/api/v1/users/me", null, null, "X-Trace-Id", "curto");
+        assertThat(replaced.header("X-Trace-Id")).isNotEqualTo("curto").matches("[0-9a-f-]{36}");
     }
 
     @Test

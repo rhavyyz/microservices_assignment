@@ -21,7 +21,7 @@ test('payment event is a flat envelope keyed by registration', () => {
   assert.equal(e.key, 'r1');
   const body = JSON.parse(e.value);
   assert.deepEqual(body, {
-    message_id: 'm1', schema_version: 1, type: 'PaymentApproved', occurred_at: '2026-10-31T12:00:00.000Z', request_id: 'c1',
+    message_id: 'm1', schema_version: 1, type: 'PaymentApproved', occurred_at: '2026-10-31T12:00:00.000Z', trace_id: 'c1',
     payment_id: 'p1', registration_id: 'r1', user_id: 'u1', parent_event_id: 'e1',
     amount_minor: 2500, currency: 'BRL', status: 'APPROVED', reason: 'simulated_approval',
   });
@@ -62,7 +62,7 @@ test('REFUNDED maps to PaymentRefunded and notifies the user in Portuguese', () 
   assert.equal(e.type, 'PaymentRefunded');
   assert.equal(e.status, 'REFUNDED');
   assert.equal(e.reason, 'registration_cancelled');
-  assert.equal(e.request_id, null);
+  assert.equal(e.trace_id, null);
   const n = JSON.parse(buildNotification(p('REFUNDED'))!.value);
   assert.match(n.message, /reembolsado/);
   assert.match(n.message, /BRL 25\.00/);

@@ -33,7 +33,7 @@ export type SubscriptionMessage = {
   messageId: string;
   type: string;
   registrationId: string;
-  requestId: string | null;
+  traceId: string | null;
   /** Set only for the types that close a registration (cancel / expire); null means "ignore this message". */
   closeReason: string | null;
 };
@@ -63,6 +63,6 @@ export function parseSubscriptionMessage(raw: string): Validation<SubscriptionMe
   if (v > 1) return { ok: false, error: `unsupported schema_version ${v}` };
   return {
     ok: true,
-    value: { messageId, type, registrationId, requestId: need('request_id'), closeReason: CLOSING_TYPES[type] ?? null },
+    value: { messageId, type, registrationId, traceId: need('trace_id'), closeReason: CLOSING_TYPES[type] ?? null },
   };
 }

@@ -48,22 +48,22 @@ class FakeDirectory:
         self.name = "Alex Example"
         self.errors = {}
         self.calls = []
-        self.request_ids = []
+        self.trace_ids = []
         self.requested_event_ids = []
 
-    def _call(self, name, request_id):
+    def _call(self, name, trace_id):
         self.calls.append(name)
-        self.request_ids.append(request_id)
+        self.trace_ids.append(trace_id)
         if name in self.errors:
             raise self.errors[name]
 
-    def get_event(self, event_id, request_id):
-        self._call("event", request_id)
+    def get_event(self, event_id, trace_id):
+        self._call("event", trace_id)
         self.requested_event_ids.append(event_id)
         return self.event
 
-    def get_participant_name(self, user_id, request_id):
-        self._call("user", request_id)
+    def get_participant_name(self, user_id, trace_id):
+        self._call("user", trace_id)
         return self.name
 
 
@@ -118,9 +118,9 @@ def test_success_issues_certificate_with_event_data(env, monkeypatch):
     assert captured["event_name"] == "Software Week"
     # The date is taken in the event's own offset (22:00 at -03:00 on 2 Nov, which is already 3 Nov in UTC).
     assert captured["event_date"] == datetime(2026, 11, 2).date()
-    # One X-Request-Id per message, reused on every outbound call.
-    assert len(set(directory.request_ids)) == 1
-    uuid.UUID(directory.request_ids[0])
+    # One X-Trace-Id per message, reused on every outbound call.
+    assert len(set(directory.trace_ids)) == 1
+    uuid.UUID(directory.trace_ids[0])
 
 
 @pytest.mark.parametrize("kind", ["AttendanceRevoked", "SomethingNew", None, 5])

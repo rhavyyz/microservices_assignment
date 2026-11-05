@@ -4,7 +4,7 @@ import swagger from '@fastify/swagger';
 import type pg from 'pg';
 import { ping } from '../db/pool.ts';
 import { AppError } from '../errors.ts';
-import { requestIdFrom, toProblem } from './problems.ts';
+import { traceIdFrom, toProblem } from './problems.ts';
 
 export type ServerDeps = {
   pool: pg.Pool;
@@ -17,10 +17,11 @@ export type ServerDeps = {
 export async function buildServer(deps: ServerDeps) {
   const app = Fastify({
     logger: deps.logger ?? true,
-    // The gateway's X-Request-Id becomes the request id: it is on every log line, in error bodies and
+    // The gateway's X-Trace-Id becomes the trace id (req.id): it is on every log line, in error bodies and
     // in the correlation_id of the messages this request produces (RQ06).
     requestIdHeader: false,
-    genReqId: (req) => requestIdFrom(req.headers['x-request-id'], randomUUID),
+    requestIdLogLabel: 'traceId',
+    genReqId: (req) => traceIdFrom(req.headers['x-trace-id'], randomUUID),
     // Unknown fields are rejected (400), never silently dropped: e.g. `capacity` in a PATCH.
     ajv: { customOptions: { removeAdditional: false } },
   });
@@ -33,7 +34,7 @@ export async function buildServer(deps: ServerDeps) {
   });
 
   app.addHook('onRequest', async (req, reply) => {
-    reply.header('x-request-id', req.id);
+    reply.header('x-trace-id', req.id);
   });
 
   app.setErrorHandler((err: unknown, req, reply) => {

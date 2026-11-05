@@ -49,7 +49,7 @@ const log = { info: (o: object, m: string) => logs.push({ level: 'info', o, m })
 
 const msg = (over: object = {}) => JSON.stringify({
   message_id: 'ev1', schema_version: 1, type: 'RegistrationCancelled', registration_id: 'r1', user_id: 'u1',
-  aggregate_version: 2, occurred_at: '2026-10-31T12:00:00Z', status: 'CANCELLED', request_id: 'req-1', ...over,
+  aggregate_version: 2, occurred_at: '2026-10-31T12:00:00Z', status: 'CANCELLED', trace_id: 'req-1', ...over,
 });
 
 test('cancel for a PENDING payment cancels it (no notification), reason registration_cancelled', async () => {

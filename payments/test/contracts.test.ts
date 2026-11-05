@@ -18,15 +18,20 @@ test('create body: missing, non-string or non-UUID registration_id is rejected',
 
 const msg = (over: object = {}) => JSON.stringify({
   message_id: 'ev1', schema_version: 1, type: 'RegistrationCancelled', registration_id: 'r1', activity_id: 'a', user_id: 'u',
-  aggregate_version: 3, occurred_at: '2026-10-31T12:00:00Z', status: 'CANCELLED', request_id: 'req-1', extra: { x: 1 }, ...over,
+  aggregate_version: 3, occurred_at: '2026-10-31T12:00:00Z', status: 'CANCELLED', trace_id: 'req-1', extra: { x: 1 }, ...over,
 });
 
 test('subscription message: cancel and expire map to a close reason; extra fields are tolerated', () => {
   const c = parseSubscriptionMessage(msg());
   assert.ok(c.ok);
-  assert.deepEqual(c.value, { messageId: 'ev1', type: 'RegistrationCancelled', registrationId: 'r1', requestId: 'req-1', closeReason: 'registration_cancelled' });
-  const e = parseSubscriptionMessage(msg({ type: 'RegistrationExpired', request_id: null }));
-  assert.ok(e.ok && e.value.closeReason === 'registration_expired' && e.value.requestId === null);
+  assert.deepEqual(c.value, { messageId: 'ev1', type: 'RegistrationCancelled', registrationId: 'r1', traceId: 'req-1', closeReason: 'registration_cancelled' });
+  const e = parseSubscriptionMessage(msg({ type: 'RegistrationExpired', trace_id: null }));
+  assert.ok(e.ok && e.value.closeReason === 'registration_expired' && e.value.traceId === null);
+});
+
+test('subscription message: a message that only has the old request_id has no trace id', () => {
+  const r = parseSubscriptionMessage(msg({ trace_id: undefined, request_id: 'req-1' }));
+  assert.ok(r.ok && r.value.traceId === null);
 });
 
 test('subscription message: other types parse but have no close reason', () => {

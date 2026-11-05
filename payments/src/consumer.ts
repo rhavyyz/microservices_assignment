@@ -30,8 +30,8 @@ export async function handleSubscriptionMessage(
   }
   const m = parsed.value;
   if (!m.closeReason) return 'ignored'; // not a type we react to: no effect, nothing to dedupe
-  const result = await closeForRegistration(pool, m.messageId, m.registrationId, m.closeReason, m.requestId);
-  log.info({ ...where, type: m.type, message_id: m.messageId, registration_id: m.registrationId, request_id: m.requestId, result }, 'message processed');
+  const result = await closeForRegistration(pool, m.messageId, m.registrationId, m.closeReason, m.traceId);
+  log.info({ ...where, type: m.type, message_id: m.messageId, registration_id: m.registrationId, trace_id: m.traceId, result }, 'message processed');
   return result;
 }
 
