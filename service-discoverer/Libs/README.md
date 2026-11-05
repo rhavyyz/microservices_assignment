@@ -19,7 +19,7 @@ Every instance registers itself at startup. To call another service, ask the dis
 Discoverer env (all optional): `RECHECK_INTERVAL` (`5s`), `RECHECK_MAX_FAILURES` (`12`, so ~1 minute of grace by default).
 
 ## Usage
-Both functions: `register(kind)` once at startup with the service's own kind (it retries up to 10 times with exponential backoff, 1s doubling up to a 30s cap, about 2.5 minutes in all, then returns/raises an error; it blocks while retrying, so a service that must not wait should call it from a goroutine/thread), and `request(method, kind, url, {headers, body})` to call another service. `url` is a path like `/charge`; `body` is sent as JSON. `consult(kind)` is also exposed on its own: it asks the discoverer for a host every time, with no caching (`request` uses it internally). HTTP error statuses (4xx/5xx) are returned, not raised. Only an unreachable host triggers one rediscovery and retry.
+Both functions: `register(kind)` once at startup with the service's own kind (it retries up to 10 times with exponential backoff, 1s doubling up to a 30s cap, about 2.5 minutes in all, then returns/raises an error; it blocks while retrying, so a service that must not wait should call it from a goroutine/thread; in TypeScript it is async, so do not `await` it before listening), and `request(method, kind, url, {headers, body})` to call another service. `url` is a path like `/charge`; `body` is sent as JSON. `consult(kind)` is also exposed on its own: it asks the discoverer for a host every time, with no caching (`request` uses it internally). HTTP error statuses (4xx/5xx) are returned, not raised. Only an unreachable host triggers one rediscovery and retry.
 
 ### Python (`service-discoverer/Libs/python`, stdlib only; `pip install ./service-discoverer/Libs/python`)
 ```python
@@ -49,6 +49,17 @@ HttpResponse<String> res = Discovery.request("POST", Kind.PAYMENTS, "/charge",
     RequestOptions.of(Map.of("X-Id", "1"), Map.of("amount", 10)));
 ```
 
+### TypeScript (`service-discoverer/Libs/typescript`, Node 22+, no dependencies)
+```ts
+import { Kind, register, request } from "discovery";
+
+// Fire and forget: do not await it before listening, or startup waits for the discoverer.
+register(Kind.USER).catch((e) => console.error(e));
+const res = await request("POST", Kind.PAYMENTS, "/charge", { headers: { "X-Id": "1" }, body: { amount: 10 } });
+console.log(res.status, await res.json());
+```
+`request` resolves to the platform `fetch` `Response` (`status`, `headers`, `text()`, `json()`). `createClient({ fetchFn, sleep, env })` builds an isolated client (own host cache), which is what the tests use. The package ships its `.ts` sources (an `exports` map points at `src/index.ts`), so there is no build step for the lib itself.
+
 ### Using the Go lib in a service's Docker build
 A service's build context (e.g. `./notifications`) cannot see `service-discoverer/Libs/go`, so pass the lib as a named additional context and mirror the repo layout in the image (`/src` is the service folder, so `../service-discoverer/Libs/go` resolves the same on the host and in the image):
 ```yaml
@@ -67,6 +78,26 @@ COPY --from=discovery . /service-discoverer/Libs/go
 require microservices/discovery v0.0.0
 replace microservices/discovery => ../service-discoverer/Libs/go
 ```
+### Using the TypeScript lib in a service's Docker build
+Same `additional_contexts` pattern. With `WORKDIR /app`, `../service-discoverer/Libs/typescript` is `/service-discoverer/Libs/typescript`, on the host and in the image:
+```yaml
+# docker-compose.yml
+build:
+  context: ./my-service
+  additional_contexts:
+    discovery: ./service-discoverer/Libs/typescript
+```
+```dockerfile
+# Dockerfile: in the build stage after WORKDIR /app and before npm ci,
+# and again in the runtime stage (node_modules/discovery is a symlink to it)
+COPY --from=discovery . /service-discoverer/Libs/typescript
+```
+```jsonc
+// package.json
+"dependencies": { "discovery": "file:../service-discoverer/Libs/typescript" }
+```
+The service's `tsc` build type-checks the lib sources but does not emit them (they live outside `rootDir`), so `dist/` imports `discovery` at runtime and Node loads the `.ts` files through the symlink. That needs Node 22.18+ (type stripping on by default; `node:22-alpine` qualifies) or `--experimental-strip-types` on older 22.x. Verified with the Reports `tsconfig.json` (NodeNext, `rewriteRelativeImportExtensions`) under `tsc` + `node dist/main.js` and under `node --experimental-strip-types src/main.ts`.
+
 Python can use the same `additional_contexts` with a `COPY --from=discovery` and `pip install`; Java with a `COPY --from=discovery` and a Maven install of the lib.
 
 ## Raw protocol (any other language)
@@ -77,6 +108,7 @@ Python can use the same `additional_contexts` with a `COPY --from=discovery` and
 ```
 cd service-discoverer/Libs/python && python3 -m pytest
 cd service-discoverer/Libs/go && go test ./...
+cd service-discoverer/Libs/typescript && npm install && npm test && npm run typecheck
 cd service-discoverer/Libs/java && javac -d /tmp/out $(find src -name '*.java') && \
   SERVICE_DISCOVERER_URL=http://127.0.0.1:18099 SERVICE_HOST=payments-1:9000 java -cp /tmp/out com.microservices.discovery.DiscoveryTest
 ```
