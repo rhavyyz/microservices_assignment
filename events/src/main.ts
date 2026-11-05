@@ -2,7 +2,7 @@ import type { Consumer } from 'kafkajs';
 import { createAudit } from './audit.ts';
 import { loadConfig } from './config.ts';
 import { createPool, migrate } from './db/pool.ts';
-import { consult, register } from './discovery.ts';
+import { Kind, consult, register } from 'discovery';
 import { createTokenVerifier, fetchJwks } from './http/auth.ts';
 import { registerRoutes } from './http/routes.ts';
 import { buildServer } from './http/server.ts';
@@ -12,7 +12,6 @@ import { retryForever } from './retry.ts';
 import { createEventService } from './services/events.ts';
 import { createSeatService } from './services/seats.ts';
 
-const KIND = 'events';
 const config = loadConfig();
 
 const pool = createPool(config.databaseUrl);
@@ -23,13 +22,12 @@ pool.on('error', (e) => log.error({ err: e.message }, 'postgres pool error'));
 
 const deps = { pool, topic: config.eventsTopic, audit: createAudit(log) };
 const seats = createSeatService(deps);
-const discovery = { url: config.discovererUrl, log: (m: string) => log.warn(m) };
 
 // Access Token: the user service's public keys, from JWT_JWKS_URL or located through the discoverer.
 const verifyToken = createTokenVerifier({
   issuer: config.jwtIssuer,
   cacheSeconds: config.jwksCacheSeconds,
-  fetchKeys: async () => fetchJwks(config.jwksUrl ?? `http://${await consult('user', discovery)}/.well-known/jwks.json`),
+  fetchKeys: async () => fetchJwks(config.jwksUrl ?? `http://${await consult(Kind.USER)}/.well-known/jwks.json`),
   onKeysError: (e) => log.warn({ err: e.message }, 'could not download the access token keys'),
 });
 registerRoutes(app, { events: createEventService(deps), verifyToken });
@@ -58,18 +56,12 @@ void (async () => {
   log.info({ topic: config.subscriptionTopic }, 'consuming seat requests');
 })();
 
-// Server-side discovery: register now and again periodically. The discoverer keeps its registry in
-// memory and drops hosts that stay unhealthy, so a periodic (idempotent) register brings us back.
-void register(KIND, config.serviceHost, discovery)
-  .then(() => log.info({ host: config.serviceHost }, 'registered in the service-discoverer'))
-  .catch((e) => log.error({ err: (e as Error).message }, 'registration gave up; the periodic register keeps trying'));
-const reregister = setInterval(() => {
-  register(KIND, config.serviceHost, { ...discovery, attempts: 1 }).catch(() => {});
-}, config.reregisterIntervalMs);
-reregister.unref();
+// Server-side discovery: register once; the lib retries with its default settings. Never awaited.
+register(Kind.EVENTS)
+  .then(() => log.info('registered in the service-discoverer'))
+  .catch((e: Error) => log.warn({ err: e.message }, 'could not register in the service-discoverer'));
 
 async function shutdown(): Promise<void> {
-  clearInterval(reregister);
   await app.close().catch(() => {});
   await relay.stop().catch(() => {});
   await consumer?.disconnect().catch(() => {});

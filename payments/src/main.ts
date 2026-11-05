@@ -1,8 +1,8 @@
+import { Kind, register } from 'discovery';
 import type { Consumer, Producer } from 'kafkajs';
 import { config } from './config.ts';
 import { startConsumer } from './consumer.ts';
 import { createPool, migrate } from './db.ts';
-import { registerService } from './discovery.ts';
 import { startExpiryJob } from './expiry.ts';
 import { ensureTopics, kafka } from './kafka.ts';
 import { startOutboxWorker } from './outbox.ts';
@@ -53,9 +53,9 @@ void (async () => {
   });
 })();
 
-void registerService('payments', { url: config.discovererUrl, host: config.serviceHost, log: (m) => log.warn(m) })
-  .then(() => log.info({ host: config.serviceHost }, 'registered in the service-discoverer'))
-  .catch((e) => log.error({ err: (e as Error).message }, 'registration gave up'));
+register(Kind.PAYMENTS)
+  .then(() => log.info('registered in the service-discoverer'))
+  .catch((e) => log.warn({ err: (e as Error).message }, 'could not register in the service-discoverer'));
 
 async function shutdown(): Promise<void> {
   stoppers.forEach((stop) => stop());

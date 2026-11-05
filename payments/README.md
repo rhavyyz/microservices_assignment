@@ -4,7 +4,7 @@ Handles the payment of paid activities (RF07) through a **simulated external pro
 is paid, declined or lapsed (RN02, RN03). It owns its PostgreSQL database (`payments-db`) and talks to the rest through
 REST (create / query) and Kafka (events).
 
-- Kind `payments`, registered in the service-discoverer with the raw protocol.
+- Kind `payments`, registered in the service-discoverer through the shared `discovery` lib (`service-discoverer/Libs/typescript`, `file:` dependency). Registration is fire and forget at boot (never awaited before listening), with the lib's default retries.
 - `GET /healthcheck`: 200 only when Postgres answers a ping, else 503. Kafka being down does **not** fail it (RQ03).
 - `GET /openapi.json`: generated from the routes; the gateway reads it at startup.
 - Boots even if Postgres, Kafka or the discoverer are down. Events are written to an **outbox** table in the same
@@ -75,8 +75,7 @@ Set `SIMULATOR_ENABLED=false` to turn the simulator off.
 - Answer: `{payment_id, registration_id, user_id, event_id, activity_id, amount_minor, currency, status:"PENDING", expires_at, created_at}`.
 - The route must be opened on the gateway by an admin script later (out of scope here).
 
-Subscription lookup (`src/subscription.ts`): `GET {SERVICE_DISCOVERER_URL}/consult?kind=subscription` -> `{"host":"host:port"}`, then `GET http://<host>/internal/registrations/{id}`.
-The host is cached; on a connection failure the discoverer is consulted again and the call retried once. Timeout 5 s per call.
+Subscription lookup (`src/subscription.ts`): the `discovery` lib's `request('GET', Kind.SUBSCRIPTION, '/internal/registrations/{id}')` asks the discoverer for the host (`SERVICE_DISCOVERER_URL`), caches it, and on a connection failure consults again and retries once. Timeout 5 s per call. Build: the Docker image needs the lib as the named build context `discovery` (see the root `docker-compose.yml`).
 
 ### Kafka (consumed)
 Topic `subscription.events` (env `SUBSCRIPTION_TOPIC`), group `PAYMENTS_CONSUMER_GROUP` (`payments-service`), read from the beginning, metadata refresh 10 s.
@@ -137,8 +136,9 @@ The three routes below are the ones the existing script publishes:
 ## Env
 `PORT` (8080), `DATABASE_URL` (`postgres://payments:change-me@payments-db:5432/payments`, dev default), `KAFKA_BROKERS` (`kafka:9092`),
 `PAYMENT_EVENTS_TOPIC` (`payments.events`), `SUBSCRIPTION_TOPIC` (`subscription.events`, consumed), `NOTIFICATIONS_TOPIC` (`notifications`), `PAYMENTS_CONSUMER_GROUP` (`payments-service`), `PAYMENT_TTL_SECONDS` (900, positive integer), `PAYMENTS_TOPIC_PARTITIONS` (6),
-`EXPIRY_INTERVAL_MS` (5000), `OUTBOX_INTERVAL_MS` (500), `SIMULATOR_ENABLED` (true), `SERVICE_DISCOVERER_URL`, `SERVICE_HOST`.
+`EXPIRY_INTERVAL_MS` (5000), `OUTBOX_INTERVAL_MS` (500), `SIMULATOR_ENABLED` (true).
+Read by the `discovery` lib itself: `SERVICE_DISCOVERER_URL` (discoverer address) and `SERVICE_HOST` (host registered; default `<hostname>:<PORT>`).
 `PAYMENTS_DB_PASSWORD` (compose) sets the DB password; if you change it, also set `DATABASE_URL` on the `payments` service.
 
 ## Tests
-    npm test      # node:test, no dependencies (state machine, event/notification builders, input validation, discovery, config defaults, HTTP errors/trace id via `inject` with a fake pool)
+    npm test      # node:test, no dependencies (state machine, event/notification builders, input validation, subscription lookup, config defaults, HTTP errors/trace id via `inject` with a fake pool)

@@ -76,7 +76,7 @@ Só `registration_id` é lido (ausente ou fora do formato UUID resulta em 400 `V
 - serviço de inscrições fora do ar, com erro 5xx ou resposta inválida: 503 `UPSTREAM_UNAVAILABLE`, sem detalhes internos;
 - caso contrário, o pagamento nasce `PENDING` com prazo `agora + PAYMENT_TTL_SECONDS` (prazo próprio do serviço).
 
-O host do serviço de inscrições fica em cache; numa falha de conexão o discoverer é consultado de novo e a chamada repetida uma vez (timeout de 5 s). Repetir a chamada devolve o pagamento existente, sem consultar as inscrições (200 em vez de 201), após a checagem do dono.
+A chamada usa a biblioteca `discovery`: o host do serviço de inscrições fica em cache; numa falha de conexão o discoverer é consultado de novo e a chamada repetida uma vez (timeout de 5 s). Repetir a chamada devolve o pagamento existente, sem consultar as inscrições (200 em vez de 201), após a checagem do dono.
 
 As consultas e a simulação exigem o cabeçalho `X-User-Id`, que deve ser um UUID (ausente ou inválido resulta em 401 `UNAUTHENTICATED`), e só respondem ao dono do pagamento. Qualquer outro usuário recebe 404, igual a um pagamento inexistente (RN07). A simulação responde 409 `PAYMENT_NOT_APPLIED`, com o estado real em `payment_status`, quando o pedido não pôde ser atendido.
 
@@ -142,7 +142,7 @@ Ao receber `RegistrationCancelled` ou `RegistrationExpired` em `subscription.eve
 | --- | --- | --- |
 | Database per service | PostgreSQL próprio, sem acesso de outros serviços | Implementado |
 | API Gateway | Rotas de front liberadas por endpoint; criação privada | Implementado (liberação por script de administrador) |
-| Server-side discovery | Registro no discoverer com o protocolo bruto e a mesma política de retentativa das bibliotecas (10 tentativas, 1 s até 30 s) | Implementado |
+| Server-side discovery | Registro no discoverer pela biblioteca `discovery` (10 tentativas, 1 s até 30 s), sem bloquear a subida | Implementado |
 | Messaging com consumidor idempotente | `message_id` gravado na mesma transação do efeito (`processed_messages`), usado pelo consumidor de `subscription.events` | Implementado (sem teste com Kafka real) |
 | Transactional outbox | Evento e mudança de estado na mesma transação; worker publica depois | Implementado |
 | Health check API | `GET /healthcheck` responde 200 só se o banco responde ao ping, senão 503 | Implementado |
@@ -171,7 +171,7 @@ Ao receber `RegistrationCancelled` ou `RegistrationExpired` em `subscription.eve
 
 ## 10. Testes e validação
 
-Testes automatizados (58, todos passando, sem rede nem banco): máquina de estados, incluindo a aprovação tardia e o estorno; montagem dos eventos e das notificações; validação do corpo de `POST /payments`; `POST /payments` completo via `inject` com pool e consulta de inscrições falsos (criação, dono alheio, não pagável, upstream fora do ar, corpo inválido, idempotência); cliente de consulta (discoverer, cache, nova tentativa); consumidor de `subscription.events` com banco em memória (cancelamento, estorno, sem pagamento, estados finais, duplicata, mensagens inválidas ou desconhecidas); criação dos tópicos com admin falso; registro no discoverer e retentativas; valores padrão e validação de `PAYMENT_TTL_SECONDS`.
+Testes automatizados (60, todos passando, sem rede nem banco): máquina de estados, incluindo a aprovação tardia e o estorno; montagem dos eventos e das notificações; validação do corpo de `POST /payments`; `POST /payments` completo via `inject` com pool e consulta de inscrições falsos (criação, dono alheio, não pagável, upstream fora do ar, corpo inválido, idempotência); cliente de consulta de inscrições (mapeamento de status e validação do corpo, com a biblioteca `discovery` falsa); consumidor de `subscription.events` com banco em memória (cancelamento, estorno, sem pagamento, estados finais, duplicata, mensagens inválidas ou desconhecidas); criação dos tópicos com admin falso; valores padrão e validação de `PAYMENT_TTL_SECONDS`.
 
 A validação com Postgres, Kafka e serviço de inscrições reais ainda precisa ser executada e registrada: a migração v7, o consumidor, o cliente HTTP, a criação ponta a ponta, a expiração automática pelo job, o estorno e o comportamento com o Kafka parado.
 

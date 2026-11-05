@@ -1,5 +1,3 @@
-import os from 'node:os';
-
 function int(name: string, def: number): number {
   const v = process.env[name];
   if (v === undefined || v.trim() === '') return def;
@@ -26,6 +24,4 @@ export const config = {
     str('PAYMENTS_TOPIC', 'payments-events'),
   ],
   topicPartitions: int('REPORTS_TOPIC_PARTITIONS', 6),
-  discovererUrl: str('SERVICE_DISCOVERER_URL', 'http://service-discoverer:8080'),
-  serviceHost: str('SERVICE_HOST', `${os.hostname()}:${port}`),
 };

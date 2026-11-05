@@ -11,7 +11,6 @@ test('defaults point at the compose infrastructure', () => {
   assert.equal(c.subscriptionTopic, 'subscription-events');
   assert.equal(c.jwtIssuer, 'eventhub-users');
   assert.equal(c.jwksUrl, null);
-  assert.match(c.serviceHost, /:8080$/);
 });
 
 test('reads and trims overrides', () => {
@@ -19,7 +18,6 @@ test('reads and trims overrides', () => {
   assert.equal(c.port, 9000);
   assert.deepEqual(c.kafkaBrokers, ['a:1', 'b:2']);
   assert.equal(c.jwksUrl, 'http://u/jwks');
-  assert.match(c.serviceHost, /:9000$/);
 });
 
 test('invalid integers stop the service', () => {

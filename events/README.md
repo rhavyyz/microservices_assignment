@@ -4,10 +4,10 @@ Owns **events, their schedule (activities) and seat capacity**: RF02 (create, ed
 RF03 (schedule), RF04 (consult and search, with available seats) and the capacity half of RF06/RN01 (the waitlist
 belongs to the subscription service). TypeScript on Node 22, Fastify, PostgreSQL (`events-db`, private), Kafka.
 
-- Kind `events` in the service-discoverer (raw protocol), registered at startup and again every 30s.
+- Kind `events` in the service-discoverer through the shared TypeScript lib (`service-discoverer/Libs/typescript`, package `discovery`), registered once at startup with the lib's default retries.
 - `GET /healthcheck`: 200 only when the schema is migrated and PostgreSQL answers, else 503. Kafka being down does **not** fail it.
 - `GET /openapi.json`: generated from the route schemas; the gateway reads it to learn the endpoints.
-- Boots even if PostgreSQL, Kafka or the discoverer are down; migration, topics, relay, consumer and registration retry in the background.
+- Boots even if PostgreSQL, Kafka or the discoverer are down; migration, topics, relay, consumer retry in the background; registration is attempted once (lib defaults).
 
 Contracts: [`docs/contracts.md`](docs/contracts.md). Architecture decisions: [`docs/decisions.md`](docs/decisions.md).
 
@@ -39,13 +39,13 @@ Rollout: the gateway adds new endpoints as private. Open them once with `events/
 `PORT` (8080), `DATABASE_URL` (`postgres://events:events@events-db:5432/events`, dev default), `KAFKA_BROKERS` (`kafka:9092`),
 `EVENTS_TOPIC`, `SUBSCRIPTION_TOPIC`, `EVENTS_CONSUMER_GROUP` (`events-service`), `EVENTS_TOPIC_PARTITIONS` (6),
 `OUTBOX_INTERVAL_MS` (500), `OUTBOX_BATCH_SIZE` (100), `OUTBOX_RETENTION_HOURS` (24), `JWT_ISSUER` (`eventhub-users`),
-`JWT_JWKS_URL` (default: the user service found through the discoverer, `/.well-known/jwks.json`), `JWKS_CACHE_SECONDS` (300),
-`SERVICE_DISCOVERER_URL`, `SERVICE_HOST` (`<hostname>:<PORT>`), `REREGISTER_INTERVAL_MS` (30000).
+`JWT_JWKS_URL` (default: the user service found through the discoverer, `/.well-known/jwks.json`), `JWKS_CACHE_SECONDS` (300).
+The `discovery` lib itself reads `SERVICE_DISCOVERER_URL` and `SERVICE_HOST` (default `<hostname>:<PORT>`).
 `EVENTS_DB_PASSWORD` (compose) sets the database password; the root compose passes it to `DATABASE_URL` too.
 
 ## Tests
     npm install
-    npm test                      # unit (node:test): rules, messages, token verification, errors, discovery, consumer
+    npm test                      # unit (node:test): rules, messages, token verification, errors, retry, consumer
     docker run -d --name events-test-db -e POSTGRES_PASSWORD=test -p 5433:5432 postgres:16-alpine
     TEST_DATABASE_URL=postgres://postgres:test@localhost:5433/postgres npm run test:integration
 
