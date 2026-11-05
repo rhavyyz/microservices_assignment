@@ -3,15 +3,16 @@ import type { Queryable } from '../db/pool.ts';
 import { notFound } from '../errors.ts';
 import { EVENT_STATUSES, type Actor, type ActivityRow, type EventRow } from '../domain/model.ts';
 import {
-  assertCanPublish, assertDraft, assertNotCancelled, assertOrganizer, assertOwner, assertValidPeriod,
+  assertCanEnd, assertCanPublish, assertDraft, assertNotCancelled, assertOrganizer, assertOwner, assertValidPeriod,
   assertWithinEvent, canView,
 } from '../domain/rules.ts';
-import { activityMessage, eventMessage } from '../messaging/messages.ts';
+import { activityLifecycleMessage, activityMessage, eventMessage } from '../messaging/messages.ts';
 import {
-  countActivities, deleteActivity, findActivity, insertActivity, listActivities, updateActivity,
+  countActivities, deleteActivity, findActivity, insertActivity, listActivities, markEnded, updateActivity,
 } from '../repositories/activities.ts';
 import { activityBounds, findEvent, insertEvent, listEvents, updateEvent, type EventFilter } from '../repositories/events.ts';
 import { createUnitOfWork, type AuthedCtx, type ServiceDeps } from './unit-of-work.ts';
+import { toActivityView, toEventView, type ActivityView, type EventView } from './views.ts';
 
 type Optional<T> = T | null | undefined;
 
@@ -34,13 +35,14 @@ export type ActivityInput = {
   starts_at: Date;
   ends_at: Date;
   capacity: number;
-  price_cents?: number;
+  /** Registration fee in minor units (cents of BRL); stored in the `price_cents` column. */
+  amount_minor?: number;
   waitlist_enabled?: boolean;
 };
 /** Capacity is not patchable: it is immutable after creation. */
 export type ActivityPatch = Partial<Omit<ActivityInput, 'capacity'>>;
 
-export type EventWithActivities = EventRow & { activities: ActivityRow[] };
+export type EventWithActivities = EventView & { activities: ActivityView[] };
 export type Page<T> = { items: T[]; total: number; limit: number; offset: number };
 export type ListQuery = Omit<EventFilter, 'statuses' | 'organizerId'>;
 
@@ -78,9 +80,17 @@ export function createEventService(deps: ServiceDeps) {
     return event;
   }
 
-  async function page(filter: EventFilter): Promise<Page<EventRow>> {
+  async function page(filter: EventFilter): Promise<Page<EventView>> {
     const { items, total } = await listEvents(deps.pool, filter);
-    return { items, total, limit: filter.limit, offset: filter.offset };
+    return { items: items.map(toEventView), total, limit: filter.limit, offset: filter.offset };
+  }
+
+  /** The activity and its event if the viewer may see them, else a 404 (drafts are private to their organizer). */
+  async function visibleActivity(viewer: Actor | null, activityId: string) {
+    const activity = await findActivity(deps.pool, activityId);
+    const event = activity && (await findEvent(deps.pool, activity.event_id));
+    if (!activity || !event || !canView(event, viewer)) throw notFound('activity');
+    return { event, activity };
   }
 
   return {
@@ -94,19 +104,27 @@ export function createEventService(deps: ServiceDeps) {
 
     async getEvent(viewer: Actor | null, eventId: string): Promise<EventWithActivities> {
       const event = await visibleEvent(viewer, eventId);
-      return { ...event, activities: await listActivities(deps.pool, event.id) };
+      const at = now();
+      const activities = await listActivities(deps.pool, event.id);
+      return { ...toEventView(event), activities: activities.map((a) => toActivityView(event, a, at)) };
     },
 
-    async listEventActivities(viewer: Actor | null, eventId: string): Promise<ActivityRow[]> {
+    async listEventActivities(viewer: Actor | null, eventId: string): Promise<ActivityView[]> {
       const event = await visibleEvent(viewer, eventId);
-      return listActivities(deps.pool, event.id);
+      const at = now();
+      return (await listActivities(deps.pool, event.id)).map((a) => toActivityView(event, a, at));
     },
 
-    async getActivity(viewer: Actor | null, activityId: string): Promise<ActivityRow> {
-      const activity = await findActivity(deps.pool, activityId);
-      const event = activity && (await findEvent(deps.pool, activity.event_id));
-      if (!activity || !event || !canView(event, viewer)) throw notFound('activity');
-      return activity;
+    /** Stays consultable after it ended or was cancelled; `lifecycle` says which. */
+    async getActivity(viewer: Actor | null, activityId: string): Promise<ActivityView> {
+      const { event, activity } = await visibleActivity(viewer, activityId);
+      return toActivityView(event, activity, now());
+    },
+
+    /** Whether the caller administers the activity (the organizer of its event); Subscription asks this per operation. */
+    async getPermissions(actor: Actor, activityId: string): Promise<{ can_manage: boolean }> {
+      const { event } = await visibleActivity(actor, activityId);
+      return { can_manage: event.organizer_id === actor.userId };
     },
 
     // ---- Events (RF02) ------------------------------------------------------------------------
@@ -127,8 +145,8 @@ export function createEventService(deps: ServiceDeps) {
           ends_at: input.ends_at,
         });
         w.target.event_id = event.id;
-        await w.publish(eventMessage('event.created', event));
-        return event;
+        await w.publish(eventMessage('EventCreated', event));
+        return toEventView(event);
       }),
 
     updateEvent: (ctx: AuthedCtx, eventId: string, patch: EventPatch) =>
@@ -141,8 +159,8 @@ export function createEventService(deps: ServiceDeps) {
         const bounds = await activityBounds(w.tx, eventId);
         if (bounds) assertWithinEvent(bounds, period);
         const updated = await updateEvent(w.tx, eventId, patch);
-        await w.publish(eventMessage('event.updated', updated));
-        return updated;
+        await w.publish(eventMessage('EventUpdated', updated));
+        return toEventView(updated);
       }),
 
     publishEvent: (ctx: AuthedCtx, eventId: string) =>
@@ -151,19 +169,27 @@ export function createEventService(deps: ServiceDeps) {
         const event = await lockOwnedEvent(w.tx, ctx.actor, eventId);
         assertCanPublish(event, await countActivities(w.tx, eventId), now());
         const updated = await updateEvent(w.tx, eventId, { status: 'PUBLISHED' });
-        await w.publish(eventMessage('event.published', updated));
-        return updated;
+        await w.publish(eventMessage('EventPublished', updated));
+        return toEventView(updated);
       }),
 
-    /** Final. Registrations are cancelled by the subscription service when it reads event.cancelled. */
+    /**
+     * Final. Besides EventCancelled, every activity that had not ended gets an ActivityCancelled (one
+     * transaction, so Subscription never sees one without the other); ended ones keep their ended state.
+     * Subscription cancels the registrations when it reads these.
+     */
     cancelEvent: (ctx: AuthedCtx, eventId: string) =>
       run('EVENT_CANCEL', ctx, async (w) => {
         w.target.event_id = eventId;
         const event = await lockOwnedEvent(w.tx, ctx.actor, eventId);
         assertNotCancelled(event);
         const updated = await updateEvent(w.tx, eventId, { status: 'CANCELLED' });
-        await w.publish(eventMessage('event.cancelled', updated));
-        return updated;
+        await w.publish(eventMessage('EventCancelled', updated));
+        // Locked: an automatic end of the same activities running now is waited for (and then seen), not duplicated.
+        for (const activity of await listActivities(w.tx, eventId, { forUpdate: true })) {
+          if (!activity.ended_at) await w.publish(activityLifecycleMessage('ActivityCancelled', activity));
+        }
+        return toEventView(updated);
       }),
 
     // ---- Schedule (RF03) ----------------------------------------------------------------------
@@ -185,12 +211,12 @@ export function createEventService(deps: ServiceDeps) {
           starts_at: input.starts_at,
           ends_at: input.ends_at,
           capacity: input.capacity,
-          price_cents: input.price_cents ?? 0,
+          price_cents: input.amount_minor ?? 0,
           waitlist_enabled: input.waitlist_enabled ?? false,
         });
         w.target.activity_id = activity.id;
-        await w.publish(activityMessage('activity.created', activity));
-        return activity;
+        await w.publish(activityMessage('ActivityCreated', activity));
+        return toActivityView(event, activity, now());
       }),
 
     updateActivity: (ctx: AuthedCtx, activityId: string, patch: ActivityPatch) =>
@@ -199,15 +225,33 @@ export function createEventService(deps: ServiceDeps) {
         const { event, activity } = await lockOwnedActivity(w.tx, ctx.actor, activityId);
         w.target.event_id = event.id;
         assertNotCancelled(event);
-        if (patch.price_cents !== undefined && patch.price_cents !== activity.price_cents) {
+        if (patch.amount_minor !== undefined && patch.amount_minor !== activity.price_cents) {
           assertDraft(event, 'changing the price');
         }
         const period = mergedPeriod(activity, patch);
         assertValidPeriod(period);
         assertWithinEvent(period, event);
-        const updated = await updateActivity(w.tx, activityId, patch);
-        await w.publish(activityMessage('activity.updated', updated));
-        return updated;
+        const { amount_minor, ...rest } = patch;
+        const updated = await updateActivity(w.tx, activityId, { ...rest, price_cents: amount_minor });
+        await w.publish(activityMessage('ActivityUpdated', updated));
+        return toActivityView(event, updated, now());
+      }),
+
+    /**
+     * Manual end by the organizer, only after the scheduled `ends_at`. Repeating it is a 200 with the current
+     * activity and no new message.
+     */
+    endActivity: (ctx: AuthedCtx, activityId: string) =>
+      run('ACTIVITY_END', ctx, async (w) => {
+        w.target.activity_id = activityId;
+        const { event, activity } = await lockOwnedActivity(w.tx, ctx.actor, activityId);
+        w.target.event_id = event.id;
+        const at = now();
+        assertCanEnd(event, activity, at);
+        if (activity.ended_at) return toActivityView(event, activity, at);
+        const ended = await markEnded(w.tx, activityId, at);
+        await w.publish(activityLifecycleMessage('ActivityEnded', ended));
+        return toActivityView(event, ended, at);
       }),
 
     deleteActivity: (ctx: AuthedCtx, activityId: string) =>
@@ -217,7 +261,7 @@ export function createEventService(deps: ServiceDeps) {
         w.target.event_id = event.id;
         assertDraft(event, 'removing an activity');
         await deleteActivity(w.tx, activityId);
-        await w.publish(activityMessage('activity.deleted', activity));
+        await w.publish(activityMessage('ActivityDeleted', activity));
       }),
   };
 }

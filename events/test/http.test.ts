@@ -17,7 +17,7 @@ test('schema validation errors list the offending fields', () => {
     statusCode: 400, validationContext: 'body', validation: [
       { instancePath: '', message: 'must NOT have additional properties', params: { additionalProperty: 'capacity' } },
       { instancePath: '', message: "must have required property 'title'", params: { missingProperty: 'title' } },
-      { instancePath: '/price_cents', message: 'must be >= 0', params: { limit: 0 } },
+      { instancePath: '/amount_minor', message: 'must be >= 0', params: { limit: 0 } },
       { instancePath: '', message: 'must NOT have fewer than 1 properties', params: { limit: 1 } },
     ],
   };
@@ -27,7 +27,7 @@ test('schema validation errors list the offending fields', () => {
   assert.deepEqual(problem.errors, [
     { field: 'capacity', message: 'is not allowed' },
     { field: 'title', message: "must have required property 'title'" },
-    { field: 'price_cents', message: 'must be >= 0' },
+    { field: 'amount_minor', message: 'must be >= 0' },
     { field: 'body', message: 'must NOT have fewer than 1 properties' },
   ]);
 });

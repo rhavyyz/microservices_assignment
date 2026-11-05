@@ -23,12 +23,12 @@ describe('outbox relay (Transactional Outbox)', { skip }, () => {
 
   test('publishes committed messages in order and marks them published', async () => {
     const e = await env.events.createEvent(organizer, eventInput());
-    await env.events.updateEvent(organizer, e.id, { title: 'B' });
-    await env.events.cancelEvent(organizer, e.id);
+    await env.events.updateEvent(organizer, e.event_id, { title: 'B' });
+    await env.events.cancelEvent(organizer, e.event_id);
     const sent: OutboxMessage[] = [];
     assert.equal(await relay(async (b) => { sent.push(...b); }).publishBatch(), 3);
-    assert.deepEqual(sent.map((m) => m.envelope.type), ['event.created', 'event.updated', 'event.cancelled']);
-    assert.ok(sent.every((m) => m.key === e.id && m.topic === 'events-events'));
+    assert.deepEqual(sent.map((m) => m.envelope.type), ['EventCreated', 'EventUpdated', 'EventCancelled']);
+    assert.ok(sent.every((m) => m.key === e.event_id && m.topic === 'events.events'));
     assert.equal(await pending(), 0);
     assert.equal(await relay(async () => { throw new Error('nothing to send'); }).publishBatch(), 0);
   });

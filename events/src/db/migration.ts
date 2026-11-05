@@ -84,4 +84,10 @@ CREATE TABLE IF NOT EXISTS outbox (
   published_at timestamptz
 );
 CREATE INDEX IF NOT EXISTS outbox_pending_idx ON outbox (seq) WHERE published_at IS NULL;
+
+-- Activity lifecycle: set when the activity ends (manually after ends_at, or by the automatic end).
+-- The reserved and available columns, seat_reservations and processed_messages are no longer used (Subscription counts the
+-- seats) but are left in place: the migration is non-destructive.
+ALTER TABLE activities ADD COLUMN IF NOT EXISTS ended_at timestamptz;
+CREATE INDEX IF NOT EXISTS activities_open_end_idx ON activities (ends_at) WHERE ended_at IS NULL;
 `;

@@ -234,7 +234,8 @@ organizer actions need role `ORGANIZER` **and** an Events permission check on th
   confirmed activity of the event ends, it emits `AttendanceEligible` once per user and event, only when the percentage
   is >= 75%. It does not issue certificates.
 
-**Messaging.** Consumes `payments.events` and `events.events` (group `subscription-service`); produces `payments.commands`,
+**Messaging.** Consumes `payments.events` and `events.events` (group `subscription-service`; only `ActivityEnded` and
+`ActivityCancelled` are handled, other Events message types are skipped without the DLQ); produces `payments.commands`,
 `subscription.events` (`Registration*`, `WaitlistOffered`, `AttendanceRecorded`, `AttendanceEligible`), `notifications`,
 and `subscription.dlq`. Transactional outbox, inbox dedupe by `message_id`, `aggregate_version` to reject stale states.
 Envelope: `message_id`, `schema_version=1`, `type`, `registration_id`, `activity_id`, `user_id`, `aggregate_version`,
@@ -280,17 +281,16 @@ topic exists (ADR-005 pattern).
 
 ## 9. Known cross-service gaps (verify before relying on them)
 
-- **Subscription ↔ Events contract mismatch (from reading the code, not run).** Subscription's client calls Events at
-  `/api/v1/activities/{id}` (expecting `activity_id`, `amount_minor`, `currency`, `registration_open`,
-  `waitlist_enabled`, `starts_at`, `ends_at`) and `/api/v1/activities/{id}/permissions/me`. Events serves
-  `GET /activities/:id` (fields `id`, `price_cents`, `paid`, `title`, ...) and no `permissions/me` route that I found.
-  Until reconciled, Subscription cannot talk to the real Events service.
+- **Subscription ↔ Events contract mismatch: resolved (ADR-008).** Events now serves `/api/v1/activities/{id}` and
+  `/api/v1/activities/{id}/permissions/me` in the shape Subscription expects, publishes `ActivityEnded`/`ActivityCancelled`
+  on `events.events`, and no longer counts seats or consumes Kafka. Only exercised against test doubles/unit tests on
+  Subscription's side; not run end to end here.
+- **Reports** still reads the old Events message format and stops projecting events/activities until adapted.
 - **Payments** was only tested with a double on Subscription's side.
 - **Gateway cold-start 503** after a failed first JWKS fetch (30 s cooldown).
 - **Kafka replication factor is fixed at 1** in every topic-creation helper.
 - **No refresh tokens**; tokens last 30 minutes.
-- Open question: Events validates the JWT itself (it ignores `X-User-Id`), unlike the model in principle 2. Align it
-  when touching Events.
+- Events used to validate the JWT itself; resolved (ADR-008): it reads only `X-User-Id`/`X-User-Roles`, per principle 2.
 
 ## 10. Working in parallel
 

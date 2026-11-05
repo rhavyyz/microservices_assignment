@@ -28,8 +28,13 @@ export async function buildServer(deps: ServerDeps) {
 
   await app.register(swagger, {
     openapi: {
-      info: { title: 'Events service', version: '1.0.0', description: 'Events, schedule (activities), search and seats. Through the gateway: /events/...' },
-      components: { securitySchemes: { bearer: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' } } },
+      info: {
+        title: 'Events service',
+        version: '1.0.0',
+        description: 'Events, schedule (activities), search and the activity lifecycle. Business routes are under /api/v1. '
+          + 'Identity comes only from the gateway headers: X-User-Id (the user UUID) and X-User-Roles (comma separated); '
+          + 'there is no token in this API. Public reads work without X-User-Id; every change and /me routes need it (401 otherwise).',
+      },
     },
   });
 

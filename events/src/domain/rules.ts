@@ -2,7 +2,9 @@
 // in isolation and shared by every use case that needs them.
 
 import { conflict, forbidden, notFound, unprocessable } from '../errors.ts';
-import { ORGANIZER_ROLE, PUBLIC_EVENT_STATUSES, type ActivityRow, type Actor, type EventRow, type Period } from './model.ts';
+import {
+  ORGANIZER_ROLE, PUBLIC_EVENT_STATUSES, type ActivityLifecycle, type ActivityRow, type Actor, type EventRow, type Period,
+} from './model.ts';
 
 export function assertOrganizer(actor: Actor): void {
   if (!actor.roles.includes(ORGANIZER_ROLE)) throw forbidden('only organizers can create events');
@@ -40,7 +42,7 @@ export function assertNotCancelled(event: EventRow): void {
 
 /**
  * Changes that would invalidate existing registrations or pending payments (removing an activity,
- * changing its price) are allowed only before the event is published, when no seat can be held yet.
+ * changing its price) are allowed only before the event is published, when no registration can exist yet.
  */
 export function assertDraft(event: EventRow, what: string): void {
   if (event.status !== 'DRAFT') throw conflict('EVENT_NOT_DRAFT', `${what} is only allowed while the event is a draft`);
@@ -52,19 +54,24 @@ export function assertCanPublish(event: EventRow, activityCount: number, now: Da
   if (event.ends_at <= now) throw conflict('EVENT_ENDED', 'cannot publish an event that already ended');
 }
 
-export type SeatRejection = 'ACTIVITY_NOT_FOUND' | 'EVENT_NOT_OPEN' | 'REGISTRATION_CLOSED' | 'FULL';
+/** CANCELLED if the event is cancelled, else ENDED once `ended_at` is set, else OPEN. */
+export function activityLifecycle(event: Pick<EventRow, 'status'>, activity: Pick<ActivityRow, 'ended_at'>): ActivityLifecycle {
+  if (event.status === 'CANCELLED') return 'CANCELLED';
+  return activity.ended_at ? 'ENDED' : 'OPEN';
+}
+
+/** Registration is open while the event is published, the activity is neither ended nor cancelled and it has not started. */
+export function isRegistrationOpen(event: EventRow, activity: ActivityRow, now: Date): boolean {
+  return event.status === 'PUBLISHED' && activityLifecycle(event, activity) === 'OPEN' && now < activity.starts_at;
+}
 
 /**
- * Why a seat cannot be reserved. The reservation itself is a single conditional UPDATE in the database
- * (the only place that is safe under concurrency); this explains a refusal after that UPDATE matched nothing.
+ * Manual end by the organizer. Only published events have running activities; an already ended activity is
+ * left alone by the caller (idempotent). Subscription refuses an ActivityEnded before the scheduled end and
+ * would stall its consumer on it, so it is never emitted early.
  */
-export function seatRejection(
-  found: { event: EventRow; activity: ActivityRow } | null,
-  eventId: string,
-  now: Date,
-): SeatRejection {
-  if (!found || found.activity.event_id !== eventId) return 'ACTIVITY_NOT_FOUND';
-  if (found.event.status !== 'PUBLISHED') return 'EVENT_NOT_OPEN';
-  if (found.activity.starts_at <= now) return 'REGISTRATION_CLOSED';
-  return 'FULL';
+export function assertCanEnd(event: EventRow, activity: ActivityRow, now: Date): void {
+  if (event.status !== 'PUBLISHED') throw conflict('EVENT_NOT_OPEN', `cannot end an activity of an event that is ${event.status}`);
+  if (activity.ended_at) return;
+  if (now < activity.ends_at) throw conflict('ACTIVITY_NOT_ENDED', 'the activity has not reached its scheduled end yet');
 }

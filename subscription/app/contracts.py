@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 class Activity(BaseModel):
     """Resposta confiável de Eventos. Valores monetários são inteiros na menor unidade."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     activity_id: UUID
     event_id: UUID
     capacity: int = Field(ge=0, strict=True)
@@ -49,8 +49,19 @@ class PaymentEvent(BaseModel):
     trace_id: str | None = None
 
 
+class EventsEnvelope(BaseModel):
+    """Envelope plano comum a todas as mensagens de `events.events`; o tipo é validado só para os tratados."""
+
+    model_config = ConfigDict(extra="ignore")
+    message_id: UUID
+    schema_version: Literal[1]
+    type: str = Field(min_length=1)
+
+
 class ActivityEvent(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    """Mensagem de Eventos tratada aqui; os demais tipos de `events.events` são ignorados antes desta validação."""
+
+    model_config = ConfigDict(extra="ignore")
     message_id: UUID
     schema_version: Literal[1]
     type: Literal["ActivityEnded", "ActivityCancelled"]

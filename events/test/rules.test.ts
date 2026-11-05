@@ -4,7 +4,7 @@ import { AppError } from '../src/errors.ts';
 import type { ActivityRow, EventRow } from '../src/domain/model.ts';
 import {
   assertCanPublish, assertDraft, assertNotCancelled, assertOrganizer, assertOwner, assertValidPeriod,
-  assertWithinEvent, canView, seatRejection,
+  activityLifecycle, assertCanEnd, assertWithinEvent, canView, isRegistrationOpen,
 } from '../src/domain/rules.ts';
 
 const d = (s: string) => new Date(s);
@@ -15,8 +15,8 @@ const event = (o: Partial<EventRow> = {}): EventRow => ({
 });
 const activity = (o: Partial<ActivityRow> = {}): ActivityRow => ({
   id: 'a1', event_id: 'e1', title: 'Talk', description: null, speaker: null, location: null,
-  starts_at: d('2030-05-01T09:00:00Z'), ends_at: d('2030-05-01T10:00:00Z'), capacity: 10, reserved: 10, available: 0,
-  price_cents: 0, paid: false, waitlist_enabled: false, created_at: d('2026-01-01T00:00:00Z'),
+  starts_at: d('2030-05-01T09:00:00Z'), ends_at: d('2030-05-01T10:00:00Z'), capacity: 10,
+  price_cents: 0, paid: false, waitlist_enabled: false, ended_at: null, created_at: d('2026-01-01T00:00:00Z'),
   updated_at: d('2026-01-01T00:00:00Z'), ...o,
 });
 const organizer = { userId: 'org', roles: ['ORGANIZER'] };
@@ -73,13 +73,29 @@ test('publishing needs a draft with activities that has not ended', () => {
   rejects(() => assertCanPublish(event(), 1, d('2031-01-01T00:00:00Z')), 409, 'EVENT_ENDED');
 });
 
-test('a refused seat is explained in order: missing, not open, closed, full', () => {
-  const now = d('2030-01-01T00:00:00Z');
+test('lifecycle is CANCELLED with the event, else ENDED once ended_at is set, else OPEN', () => {
+  assert.equal(activityLifecycle(event({ status: 'PUBLISHED' }), activity()), 'OPEN');
+  assert.equal(activityLifecycle(event({ status: 'PUBLISHED' }), activity({ ended_at: d('2030-05-01T10:00:00Z') })), 'ENDED');
+  assert.equal(activityLifecycle(event({ status: 'CANCELLED' }), activity()), 'CANCELLED');
+  assert.equal(activityLifecycle(event({ status: 'CANCELLED' }), activity({ ended_at: d('2030-05-01T10:00:00Z') })), 'CANCELLED');
+  assert.equal(activityLifecycle(event({ status: 'DRAFT' }), activity()), 'OPEN');
+});
+
+test('registration is open only for a published event, an OPEN activity that has not started', () => {
   const published = event({ status: 'PUBLISHED' });
-  assert.equal(seatRejection(null, 'e1', now), 'ACTIVITY_NOT_FOUND');
-  assert.equal(seatRejection({ event: published, activity: activity() }, 'other-event', now), 'ACTIVITY_NOT_FOUND');
-  assert.equal(seatRejection({ event: event(), activity: activity() }, 'e1', now), 'EVENT_NOT_OPEN');
-  assert.equal(seatRejection({ event: event({ status: 'CANCELLED' }), activity: activity() }, 'e1', now), 'EVENT_NOT_OPEN');
-  assert.equal(seatRejection({ event: published, activity: activity() }, 'e1', d('2030-05-01T09:00:00Z')), 'REGISTRATION_CLOSED');
-  assert.equal(seatRejection({ event: published, activity: activity() }, 'e1', now), 'FULL');
+  const before = d('2030-05-01T08:59:59Z');
+  assert.equal(isRegistrationOpen(published, activity(), before), true);
+  assert.equal(isRegistrationOpen(published, activity(), d('2030-05-01T09:00:00Z')), false);
+  assert.equal(isRegistrationOpen(event(), activity(), before), false);
+  assert.equal(isRegistrationOpen(event({ status: 'CANCELLED' }), activity(), before), false);
+  assert.equal(isRegistrationOpen(published, activity({ ended_at: d('2030-05-01T08:00:00Z') }), before), false);
+});
+
+test('an activity ends only in a published event and never before its scheduled end; ending again is allowed', () => {
+  const published = event({ status: 'PUBLISHED' });
+  assertCanEnd(published, activity(), d('2030-05-01T10:00:00Z'));
+  rejects(() => assertCanEnd(published, activity(), d('2030-05-01T09:59:59Z')), 409, 'ACTIVITY_NOT_ENDED');
+  rejects(() => assertCanEnd(event(), activity(), d('2031-01-01T00:00:00Z')), 409, 'EVENT_NOT_OPEN');
+  rejects(() => assertCanEnd(event({ status: 'CANCELLED' }), activity(), d('2031-01-01T00:00:00Z')), 409, 'EVENT_NOT_OPEN');
+  assertCanEnd(published, activity({ ended_at: d('2030-05-01T10:00:00Z') }), d('2030-05-01T09:00:00Z')); // idempotent: no error
 });

@@ -65,13 +65,13 @@ class Directory:
     """Thin client for the other services. Tests replace it with a fake."""
 
     def get_event(self, event_id: uuid.UUID, trace_id: str) -> Event:
-        body = _get_json(Kind.EVENTS, f"/events/{event_id}", trace_id, missing_reason="EVENT_NOT_FOUND")
+        body = _get_json(Kind.EVENTS, f"/api/v1/events/{event_id}", trace_id, missing_reason="EVENT_NOT_FOUND")
         try:
             title = body["title"]
             if not isinstance(title, str) or not title.strip():
                 raise ValueError("invalid title")
             return Event(
-                id=uuid.UUID(str(body["id"])),
+                id=uuid.UUID(str(body["event_id"])),
                 title=title,
                 starts_at=_aware(body["starts_at"]),
                 ends_at=_aware(body["ends_at"]),

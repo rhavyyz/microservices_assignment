@@ -25,7 +25,7 @@ export type Work = {
   /** Queues a message in the outbox, in this transaction: it is published only if the change commits. */
   publish: (m: Outgoing) => Promise<void>;
   /** Ids of what the operation touched, filled in as they become known; they go to the audit line. */
-  target: Pick<AuditEntry, 'event_id' | 'activity_id' | 'registration_id' | 'code'>;
+  target: Pick<AuditEntry, 'event_id' | 'activity_id' | 'code'>;
 };
 
 /**

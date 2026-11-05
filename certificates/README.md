@@ -83,7 +83,7 @@ For an `AttendanceEligible` event the service does its own validations before is
 
 1. Contract validation: `event_id` is a UUID; `attended_activities` and `total_activities` are integers (booleans rejected) with `total >= 1` and `0 <= attended <= total`; `attendance_percentage` is a finite number consistent with the counts. A violation is poison (`INVALID_CONTRACT`).
 2. If a certificate already exists for `registration_id` or for `(user_id, event_id)`, the event is a duplicate: success, commit, no lookups.
-3. `GET /events/{event_id}` on Events (through the discoverer) for `title`, `starts_at`, `ends_at`. `404` is poison (`EVENT_NOT_FOUND`); any other failure is transient.
+3. `GET /api/v1/events/{event_id}` on Events (through the discoverer; the body carries `event_id`, extra fields are ignored) for `title`, `starts_at`, `ends_at`. `404` is poison (`EVENT_NOT_FOUND`); any other failure is transient.
 4. The event must have ended (`now(UTC) >= ends_at`); otherwise nothing is issued and the message is retried later.
 5. `GET /internal/users/{user_id}` on Users for the participant name (`200 {"id","name"}`; `404` is poison). This endpoint is unauthenticated and protected by network isolation; it is never registered on the gateway.
 6. `CertificateService.issue_certificate` applies the eligibility rule to the validated percentage (below 75% is poison, `NOT_ELIGIBLE`), renders the PDF (event name = event title, date = date of the event's `starts_at` in its own offset), stores it and saves the row.
@@ -317,7 +317,7 @@ The tests use fakes for Kafka, the discoverer, Events/Users and S3 (no network),
 
 - The 75% threshold is an implementation assumption to confirm with the team; it is applied both by Subscription and, independently, here.
 - Certificates cannot recount check-ins: it trusts `attended_activities`/`total_activities` after the consistency check with the percentage.
-- Events must expose `GET /events/{id}` (with `title`, `starts_at`, `ends_at`), and Users `GET /internal/users/{id}`, as described above; they are consumed through the discoverer.
+- Events must expose `GET /api/v1/events/{event_id}` (with `event_id`, `title`, `starts_at`, `ends_at`), and Users `GET /internal/users/{id}`, as described above; they are consumed through the discoverer.
 - The event date on the PDF is the date of the event's `starts_at`, in its own offset.
 - A message that depends on an unavailable service is retried indefinitely (backoff up to 30 s), which blocks the partition behind it; this favors never losing a certificate over throughput.
 - Several replicas are safe for issuance (unique `registration_id` and unique `(user_id, event_id)`), but concurrent migrations at first boot are not serialized.

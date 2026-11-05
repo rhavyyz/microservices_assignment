@@ -7,10 +7,12 @@ import threading
 from confluent_kafka import Consumer, Producer
 from pydantic import ValidationError
 
-from .contracts import ActivityEvent, DomainError, PaymentEvent
+from .contracts import ActivityEvent, DomainError, EventsEnvelope, PaymentEvent
 from .topics import ensure_topics
 
 log = logging.getLogger(__name__)
+
+HANDLED_EVENTS_TYPES = {"ActivityEnded", "ActivityCancelled"}
 
 
 class Workers:
@@ -124,6 +126,9 @@ class Workers:
         if topic == self.settings.payment_topic:
             self.service.payment_event(PaymentEvent.model_validate(payload))
         elif topic == self.settings.events_topic:
+            envelope = EventsEnvelope.model_validate(payload)
+            if envelope.type not in HANDLED_EVENTS_TYPES:
+                return  # Tipo publicado por Eventos que Inscrições não consome: confirmar sem DLQ.
             event = ActivityEvent.model_validate(payload)
             activity = self.services.activity(event.activity_id)
             self.service.activity_event(event, activity)
