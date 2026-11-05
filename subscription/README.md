@@ -44,8 +44,16 @@ em [CONTRACTS.md](CONTRACTS.md); Eventos e Pagamentos ainda são placeholders no
 - `PaymentApproved` confirma só uma inscrição `PENDING_PAYMENT` dentro do prazo e com o mesmo
   valor/moeda; `PaymentDeclined` rejeita e promove a fila; os demais resultados são informativos.
 - Check-in exige inscrição confirmada, período da atividade e organizador responsável.
-  Critério de presença adotado nesta versão: **um check-in válido**. Após `ActivityEnded`,
-  emite `AttendanceEligible` apenas para confirmados presentes. Não emite certificados.
+  Critério de presença (RN06): o certificado é por **evento**, não por atividade. Percentual =
+  atividades do evento com inscrição `CONFIRMED` **e** check-in ÷ atividades do evento com inscrição
+  `CONFIRMED`. Inscrições em fila, expiradas, canceladas ou rejeitadas e atividades canceladas não
+  entram na conta. Com percentual >= `ATTENDANCE_MIN_PERCENT` (padrão 75, número em (0, 100]),
+  emite **um** `AttendanceEligible` por pessoa e evento, quando a última atividade confirmada da
+  pessoa nesse evento encerra (`ActivityEnded`) ou é cancelada (`ActivityCancelled`: a cancelada sai da conta e quem
+  estava confirmada nela é reavaliada; sem nenhuma atividade restante, nada é emitido). Abaixo do mínimo, nada é emitido. A tabela
+  `event_attendance_emitted` garante a unicidade; a primeira conclusão vence (inscrição confirmada
+  depois da emissão, em outra atividade do mesmo evento, não gera nova emissão). Atividades
+  encerradas antes da migração 003 não são reavaliadas (sem backfill). Não emite certificados.
 - `ActivityCancelled` cancela inscritos e fila, libera vagas e solicita compensações.
   Cancelamento voluntário após `ActivityEnded` é rejeitado.
 
@@ -144,7 +152,7 @@ Notificações atual deduplica por offset, não por evento de negócio; republic
 pode produzir duas notificações. O `payload.event_id` é estável, mas deduplicá-lo exigiria
 alteração naquele serviço, deliberadamente fora deste trabalho.
 
-Não há reconciliação financeira nem tabela de tentativas de pagamento (migração `003`): Pagamentos lê
+Não há reconciliação financeira nem tabela de tentativas de pagamento (migração `004`): Pagamentos lê
 os fatos de uma inscrição em `GET /internal/registrations/{id}` (rota interna, sem autenticação, fora do
 OpenAPI e do gateway) e decide sozinho cobrança, expiração e estorno.
 Inbox, histórico e outbox não têm limpeza automática nesta versão, evitando apagar evidências
