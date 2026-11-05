@@ -88,10 +88,10 @@ class SubscriptionService:
 
     @staticmethod
     def enqueue(conn, topic, key, payload):
-        event_id = str(uuid4())
+        message_id = str(uuid4())
         conn.execute(
             "INSERT INTO outbox(id,topic,message_key,payload) VALUES (%s,%s,%s,%s)",
-            (event_id, topic, str(key), Jsonb(serializable(payload))),
+            (message_id, topic, str(key), Jsonb(serializable(payload))),
         )
 
     def emit(self, conn, reg, event_type, request_id=None, extra=None):
@@ -101,7 +101,7 @@ class SubscriptionService:
         extra acrescenta campos próprios do tipo (ex.: AttendanceEligible).
         """
         payload = {
-            "event_id": str(uuid4()),
+            "message_id": str(uuid4()),
             "schema_version": 1,
             "type": event_type,
             "registration_id": reg["id"],
@@ -131,7 +131,7 @@ class SubscriptionService:
                     "message": messages[event_type],
                     "payload_type": event_type,
                     "payload": {
-                        "event_id": payload["event_id"],
+                        "message_id": payload["message_id"],
                         "registration_id": reg["id"],
                         "expires_at": reg["expires_at"],
                     },
@@ -294,9 +294,9 @@ class SubscriptionService:
                 return
             _, reg = self.locked_registration(conn, event.registration_id)
             inserted = conn.execute(
-                "INSERT INTO inbox(source,event_id) VALUES ('payments',%s) "
-                "ON CONFLICT DO NOTHING RETURNING event_id",
-                (event.event_id,),
+                "INSERT INTO inbox(source,message_id) VALUES ('payments',%s) "
+                "ON CONFLICT DO NOTHING RETURNING message_id",
+                (event.message_id,),
             ).fetchone()
             if not inserted or reg["status"] != "PENDING_PAYMENT":
                 return
@@ -394,9 +394,9 @@ class SubscriptionService:
             )
             inv = self.inventory(conn, activity.activity_id)
             if not conn.execute(
-                "INSERT INTO inbox(source,event_id) VALUES ('events',%s) ON CONFLICT DO NOTHING "
-                "RETURNING event_id",
-                (event.event_id,),
+                "INSERT INTO inbox(source,message_id) VALUES ('events',%s) ON CONFLICT DO NOTHING "
+                "RETURNING message_id",
+                (event.message_id,),
             ).fetchone():
                 return
             cancelled = event.type == "ActivityCancelled"

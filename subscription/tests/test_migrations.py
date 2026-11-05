@@ -1,5 +1,5 @@
 """A 002 remove a tabela de chaves de idempotência abandonada; a 003 cria a de emissões por evento;
-a 004 remove tentativas de pagamento e lembra o evento pai."""
+a 004 remove tentativas de pagamento e lembra o evento pai; a 005 renomeia inbox.event_id para message_id."""
 
 import psycopg
 import pytest
@@ -24,6 +24,7 @@ def test_abandoned_tables_dropped_and_parent_event_column_added(db):
         "002_drop_idempotency_keys.sql",
         "003_event_attendance_emitted.sql",
         "004_declarative_payments.sql",
+        "005_inbox_message_id.sql",
     ]
 
 
@@ -33,6 +34,36 @@ def test_migration_004_is_idempotent(db):
     import app.db
 
     sql = (Path(app.db.__file__).parent / "migrations" / "004_declarative_payments.sql").read_text(encoding="utf-8")
+    with db.transaction() as conn:
+        conn.execute(sql)
+
+
+def test_inbox_column_renamed_to_message_id_keeping_primary_key(db):
+    with db.transaction() as conn:
+        cols = {
+            r["column_name"]
+            for r in conn.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema=current_schema() AND table_name='inbox'"
+            ).fetchall()
+        }
+        pk = {
+            r["attname"]
+            for r in conn.execute(
+                "SELECT a.attname FROM pg_index i JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=ANY(i.indkey) "
+                "WHERE i.indrelid='inbox'::regclass AND i.indisprimary"
+            ).fetchall()
+        }
+    assert "message_id" in cols and "event_id" not in cols
+    assert pk == {"source", "message_id"}
+
+
+def test_migration_005_is_idempotent(db):
+    from pathlib import Path
+
+    import app.db
+
+    sql = (Path(app.db.__file__).parent / "migrations" / "005_inbox_message_id.sql").read_text(encoding="utf-8")
     with db.transaction() as conn:
         conn.execute(sql)
 

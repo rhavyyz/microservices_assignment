@@ -32,7 +32,7 @@ class PaymentEvent(BaseModel):
     """Resultado publicado por Pagamentos; campos adicionais são ignorados."""
 
     model_config = ConfigDict(extra="ignore")
-    event_id: UUID
+    message_id: UUID
     schema_version: Literal[1]
     type: Literal[
         "PaymentCreated",
@@ -51,7 +51,7 @@ class PaymentEvent(BaseModel):
 
 class ActivityEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    event_id: UUID
+    message_id: UUID
     schema_version: Literal[1]
     type: Literal["ActivityEnded", "ActivityCancelled"]
     activity_id: UUID

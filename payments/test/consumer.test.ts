@@ -48,7 +48,7 @@ const logs: { level: string; o: any; m: string }[] = [];
 const log = { info: (o: object, m: string) => logs.push({ level: 'info', o, m }), warn: (o: object, m: string) => logs.push({ level: 'warn', o, m }) };
 
 const msg = (over: object = {}) => JSON.stringify({
-  event_id: 'ev1', schema_version: 1, type: 'RegistrationCancelled', registration_id: 'r1', user_id: 'u1',
+  message_id: 'ev1', schema_version: 1, type: 'RegistrationCancelled', registration_id: 'r1', user_id: 'u1',
   aggregate_version: 2, occurred_at: '2026-10-31T12:00:00Z', status: 'CANCELLED', request_id: 'req-1', ...over,
 });
 
@@ -90,7 +90,7 @@ test('no payment, or a payment already in a final state: no-op', async () => {
   }
 });
 
-test('duplicate event_id is applied once', async () => {
+test('duplicate message_id is applied once', async () => {
   const db = fakeDb([payment('APPROVED')]);
   assert.equal(await handleSubscriptionMessage(db.pool, msg(), {}, log), 'applied');
   assert.equal(await handleSubscriptionMessage(db.pool, msg(), {}, log), 'duplicate');

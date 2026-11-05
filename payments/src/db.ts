@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS outbox (
 CREATE INDEX IF NOT EXISTS outbox_pending_idx ON outbox (id) WHERE published_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS processed_messages (
-  event_id     text PRIMARY KEY,
+  message_id   text PRIMARY KEY,
   processed_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -90,15 +90,6 @@ BEGIN
   END IF;
 END $$;
 
--- v4: processed_messages.message_id became event_id (only if the old column is still there).
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM information_schema.columns
-              WHERE table_schema = current_schema() AND table_name = 'processed_messages' AND column_name = 'message_id') THEN
-    ALTER TABLE processed_messages RENAME COLUMN message_id TO event_id;
-  END IF;
-END $$;
-
 -- v5: payment_transitions.correlation_id became request_id (only if the old column is there and the new one is not).
 DO $$
 BEGIN
@@ -139,6 +130,19 @@ BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.columns
               WHERE table_schema = current_schema() AND table_name = 'payments' AND column_name = 'event_id' AND is_nullable = 'NO') THEN
     ALTER TABLE payments ALTER COLUMN event_id DROP NOT NULL;
+  END IF;
+END $$;
+
+-- v8: processed_messages keeps message_id (the id of the Kafka message). A short-lived revision renamed it to event_id
+-- (the old v4 block, since removed); undo that on any database that already ran it. Renames only when event_id exists
+-- and message_id does not, so it is a no-op on fresh databases and re-runs. (There is no v4: that number was retired.)
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = current_schema() AND table_name = 'processed_messages' AND column_name = 'event_id')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = current_schema() AND table_name = 'processed_messages' AND column_name = 'message_id') THEN
+    ALTER TABLE processed_messages RENAME COLUMN event_id TO message_id;
   END IF;
 END $$;
 `;

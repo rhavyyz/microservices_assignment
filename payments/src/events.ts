@@ -28,20 +28,21 @@ export function eventTypeFor(status: string): string {
 }
 
 /**
- * Flat envelope in Subscription's naming (see subscription/CONTRACTS.md): `event_id` is this message's unique id,
- * so the payment's Events-service event is published as `parent_event_id`. See README, "Events published".
+ * Flat envelope in Subscription's naming (see subscription/CONTRACTS.md): `message_id` is this message's unique id
+ * (consumers dedupe by it); the payment's Events-service event is published as `parent_event_id`.
+ * See README, "Events published".
  */
 export function buildPaymentEvent(
   p: PaymentView,
   reason: string | null,
   requestId: string | null,
-  eventId: string,
+  messageId: string,
   occurredAt: Date,
 ): Outgoing {
   return {
     key: p.registration_id,
     value: JSON.stringify({
-      event_id: eventId,
+      message_id: messageId,
       schema_version: 1,
       type: eventTypeFor(p.status),
       occurred_at: occurredAt.toISOString(),

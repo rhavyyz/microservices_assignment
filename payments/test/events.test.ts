@@ -21,12 +21,13 @@ test('payment event is a flat envelope keyed by registration', () => {
   assert.equal(e.key, 'r1');
   const body = JSON.parse(e.value);
   assert.deepEqual(body, {
-    event_id: 'm1', schema_version: 1, type: 'PaymentApproved', occurred_at: '2026-10-31T12:00:00.000Z', request_id: 'c1',
+    message_id: 'm1', schema_version: 1, type: 'PaymentApproved', occurred_at: '2026-10-31T12:00:00.000Z', request_id: 'c1',
     payment_id: 'p1', registration_id: 'r1', user_id: 'u1', parent_event_id: 'e1',
     amount_minor: 2500, currency: 'BRL', status: 'APPROVED', reason: 'simulated_approval',
   });
   assert.equal('data' in body, false);
-  assert.equal(body.event_id, 'm1'); // message id, not the Events-service event ('e1' is parent_event_id)
+  assert.equal(body.message_id, 'm1'); // message id, not the Events-service event ('e1' is parent_event_id)
+  assert.ok(!('event_id' in body));
 });
 
 test('notifications: payload and payload_type go together, keyed by user', () => {

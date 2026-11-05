@@ -34,7 +34,7 @@ Sources of truth, in order: the code, the service's own README/`CONTRACTS.md`, t
 7. **Kafka topics are created by whoever uses them, at startup** (ADR-005): create-if-absent, replication 1, configurable
    partitions (default 6), never alter an existing topic, retry in the background before consuming or producing.
    Consumers set a short `topic.metadata.refresh.interval.ms` (10 s) so a topic created later is noticed fast.
-8. **At-least-once delivery, idempotent handling.** Commit offsets after processing. Dedupe by `event_id` (inbox) or a
+8. **At-least-once delivery, idempotent handling.** Commit offsets after processing. Dedupe by `message_id` (inbox) or a
    natural unique key. Producers use a transactional outbox when a DB write and a message must go together. Poison
    messages go to a DLQ topic as references only (topic/partition/offset/reason), never payload copies. Transient
    failures retry without advancing the offset.
@@ -236,8 +236,8 @@ organizer actions need role `ORGANIZER` **and** an Events permission check on th
 
 **Messaging.** Consumes `payments.events` and `events.events` (group `subscription-service`); produces `payments.commands`,
 `subscription.events` (`Registration*`, `WaitlistOffered`, `AttendanceRecorded`, `AttendanceEligible`), `notifications`,
-and `subscription.dlq`. Transactional outbox, inbox dedupe by `event_id`, `aggregate_version` to reject stale states.
-Envelope: `event_id`, `schema_version=1`, `type`, `registration_id`, `activity_id`, `user_id`, `aggregate_version`,
+and `subscription.dlq`. Transactional outbox, inbox dedupe by `message_id`, `aggregate_version` to reject stale states.
+Envelope: `message_id`, `schema_version=1`, `type`, `registration_id`, `activity_id`, `user_id`, `aggregate_version`,
 `occurred_at`, `status`; `AttendanceEligible` adds `parent_event_id`, `attended_activities`, `total_activities`,
 `attendance_percentage`.
 

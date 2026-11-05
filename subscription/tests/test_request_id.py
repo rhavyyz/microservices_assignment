@@ -80,7 +80,7 @@ def test_emit_without_request_id_sends_null(svc):
 
 def payment_result(**extra):
     return {
-        "event_id": str(uuid4()),
+        "message_id": str(uuid4()),
         "schema_version": 1,
         "type": "PaymentApproved",
         "registration_id": str(uuid4()),
@@ -122,7 +122,7 @@ def test_payment_event_currency_is_plain_string(currency):
 def test_payment_event_still_rejects_unknown_type_and_missing_fields():
     with pytest.raises(ValidationError):
         PaymentEvent.model_validate(payment_result(type="PaymentFrobnicated"))
-    for field in ("event_id", "registration_id", "amount_minor", "currency"):
+    for field in ("message_id", "registration_id", "amount_minor", "currency"):
         data = payment_result()
         del data[field]
         with pytest.raises(ValidationError):

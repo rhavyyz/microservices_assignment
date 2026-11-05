@@ -31,9 +31,9 @@ def register(service, act, user=None):
     return service.create(user or uuid4(), act)
 
 
-def payment(reg, kind="PaymentApproved", event_id=None):
+def payment(reg, kind="PaymentApproved", message_id=None):
     return PaymentEvent(
-        event_id=event_id or uuid4(),
+        message_id=message_id or uuid4(),
         schema_version=1,
         type=kind,
         registration_id=reg["id"],
@@ -266,9 +266,9 @@ def finished(act):
     return ongoing(act).model_copy(update={"ends_at": datetime.now(timezone.utc) - timedelta(seconds=1)})
 
 
-def end(service, act, kind="ActivityEnded", event_id=None):
+def end(service, act, kind="ActivityEnded", message_id=None):
     event = ActivityEvent(
-        event_id=event_id or uuid4(), schema_version=1, type=kind, activity_id=act.activity_id
+        message_id=message_id or uuid4(), schema_version=1, type=kind, activity_id=act.activity_id
     )
     service.activity_event(event, finished(act))
     return event
@@ -302,7 +302,7 @@ def test_presence_and_certificate_eligibility(service, db):
     payload = rows[0]["payload"]
     assert rows[0]["message_key"] == reg["id"]
     assert payload["parent_event_id"] == str(act.event_id)
-    assert payload["event_id"] != str(act.event_id)
+    assert payload["message_id"] != str(act.event_id)
     assert payload["registration_id"] == reg["id"]
     assert payload["activity_id"] == str(act.activity_id)
     assert (payload["attended_activities"], payload["total_activities"]) == (1, 1)
@@ -427,7 +427,7 @@ def test_nothing_while_registered_activity_not_ended(service, db):
     # Quem só está em atividade não encerrada também não recebe nada.
     other = uuid4()
     service.create(other, acts[1])
-    end(service, acts[0], event_id=uuid4())
+    end(service, acts[0], message_id=uuid4())
     assert eligible(db, other) == []
 
 
@@ -486,7 +486,7 @@ def test_cancelled_activity_releases_everyone(service, db):
     reg = register(service, act)
     register(service, act)
     event = ActivityEvent(
-        event_id=uuid4(), schema_version=1, type="ActivityCancelled", activity_id=act.activity_id
+        message_id=uuid4(), schema_version=1, type="ActivityCancelled", activity_id=act.activity_id
     )
     service.activity_event(event, act)
     service.payment_event(payment(reg))
@@ -529,7 +529,7 @@ def test_activity_event_fetch_carries_no_identity(service, db, settings, kind):
             return act
 
     workers = Workers(db, service, FakeServices(), settings)
-    payload = {"event_id": str(uuid4()), "schema_version": 1, "type": kind, "activity_id": str(act.activity_id)}
+    payload = {"message_id": str(uuid4()), "schema_version": 1, "type": kind, "activity_id": str(act.activity_id)}
     workers.process(settings.events_topic, payload)
     assert calls == [((act.activity_id,), {})]
 

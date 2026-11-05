@@ -33,7 +33,7 @@ Node.js 22 com TypeScript, Fastify (contrato OpenAPI gerado pelo código), Postg
 | `payments` | Um pagamento por inscrição (`registration_id` único), com valor, moeda, estado e prazo (`expires_at`). |
 | `payment_transitions` | Histórico de toda mudança de estado: de, para, motivo e identificador da requisição (`request_id`). |
 | `outbox` | Eventos a publicar no Kafka, gravados na mesma transação da mudança de estado. |
-| `processed_messages` | `event_id` das mensagens já tratadas (deduplicação do consumidor de `subscription.events`). |
+| `processed_messages` | `message_id` das mensagens já tratadas (deduplicação do consumidor de `subscription.events`). |
 
 Máquina de estados:
 
@@ -84,11 +84,11 @@ O cabeçalho `X-Request-Id` (8 a 64 caracteres de `[A-Za-z0-9._-]`, senão é ge
 
 ### Kafka
 
-O serviço consome `subscription.events` (variável `SUBSCRIPTION_TOPIC`; grupo `PAYMENTS_CONSUMER_GROUP`, padrão `payments-service`; leitura desde o início; atualização de metadados a cada 10 s). O envelope é plano; são obrigatórios `event_id`, `schema_version` (inteiro; maior que 1 é rejeitado), `type` e `registration_id`, e campos extras e tipos desconhecidos são tolerados. Mensagens inválidas são registradas em log (só identificadores, nunca o conteúdo) e puladas.
+O serviço consome `subscription.events` (variável `SUBSCRIPTION_TOPIC`; grupo `PAYMENTS_CONSUMER_GROUP`, padrão `payments-service`; leitura desde o início; atualização de metadados a cada 10 s). O envelope é plano; são obrigatórios `message_id`, `schema_version` (inteiro; maior que 1 é rejeitado), `type` e `registration_id`, e campos extras e tipos desconhecidos são tolerados. Mensagens inválidas são registradas em log (só identificadores, nunca o conteúdo) e puladas.
 
 - `RegistrationCancelled` e `RegistrationExpired`: pagamento `PENDING` vira `CANCELLED`; pagamento `APPROVED` vira `REFUNDED` (motivos `registration_cancelled` e `registration_expired`). Qualquer outro estado, ou a ausência de pagamento, não tem efeito.
 - Os demais tipos (inclusive `RegistrationPendingPayment`) são ignorados.
-- A deduplicação é por `event_id` em `processed_messages`, gravado na mesma transação do efeito (entrega pelo menos uma vez). Erro de banco interrompe o processamento e o offset não é confirmado.
+- A deduplicação é por `message_id` em `processed_messages`, gravado na mesma transação do efeito (entrega pelo menos uma vez). Erro de banco interrompe o processamento e o offset não é confirmado.
 
 Na inicialização o serviço cria, se não existirem, `payments.events`, `notifications` e `subscription.events`. Não existe tópico `payments.commands`.
 
@@ -100,7 +100,7 @@ O serviço guarda no máximo um pagamento por `registration_id` (deduplicado por
 
 ### Tópico `payments.events` (chave: `registration_id`)
 
-Eventos `PaymentCreated` (`PENDING`), `PaymentApproved` (`APPROVED`), `PaymentDeclined` (`DECLINED`), `PaymentExpired` (`EXPIRED`), `PaymentCancelled` (`CANCELLED`) e `PaymentRefunded` (`REFUNDED`), em envelope plano e versionado: `event_id` (id único da mensagem), `schema_version` (1), `type`, `occurred_at`, `request_id`, `registration_id`, `amount_minor` (inteiro em unidades menores), `currency`, `payment_id`, `user_id`, `parent_event_id`, `status` e `reason`. O evento do serviço de eventos a que o pagamento pertence sai como `parent_event_id`, porque `event_id` identifica a mensagem; na API HTTP o campo continua `event_id`. O `activity_id` não é mais publicado (o serviço de relatórios será atualizado à parte).
+Eventos `PaymentCreated` (`PENDING`), `PaymentApproved` (`APPROVED`), `PaymentDeclined` (`DECLINED`), `PaymentExpired` (`EXPIRED`), `PaymentCancelled` (`CANCELLED`) e `PaymentRefunded` (`REFUNDED`), em envelope plano e versionado: `message_id` (id único da mensagem), `schema_version` (1), `type`, `occurred_at`, `request_id`, `registration_id`, `amount_minor` (inteiro em unidades menores), `currency`, `payment_id`, `user_id`, `parent_event_id`, `status` e `reason`. O evento do serviço de eventos a que o pagamento pertence sai como `parent_event_id`, para não se confundir com `message_id`, que identifica a mensagem; na API HTTP e na coluna `payments.event_id` o campo é `event_id`. O `activity_id` não é mais publicado (o serviço de relatórios será atualizado à parte).
 
 O campo `reason` explica a causa: `simulated_approval`, `simulated_decline`, `simulated_expiration`, `payment_deadline` (prazo vencido), `expired_before_confirmation` (aprovação tardia), `registration_cancelled` e `registration_expired`.
 
@@ -143,7 +143,7 @@ Ao receber `RegistrationCancelled` ou `RegistrationExpired` em `subscription.eve
 | Database per service | PostgreSQL próprio, sem acesso de outros serviços | Implementado |
 | API Gateway | Rotas de front liberadas por endpoint; criação privada | Implementado (liberação por script de administrador) |
 | Server-side discovery | Registro no discoverer com o protocolo bruto e a mesma política de retentativa das bibliotecas (10 tentativas, 1 s até 30 s) | Implementado |
-| Messaging com consumidor idempotente | `event_id` gravado na mesma transação do efeito (`processed_messages`), usado pelo consumidor de `subscription.events` | Implementado (sem teste com Kafka real) |
+| Messaging com consumidor idempotente | `message_id` gravado na mesma transação do efeito (`processed_messages`), usado pelo consumidor de `subscription.events` | Implementado (sem teste com Kafka real) |
 | Transactional outbox | Evento e mudança de estado na mesma transação; worker publica depois | Implementado |
 | Health check API | `GET /healthcheck` responde 200 só se o banco responde ao ping, senão 503 | Implementado |
 | Access token | Identidade por `X-User-Id` repassado pelo gateway, sem verificação, como no resto do monorepo; autorização por dono do pagamento | Parcial |
@@ -180,7 +180,7 @@ A validação com Postgres, Kafka e serviço de inscrições reais ainda precisa
 - O estorno só muda o estado e avisa o usuário; não há devolução real de dinheiro (provedor simulado).
 - Não há autenticação entre serviços; o `GET /internal/registrations/{id}` do serviço de inscrições deve ficar privado no gateway.
 - Exception tracking e audit log dependem de decisão do grupo sobre a ferramenta e o formato do evento.
-- Em caso de queda entre o envio e a marcação da outbox, o mesmo evento ou aviso pode ser enviado duas vezes. Os consumidores precisam deduplicar por `event_id`.
+- Em caso de queda entre o envio e a marcação da outbox, o mesmo evento ou aviso pode ser enviado duas vezes. Os consumidores precisam deduplicar por `message_id`.
 - Moedas diferentes são guardadas, mas o serviço não faz conversão.
 - Falta o teste automatizado de integração com banco e broker.
 
@@ -189,7 +189,7 @@ A validação com Postgres, Kafka e serviço de inscrições reais ainda precisa
 Para a RN02 e a RN03 fecharem, o serviço de inscrições precisa:
 
 1. Expor `GET /internal/registrations/{id}` (registro no discoverer com o kind `subscription`).
-2. Publicar `RegistrationCancelled` e `RegistrationExpired` em `subscription.events`, com `event_id` único por mensagem.
+2. Publicar `RegistrationCancelled` e `RegistrationExpired` em `subscription.events`, com `message_id` único por mensagem.
 3. Consumir `PaymentApproved`, `PaymentDeclined`, `PaymentExpired` e `PaymentRefunded` do `payments.events`.
 
 O administrador do gateway precisa liberar as rotas de criação, consulta e simulação (a criação, `POST /payments`, é uma rota nova a liberar).

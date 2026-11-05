@@ -38,7 +38,8 @@ DECLINED, EXPIRED, CANCELLED, REFUNDED                        (final)
 ## Database migrations
 `migrate()` runs on boot and is idempotent. It converts older databases in place: `amount` -> `amount_minor`,
 statuses `CONFIRMED`/`REFUSED` -> `APPROVED`/`DECLINED` (rows, history, `simulated_*` reasons and the status CHECK),
-`processed_messages.message_id` -> `event_id`, and drops the old `payments.activity_id` column. v7 adds `REFUNDED` to the status CHECK and makes `payments.event_id` nullable.
+and drops the old `payments.activity_id` column. v7 adds `REFUNDED` to the status CHECK and makes `payments.event_id` nullable.
+v8 renames `processed_messages.event_id` back to `message_id` if (and only if) a database already ran the short-lived revision that had renamed it (there is no v4; that revision was removed).
 All are no-ops on a fresh database and on re-runs. (Not yet run against a real Postgres.)
 
 ## What this service receives
@@ -77,10 +78,10 @@ The host is cached; on a connection failure the discoverer is consulted again an
 
 ### Kafka (consumed)
 Topic `subscription.events` (env `SUBSCRIPTION_TOPIC`), group `PAYMENTS_CONSUMER_GROUP` (`payments-service`), read from the beginning, metadata refresh 10 s.
-Required fields of the flat envelope: `event_id`, `schema_version` (integer; > 1 is rejected), `type`, `registration_id`; extra fields and unknown types are tolerated.
+Required fields of the flat envelope: `message_id`, `schema_version` (integer; > 1 is rejected), `type`, `registration_id`; extra fields and unknown types are tolerated.
 - `RegistrationCancelled` / `RegistrationExpired`: payment `PENDING` -> `CANCELLED`, `APPROVED` -> `REFUNDED` (reason `registration_cancelled` / `registration_expired`); any other state, or no payment, is a no-op.
 - Every other type (including `RegistrationPendingPayment`) is ignored.
-- Deduped by `event_id` in `processed_messages`, committed in the same transaction as the effect (at-least-once). A database error throws, so the offset is not committed. Invalid messages are logged (ids only, never payloads) and skipped.
+- Deduped by `message_id` in `processed_messages`, committed in the same transaction as the effect (at-least-once). A database error throws, so the offset is not committed. Invalid messages are logged (ids only, never payloads) and skipped.
 
 At startup Payments creates (if absent, 1 replica, `PAYMENTS_TOPIC_PARTITIONS` partitions) `payments.events`, `notifications` and `subscription.events`. There is no `payments.commands` topic.
 
@@ -91,15 +92,15 @@ At startup Payments creates (if absent, 1 replica, `PAYMENTS_TOPIC_PARTITIONS` p
 ### Kafka: topic `payments.events` (key = `registration_id`, env `PAYMENT_EVENTS_TOPIC`)
 Flat envelope, no nested `data`:
 
-    {"event_id","schema_version":1,"type","occurred_at","request_id","registration_id","amount_minor","currency",
+    {"message_id","schema_version":1,"type","occurred_at","request_id","registration_id","amount_minor","currency",
      "payment_id","user_id","parent_event_id","status","reason"}
 
-- `event_id` is the unique id of the message (consumers dedupe by it). The Events-service event the payment belongs to
-  is published as `parent_event_id` (the HTTP API still calls it `event_id`).
+- `message_id` is the unique id of the message (consumers dedupe by it). The Events-service event the payment belongs to
+  is published as `parent_event_id` (the HTTP API and the `payments.event_id` column call it `event_id`).
 - `amount_minor` is an integer in minor units (2500 = 25.00).
 - `type` by status: `PENDING` -> `PaymentCreated`, `APPROVED` -> `PaymentApproved`, `DECLINED` -> `PaymentDeclined`,
   `EXPIRED` -> `PaymentExpired`, `CANCELLED` -> `PaymentCancelled`, `REFUNDED` -> `PaymentRefunded`.
-  Subscription reads only `event_id`, `schema_version`, `type`, `registration_id`, `amount_minor`, `currency`, `request_id`.
+  Subscription reads only `message_id`, `schema_version`, `type`, `registration_id`, `amount_minor`, `currency`, `request_id`.
 
 `reason` says why (null on `PaymentCreated`): `simulated_approval`, `simulated_decline`, `simulated_expiration`,
 `payment_deadline` (expired by the job), `expired_before_confirmation` (late approval), `registration_cancelled`,
@@ -109,7 +110,7 @@ Who is expected to act on them:
 - **Subscription**: `PaymentApproved` confirms the registration; `PaymentDeclined` and `PaymentExpired` release the seat (RN02, RN03).
 - **Reports**: counts payments and revenue (already consumes this contract).
 - `activity_id` is no longer published (Reports will be updated separately).
-- Delivery is at-least-once, so consumers must dedupe by `event_id`.
+- Delivery is at-least-once, so consumers must dedupe by `message_id`.
 
 ### Kafka: topic `notifications` (key = `user_id`)
 On `APPROVED`, `DECLINED` and `EXPIRED` the user gets a notification (format of the Notifications service:

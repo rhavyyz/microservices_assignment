@@ -21,7 +21,7 @@ PERCENTAGE_FIELDS = {"attended_activities": 3, "total_activities": 4, "attendanc
 
 def event(**overrides):
     payload = {
-        "event_id": str(uuid.uuid4()),
+        "message_id": str(uuid.uuid4()),
         "schema_version": 1,
         "type": "AttendanceEligible",
         "registration_id": str(REGISTRATION_ID),
@@ -274,7 +274,7 @@ def test_redelivered_event_is_idempotent_and_skips_lookups(env):
 
     handler.handle(event())
     calls_after_first = list(directory.calls)
-    handler.handle(event(event_id=str(uuid.uuid4())))
+    handler.handle(event(message_id=str(uuid.uuid4())))
 
     assert len(certificates(factory)) == 1
     assert directory.calls == calls_after_first

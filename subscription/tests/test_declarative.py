@@ -67,7 +67,7 @@ class Conn:
             if params[0] in self.seen:
                 return Result()
             self.seen.add(params[0])
-            return Result([{"event_id": params[0]}])
+            return Result([{"message_id": params[0]}])
         if "INSERT INTO registrations" in sql:
             self.reg = {
                 "id": params[0],
@@ -159,7 +159,7 @@ def test_accept_offer_emits_pending_payment_only_when_paid(amount, status, expec
 
 def message(kind="PaymentApproved", **extra):
     return {
-        "event_id": str(uuid4()),
+        "message_id": str(uuid4()),
         "schema_version": 1,
         "type": kind,
         "registration_id": str(uuid4()),
@@ -291,7 +291,7 @@ def test_unknown_registration_is_ignored_not_quarantined():
     assert conn.outbox == []
 
 
-def test_duplicate_event_id_is_processed_once():
+def test_duplicate_message_id_is_processed_once():
     registration = pending()
     conn = Conn(registration)
     svc = service_with(conn)

@@ -152,13 +152,13 @@ export async function settleById(
  */
 export async function closeForRegistration(
   pool: Pool,
-  eventId: string,
+  messageId: string,
   registrationId: string,
   reason: string,
   requestId: string | null,
 ): Promise<'duplicate' | 'no_payment' | Outcome> {
   return inTransaction(pool, async (client) => {
-    const seen = await client.query('INSERT INTO processed_messages (event_id) VALUES ($1) ON CONFLICT DO NOTHING', [eventId]);
+    const seen = await client.query('INSERT INTO processed_messages (message_id) VALUES ($1) ON CONFLICT DO NOTHING', [messageId]);
     if (seen.rowCount === 0) return 'duplicate';
     const row = await lock(client, 'registration_id', registrationId);
     if (!row) return 'no_payment';

@@ -79,8 +79,9 @@ Variáveis: `PAYMENT_EVENTS_TOPIC`, `EVENTS_TOPIC`,
 Inscrições **não envia comandos nem chama Pagamentos**. Ela publica apenas os próprios eventos de
 domínio em `subscription.events` e aguarda os resultados em `payments.events`. Pagamentos reage:
 
-- cria a cobrança ao ver `RegistrationPendingPayment`, lendo os fatos em
-  `GET /internal/registrations/{registration_id}` (abaixo) e mantendo a própria expiração;
+- ignora `RegistrationPendingPayment`: a cobrança é criada pelo participante em `POST /payments`
+  (só com o `registration_id`), e Pagamentos lê os fatos em
+  `GET /internal/registrations/{registration_id}` (abaixo), mantendo a própria expiração;
 - cancela a cobrança pendente ao ver `RegistrationCancelled`/`RegistrationExpired` e estorna uma
   cobrança já aprovada (inclusive aprovação tardia, vista depois do cancelamento/expiração).
 
@@ -108,7 +109,7 @@ autoridade sobre a vaga.
 `OFFERED`/`PENDING_PAYMENT`. `parent_event_id` é o id do evento de Eventos ao qual a atividade pertence
 (`event_id` da atividade, gravado na criação da inscrição); é null em inscrições anteriores à migração
 `004`. Id desconhecido ou que não seja UUID → 404 `REGISTRATION_NOT_FOUND` (`application/problem+json`).
-Não confundir `parent_event_id` com o `event_id` das mensagens Kafka, que identifica a mensagem.
+`message_id` identifica a mensagem Kafka; `parent_event_id` é o evento de Eventos.
 
 ## Resultados financeiros
 
@@ -116,7 +117,7 @@ Pagamentos publica em `payments.events` mensagens planas:
 
 ```json
 {
-  "event_id": "77777777-7777-4777-8777-777777777777",
+  "message_id": "77777777-7777-4777-8777-777777777777",
   "schema_version": 1,
   "type": "PaymentApproved",
   "registration_id": "55555555-5555-4555-8555-555555555555",
@@ -127,11 +128,11 @@ Pagamentos publica em `payments.events` mensagens planas:
 ```
 
 Tipos: `PaymentCreated`, `PaymentApproved`, `PaymentDeclined`, `PaymentExpired`, `PaymentCancelled`,
-`PaymentRefunded`. Obrigatórios: `event_id`, `schema_version` (1), `type`, `registration_id`,
+`PaymentRefunded`. Obrigatórios: `message_id`, `schema_version` (1), `type`, `registration_id`,
 `amount_minor` (inteiro >= 0) e `currency` (texto, sem validação de padrão em Inscrições).
 `request_id` é opcional/nulo (string de 8–64 caracteres `[A-Za-z0-9._-]` quando presente) e é propagado
 aos eventos resultantes. Campos adicionais são ignorados. Mensagem inválida vai para a DLQ.
-Inscrições deduplica por `event_id`. Nenhum cliente HTTP público pode enviar esse resultado.
+Inscrições deduplica por `message_id`. Nenhum cliente HTTP público pode enviar esse resultado.
 
 Regras aplicadas sob o lock da atividade, com o relógio do banco:
 
@@ -148,7 +149,7 @@ Eventos publica em `events.events`:
 
 ```json
 {
-  "event_id": "88888888-8888-4888-8888-888888888888",
+  "message_id": "88888888-8888-4888-8888-888888888888",
   "schema_version": 1,
   "type": "ActivityEnded",
   "activity_id": "11111111-1111-4111-8111-111111111111"
@@ -161,7 +162,7 @@ API após encerramento/cancelamento. Encerramento antecipado à data final não 
 
 ## Eventos de Inscrições
 
-Envelope: `event_id`, `schema_version=1`, `type`, `registration_id`, `activity_id`, `user_id`,
+Envelope: `message_id`, `schema_version=1`, `type`, `registration_id`, `activity_id`, `user_id`,
 `aggregate_version`, `occurred_at`, `status`, `request_id` (opcional/nulo em trabalho de fundo; Pagamentos
 devolve o mesmo valor nos resultados; ausente das mensagens de Notificações). Tipos:
 
@@ -184,13 +185,13 @@ encerradas antes da migração 003 não são reavaliadas.
 
 Campos adicionais (somente neste tipo; mudança aditiva, `schema_version` continua 1):
 `parent_event_id` (id do evento no serviço de Eventos, uuid), `attended_activities` (int),
-`total_activities` (int), `attendance_percentage` (número, até 2 casas). `event_id` continua sendo o
+`total_activities` (int), `attendance_percentage` (número, até 2 casas). `message_id` continua sendo o
 uuid da mensagem, nunca o id do evento de Eventos. `registration_id`/`activity_id`/`aggregate_version`
 referem-se à inscrição da atividade cujo encerramento disparou a avaliação; a chave Kafka segue
 `registration_id`.
 Certificados permanece responsável pela emissão, idempotência e regras adicionais próprias.
 Relatórios pode reconstruir projeções por esses eventos; nunca deve escrever no banco de Inscrições.
-Consumidores deduplicam por event_id e usam aggregate_version para rejeitar estados antigos.
+Consumidores deduplicam por message_id e usam aggregate_version para rejeitar estados antigos.
 
 ## Notificações existentes
 
@@ -202,7 +203,7 @@ Publicação compatível com `notifications/message.go`:
   "message": "Sua inscrição foi confirmada.",
   "payload_type": "RegistrationConfirmed",
   "payload": {
-    "event_id": "33333333-3333-4333-8333-333333333333",
+    "message_id": "33333333-3333-4333-8333-333333333333",
     "registration_id": "55555555-5555-4555-8555-555555555555",
     "expires_at": null
   }
