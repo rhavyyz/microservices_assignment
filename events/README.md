@@ -39,7 +39,7 @@ Rollout: the gateway adds new endpoints as private. Open them once with `events/
 `PORT` (8080), `DATABASE_URL` (`postgres://events:events@events-db:5432/events`, dev default), `KAFKA_BROKERS` (`kafka:9092`),
 `EVENTS_TOPIC`, `SUBSCRIPTION_TOPIC`, `EVENTS_CONSUMER_GROUP` (`events-service`), `EVENTS_TOPIC_PARTITIONS` (6),
 `OUTBOX_INTERVAL_MS` (500), `OUTBOX_BATCH_SIZE` (100), `OUTBOX_RETENTION_HOURS` (24), `JWT_ISSUER` (`eventhub-users`),
-`JWT_JWKS_URL` (default: the user service found through the discoverer, `/.well-known/jwks.json`), `JWKS_CACHE_SECONDS` (300).
+`JWT_JWKS_URL` (fixed URL override; default: `/.well-known/jwks.json` of the user service, requested through the shared lib's `request`), `JWKS_CACHE_SECONDS` (300).
 The `discovery` lib itself reads `SERVICE_DISCOVERER_URL` and `SERVICE_HOST` (default `<hostname>:<PORT>`).
 `EVENTS_DB_PASSWORD` (compose) sets the database password; the root compose passes it to `DATABASE_URL` too.
 

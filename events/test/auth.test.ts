@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign, type KeyObject } from 'node:crypto';
 import { AppError } from '../src/errors.ts';
-import { bearerToken, createTokenVerifier, type Jwk } from '../src/http/auth.ts';
+import { bearerToken, createTokenVerifier, fetchJwks, type Jwk } from '../src/http/auth.ts';
 
 const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
 const pair = () => generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -98,4 +98,21 @@ test('bearer header parsing', () => {
   assert.equal(bearerToken('bearer   x'), 'x');
   assert.throws(() => bearerToken('Basic dXNlcg=='), AppError);
   assert.throws(() => bearerToken('Bearer a b'), AppError);
+});
+
+test('fetchJwks returns the keys of a 200 answer', async () => {
+  const keys = [jwkOf(pair().publicKey, 'k1')];
+  assert.deepEqual(await fetchJwks(async () => new Response(JSON.stringify({ keys }), { status: 200 })), keys);
+});
+
+test('fetchJwks rejects a non-200 answer', async () => {
+  await assert.rejects(fetchJwks(async () => new Response('', { status: 503 })), { message: 'JWKS answered 503' });
+});
+
+test('fetchJwks rejects a body without keys', async () => {
+  await assert.rejects(fetchJwks(async () => new Response('{}', { status: 200 })), { message: 'JWKS without keys' });
+});
+
+test('fetchJwks propagates a failed request', async () => {
+  await assert.rejects(fetchJwks(async () => { throw new Error('unreachable'); }), { message: 'unreachable' });
 });

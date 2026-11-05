@@ -18,7 +18,7 @@ início, fim e descrição.
 |---|---|
 | Database per Service | PostgreSQL próprio (`events-db`), só na rede `events-net`; nenhum outro serviço lê suas tabelas. |
 | API Gateway | Rotas expostas como `/events/...` pelo Gateway; `GET /openapi.json` alimenta a tabela de endpoints; script abre as rotas. |
-| Server-side discovery | Registro como `events` no service-discoverer (registro único ao iniciar, pela biblioteca compartilhada); a chave pública do serviço de Usuários é localizada via `consult`. |
+| Server-side discovery | Registro como `events` no service-discoverer (registro único ao iniciar, pela biblioteca compartilhada); a chave pública do serviço de Usuários é obtida com `request` da biblioteca compartilhada (`JWT_JWKS_URL` a substitui por uma URL fixa). |
 | Access Token | JWT RS256 emitido pelo serviço de Usuários, validado localmente com o JWKS (ADR-E4). |
 | Messaging (Kafka) | Publica `event.*`, `activity.*`, `seat.*` em `events-events`; consome `registration.*` de `subscription-events`. |
 | Saga / consistência de dados | Lado de capacidade da saga de inscrição, coreografada por mensagens (ADR-E2). |

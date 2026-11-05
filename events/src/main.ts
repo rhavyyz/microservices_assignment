@@ -2,7 +2,7 @@ import type { Consumer } from 'kafkajs';
 import { createAudit } from './audit.ts';
 import { loadConfig } from './config.ts';
 import { createPool, migrate } from './db/pool.ts';
-import { Kind, consult, register } from 'discovery';
+import { Kind, register, request } from 'discovery';
 import { createTokenVerifier, fetchJwks } from './http/auth.ts';
 import { registerRoutes } from './http/routes.ts';
 import { buildServer } from './http/server.ts';
@@ -23,11 +23,14 @@ pool.on('error', (e) => log.error({ err: e.message }, 'postgres pool error'));
 const deps = { pool, topic: config.eventsTopic, audit: createAudit(log) };
 const seats = createSeatService(deps);
 
-// Access Token: the user service's public keys, from JWT_JWKS_URL or located through the discoverer.
+// Access Token: the user service's public keys, from JWT_JWKS_URL or located through the discoverer (lib `request`).
 const verifyToken = createTokenVerifier({
   issuer: config.jwtIssuer,
   cacheSeconds: config.jwksCacheSeconds,
-  fetchKeys: async () => fetchJwks(config.jwksUrl ?? `http://${await consult(Kind.USER)}/.well-known/jwks.json`),
+  // JWT_JWKS_URL is a fixed URL (no lookup); otherwise the shared lib locates the user service.
+  fetchKeys: () => fetchJwks(() => config.jwksUrl
+    ? fetch(config.jwksUrl, { signal: AbortSignal.timeout(3000) })
+    : request('GET', Kind.USER, '/.well-known/jwks.json')),
   onKeysError: (e) => log.warn({ err: e.message }, 'could not download the access token keys'),
 });
 registerRoutes(app, { events: createEventService(deps), verifyToken });
