@@ -202,6 +202,35 @@ func resolve(kind Kind, stale string) (string, error) {
 	return c.host, nil
 }
 
+// Host returns the cached host of `kind`, refreshed like Request does: reused while younger than the cache TTL,
+// consulted otherwise, the previous host kept if that refresh fails. For callers that need the host itself
+// (like a reverse proxy) instead of going through Request. Report an unreachable host with Forget.
+func Host(kind Kind) (string, error) {
+	return resolve(kind, "")
+}
+
+// Forget drops the cached host of `kind` if it is still `host` (found unreachable), so the next Host consults
+// the discoverer again and never falls back to that host. A different cached host is kept.
+func Forget(kind Kind, host string) {
+	c, ok := caches[kind]
+	if !ok {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.host == host {
+		c.host = ""
+		c.at = time.Time{}
+	}
+}
+
+// SetClock replaces the clock of the host cache and returns a function restoring it. Meant for tests.
+func SetClock(f func() time.Time) (restore func()) {
+	orig := now
+	now = f
+	return func() { now = orig }
+}
+
 // Request calls `path` (like "/charge") on an instance of `kind`. The host is cached per kind for
 // DISCOVERY_CACHE_TTL_SECONDS (default 10, 0 = consult every time), so calls spread over the instances
 // as the discoverer rotates them. If the host is unreachable, the host is rediscovered and the call retried once.

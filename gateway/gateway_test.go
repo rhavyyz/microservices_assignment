@@ -1081,99 +1081,32 @@ func TestSyncInsertsPrivate(t *testing.T) {
 	}
 }
 
-// ttlDiscovery is a Discovery with an injected clock; advance moves it.
-func ttlDiscovery(ttl time.Duration) (*Discovery, func(time.Duration)) {
+// fakeClock moves the discovery lib's cache clock; advance moves it.
+func fakeClock(t *testing.T) func(time.Duration) {
 	cur := time.Unix(1000, 0)
-	d := NewDiscovery()
-	d.ttl = ttl
-	d.now = func() time.Time { return cur }
-	return d, func(x time.Duration) { cur = cur.Add(x) }
+	t.Cleanup(discovery.SetClock(func() time.Time { return cur }))
+	return func(x time.Duration) { cur = cur.Add(x) }
 }
 
-func TestDiscoveryHostTTLMovesToNextHost(t *testing.T) {
-	_, calls := fakeDiscoverer(t, map[string][]string{"payments": {"a:1", "b:2", "c:3"}})
-	d, advance := ttlDiscovery(5 * time.Second)
-	ctx := context.Background()
-	host := func(want string, wantCalls int) {
-		t.Helper()
-		if h, err := d.Host(ctx, Payments); err != nil || h != want || *calls != wantCalls {
-			t.Fatalf("got %q, %v after %d consults; want %q after %d", h, err, *calls, want, wantCalls)
-		}
-	}
-	host("a:1", 1)
-	advance(4 * time.Second)
-	host("a:1", 1)
-	advance(time.Second)
-	host("b:2", 2)
-	advance(6 * time.Second)
-	host("c:3", 3)
-}
-
-func TestDiscoveryHostTTLZeroConsultsEveryTime(t *testing.T) {
-	_, calls := fakeDiscoverer(t, map[string][]string{"payments": {"a:1", "b:2"}})
-	d, _ := ttlDiscovery(0)
-	for _, want := range []string{"a:1", "b:2", "b:2"} {
-		if h, _ := d.Host(context.Background(), Payments); h != want {
-			t.Fatalf("got %q, want %q", h, want)
-		}
-	}
-	if *calls != 3 {
-		t.Fatalf("consults = %d", *calls)
+func TestDiscoveryHostCancelled(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-release }))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+	t.Setenv("SERVICE_DISCOVERER_URL", srv.URL)
+	discovery.Reset()
+	t.Cleanup(discovery.Reset)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := NewDiscovery().Host(ctx, Payments); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 }
 
-func TestParseCacheTTL(t *testing.T) {
-	for in, want := range map[string]time.Duration{"0": 0, "10": 10 * time.Second, "0.5": 500 * time.Millisecond} {
-		if got, err := ParseCacheTTL(in); err != nil || got != want {
-			t.Errorf("%q: got %v, %v; want %v", in, got, err, want)
-		}
-	}
-	for _, in := range []string{"", "abc", "-1", "NaN", "Inf", "86401"} {
-		if _, err := ParseCacheTTL(in); err == nil {
-			t.Errorf("%q: expected an error", in)
-		}
-	}
-}
-
-func TestDiscoveryStaleHostUsedWhenRefreshFails(t *testing.T) {
-	srv, _ := fakeDiscoverer(t, map[string][]string{"payments": {"a:1"}})
-	d, advance := ttlDiscovery(5 * time.Second)
-	ctx := context.Background()
-	if h, _ := d.Host(ctx, Payments); h != "a:1" {
-		t.Fatalf("host = %q", h)
-	}
-	srv.Close()
-	advance(6 * time.Second)
-	if h, err := d.Host(ctx, Payments); err != nil || h != "a:1" {
-		t.Fatalf("got %q, %v; want the stale a:1", h, err)
-	}
-	// a host that failed is forgotten first, so it is not reused once the discoverer is down
-	d.Forget(Payments, "a:1")
-	if h, err := d.Host(ctx, Payments); err == nil {
-		t.Fatalf("got %q, want an error", h)
-	}
-}
-
-func TestDiscoveryNoHostAndConsultFails(t *testing.T) {
+func TestDiscoveryHostNoInstance(t *testing.T) {
 	fakeDiscoverer(t, nil)
-	d, _ := ttlDiscovery(5 * time.Second)
-	if _, err := d.Host(context.Background(), Payments); !errors.Is(err, ErrNoInstance) {
+	if _, err := NewDiscovery().Host(context.Background(), Payments); !errors.Is(err, ErrNoInstance) {
 		t.Fatalf("err = %v, want ErrNoInstance", err)
-	}
-}
-
-func TestDiscoveryForgetOnlyDropsFailedHost(t *testing.T) {
-	_, calls := fakeDiscoverer(t, map[string][]string{"payments": {"a:1", "b:2"}})
-	d, _ := ttlDiscovery(time.Minute)
-	ctx := context.Background()
-	d.Host(ctx, Payments)
-	d.Forget(Payments, "other:9") // not the cached host: kept
-	if h, _ := d.Host(ctx, Payments); h != "a:1" || *calls != 1 {
-		t.Fatalf("got %q after %d consults", h, *calls)
-	}
-	d.Forget(Payments, "a:1")
-	if h, _ := d.Host(ctx, Payments); h != "b:2" || *calls != 2 {
-		t.Fatalf("got %q after %d consults", h, *calls)
 	}
 }
 
@@ -1184,8 +1117,9 @@ func TestProxyRefreshesHostAfterTTL(t *testing.T) {
 	b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hitsB.Add(1) }))
 	defer b.Close()
 	fakeDiscoverer(t, map[string][]string{"payments": {hostOf(a), hostOf(b)}})
-	d, advance := ttlDiscovery(5 * time.Second)
-	gw, _ := newGateway(t, newFakeStore(ep(Payments, "GET", "/x", 10)), d)
+	t.Setenv("DISCOVERY_CACHE_TTL_SECONDS", "5")
+	advance := fakeClock(t)
+	gw, _ := newGateway(t, newFakeStore(ep(Payments, "GET", "/x", 10)), NewDiscovery())
 	h := authHdr("u")
 	get(t, "GET", gw.URL+"/payments/x", "", h)
 	get(t, "GET", gw.URL+"/payments/x", "", h)

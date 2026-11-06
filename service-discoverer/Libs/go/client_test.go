@@ -362,3 +362,85 @@ func TestRediscoveryResetsTTL(t *testing.T) {
 		t.Fatalf("consults = %d", *consults)
 	}
 }
+
+func TestHostExpiresAndMovesToNextHost(t *testing.T) {
+	advance := fakeClock(t)
+	_, consults := fakeDiscoverer(t, "a:1", "b:2", "c:3")
+	t.Setenv("DISCOVERY_CACHE_TTL_SECONDS", "5")
+	get := func(want string, wantConsults int) {
+		t.Helper()
+		if h, err := Host(Payments); err != nil || h != want || *consults != wantConsults {
+			t.Fatalf("got %q, %v after %d consults; want %q after %d", h, err, *consults, want, wantConsults)
+		}
+	}
+	get("a:1", 1)
+	advance(4 * time.Second)
+	get("a:1", 1)
+	advance(time.Second)
+	get("b:2", 2)
+	advance(6 * time.Second)
+	get("c:3", 3)
+}
+
+func TestHostTTLZeroConsultsEveryTime(t *testing.T) {
+	fakeClock(t)
+	_, consults := fakeDiscoverer(t, "a:1", "b:2")
+	t.Setenv("DISCOVERY_CACHE_TTL_SECONDS", "0")
+	for _, want := range []string{"a:1", "b:2", "b:2"} {
+		if h, _ := Host(Payments); h != want {
+			t.Fatalf("got %q, want %q", h, want)
+		}
+	}
+	if *consults != 3 {
+		t.Fatalf("consults = %d", *consults)
+	}
+}
+
+func TestHostStaleFallbackAndForget(t *testing.T) {
+	advance := fakeClock(t)
+	s, _ := fakeDiscoverer(t, "a:1")
+	t.Setenv("DISCOVERY_CACHE_TTL_SECONDS", "5")
+	if h, _ := Host(Payments); h != "a:1" {
+		t.Fatalf("host = %q", h)
+	}
+	s.Close()
+	advance(6 * time.Second)
+	if h, err := Host(Payments); err != nil || h != "a:1" {
+		t.Fatalf("got %q, %v; want the stale a:1", h, err)
+	}
+	// a forgotten host is never used as the fallback
+	Forget(Payments, "a:1")
+	if h, err := Host(Payments); err == nil {
+		t.Fatalf("got %q, want an error", h)
+	}
+}
+
+func TestHostNoInstanceIsAnError(t *testing.T) {
+	fakeClock(t)
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "none", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(s.Close)
+	t.Setenv("SERVICE_DISCOVERER_URL", s.URL)
+	Reset()
+	t.Cleanup(Reset)
+	if _, err := Host(Payments); !errors.Is(err, ErrNoInstance) {
+		t.Fatalf("err = %v, want ErrNoInstance", err)
+	}
+}
+
+func TestForgetOnlyDropsSameHost(t *testing.T) {
+	fakeClock(t)
+	_, consults := fakeDiscoverer(t, "a:1", "b:2")
+	t.Setenv("DISCOVERY_CACHE_TTL_SECONDS", "60")
+	Host(Payments)
+	Forget(Payments, "other:9") // not the cached host: kept
+	if h, _ := Host(Payments); h != "a:1" || *consults != 1 {
+		t.Fatalf("got %q after %d consults", h, *consults)
+	}
+	Forget(Kind("nope"), "a:1") // unknown kind: no-op
+	Forget(Payments, "a:1")     // Host consults again
+	if h, _ := Host(Payments); h != "b:2" || *consults != 2 {
+		t.Fatalf("got %q after %d consults", h, *consults)
+	}
+}

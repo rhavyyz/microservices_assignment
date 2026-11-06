@@ -42,6 +42,10 @@ discovery.Register(discovery.User)
 resp, err := discovery.Request("POST", discovery.Payments, "/charge",
     discovery.Options{Headers: map[string]string{"X-Id": "1"}, Body: map[string]any{"amount": 10}})
 // caller closes resp.Body
+
+// The cached host itself, for callers that cannot go through Request (e.g. a reverse proxy):
+host, err := discovery.Host(discovery.Payments)
+discovery.Forget(discovery.Payments, host) // drop it if unreachable and still the cached one
 ```
 
 ### Java (`service-discoverer/Libs/java`, Java 17+, no dependencies)

@@ -151,7 +151,7 @@ slow consumers are closed (4001); ping every 30 s.
 **Push consumer.** Reads `NOTIFICATIONS_PUSH_TOPIC` as a broadcast (no consumer group, starts at the end of the topic),
 forwards to the connected user's socket, best-effort.
 
-**Env:** `PORT`, `MONGO_URI`, `SERVICE_DISCOVERER_URL`, `DEFAULT_MAX_PER_MIN`, `DISCOVERY_CACHE_TTL_SECONDS` (10), `TRUSTED_PROXIES`, `KAFKA_BROKERS`,
+**Env:** `PORT`, `MONGO_URI`, `SERVICE_DISCOVERER_URL`, `DEFAULT_MAX_PER_MIN`, `DISCOVERY_CACHE_TTL_SECONDS` (10; read by the discovery lib's host cache, validated by the gateway at startup), `TRUSTED_PROXIES`, `KAFKA_BROKERS`,
 `NOTIFICATIONS_PUSH_TOPIC`, `NOTIFICATIONS_PUSH_PARTITIONS` (6). Full detail: root `README.md` (Gateway), ADR-003.
 
 ## 5. Service-discoverer (`service-discoverer/`, Go + client libs)
