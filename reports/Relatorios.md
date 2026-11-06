@@ -16,7 +16,7 @@ Fora do escopo desta versão: exportação de relatórios, filtros por período,
 | --- | --- |
 | API Gateway | Expõe os endpoints de consulta ao front e repassa o `X-User-Id` do organizador. |
 | Service-discoverer | O serviço se registra com o kind `reports`, e o gateway o encontra por ele. |
-| Kafka | Fonte única de dados: o serviço consome os tópicos `events-events`, `subscription-events` e `payments-events`. Ele não publica nada. |
+| Kafka | Fonte única de dados: o serviço consome os tópicos `events.events`, `subscription.events` e `payments.events`. Ele não publica nada. |
 | Serviço de eventos | Publica eventos e atividades (dono do evento, capacidade). |
 | Serviço de inscrições | Publica inscrições e check-ins. |
 | Serviço de pagamentos | Publica pagamentos e valores. |
@@ -53,20 +53,26 @@ Definições dos indicadores:
 
 ## 5. Interface: o que o serviço recebe
 
-O serviço não recebe chamadas de outros serviços. Recebe eventos pelo Kafka, em três tópicos (um por serviço de origem), em envelope versionado: `message_id`, `type`, `version` (1), `occurred_at`, `trace_id` e `data`.
+O serviço não recebe chamadas de outros serviços. Recebe eventos pelo Kafka, em três tópicos (um por serviço de origem), em envelope plano: `message_id`, `schema_version` (1), `type` (PascalCase), `occurred_at` e `trace_id` ficam no nível de cima, ao lado dos campos do tipo (não existe objeto `data`; o formato antigo aninhado é rejeitado).
 
-| Tópico | Tipo de evento | Dados obrigatórios | Dados opcionais |
+| Tópico | Tipo de evento | Campos obrigatórios | Campos opcionais |
 | --- | --- | --- | --- |
-| `events-events` | `event.created`, `event.updated` | `event_id` | `organizer_id`, `name`, `status`, `starts_at`, `ends_at` |
-| `events-events` | `event.published`, `event.cancelled` | `event_id` | os mesmos (o status é forçado para `PUBLISHED` ou `CANCELLED`) |
-| `events-events` | `activity.created`, `activity.updated` | `activity_id`, `event_id` | `name`, `capacity`, `paid` |
-| `subscription-events` | `registration.requested`, `confirmed`, `waitlisted`, `cancelled`, `expired` | `registration_id`, `event_id`, `activity_id` | `user_id` |
-| `subscription-events` | `checkin.registered` | `registration_id`, `event_id`, `activity_id` | `user_id` |
-| `payments-events` | `payment.created`, `confirmed`, `refused`, `expired`, `cancelled` | `payment_id`, `event_id` | `registration_id`, `activity_id`, `amount`, `currency` |
+| `events.events` | `EventCreated`, `EventUpdated` | `event_id` | `organizer_id`, `name`, `status`, `starts_at`, `ends_at` |
+| `events.events` | `EventPublished`, `EventCancelled` | `event_id` | os mesmos (o status é forçado para `PUBLISHED` ou `CANCELLED`) |
+| `events.events` | `ActivityCreated`, `ActivityUpdated` | `activity_id`, `event_id` | `name`, `capacity`, `paid` |
+| `subscription.events` | `RegistrationPendingPayment` (guardada como `PENDING`), `RegistrationConfirmed`, `RegistrationWaitlisted`, `RegistrationCancelled`, `RegistrationExpired` | `registration_id`, `event_id`, `activity_id` | `user_id` |
+| `subscription.events` | `AttendanceRecorded` (check-in) | `registration_id`, `event_id`, `activity_id` | `user_id` |
+| `payments.events` | `PaymentCreated` (`PENDING`), `PaymentApproved` (`CONFIRMED`), `PaymentDeclined` (`REFUSED`), `PaymentExpired`, `PaymentCancelled` | `payment_id`, `event_id` | `registration_id`, `activity_id`, `amount_minor`, `currency` |
+
+Valores: pagamentos trazem `amount_minor`, um inteiro em centavos. O serviço converte para a unidade principal sem aritmética de ponto flutuante (`2500` vira `25.00`, gravado em `numeric(12,2)`); valor negativo, fracionário ou em texto invalida a mensagem.
+
+Ignorados como qualquer tipo desconhecido: `WaitlistOffered`, `RegistrationRejected`, `AttendanceEligible`, `PaymentRefunded`, `ActivityDeleted`, `ActivityEnded` e `ActivityCancelled`.
+
+Lacuna conhecida: as mensagens de inscrição e de check-in do serviço de inscrições não trazem `event_id` (só `AttendanceEligible` traz) e o serviço de relatórios o exige, então hoje essas mensagens são rejeitadas como inválidas, com o motivo explícito no log.
 
 Exigências para os produtores:
 
-- `event.created` deve trazer o `organizer_id`; sem ele, ninguém consegue ver os relatórios do evento.
+- `EventCreated` deve trazer o `organizer_id`; sem ele, ninguém consegue ver os relatórios do evento.
 - Todo evento deve trazer os identificadores completos (`event_id` e `activity_id`), porque o serviço não consulta ninguém.
 - O `message_id` deve ser único por mensagem e estável no reenvio, pois é a chave de idempotência.
 - Tipos desconhecidos são ignorados, e mensagens inválidas são registradas em log e puladas, sem travar a partição.
@@ -150,21 +156,32 @@ Ainda falta registrar o teste de resiliência (consultar o relatório com o Kafk
 
 ## 11. Limitações e próximos passos
 
-- Nenhum outro serviço publica ainda nos três tópicos: os testes usaram mensagens enviadas à mão, e os nomes e campos do contrato são uma proposta que o time precisa aceitar.
+- Os três serviços já publicam nos tópicos `events.events`, `subscription.events` e `payments.events`; o serviço de relatórios foi adaptado a esses nomes e formatos, mas ainda não foi validado com Kafka e PostgreSQL reais depois da mudança (a validação da seção 10 usou o contrato antigo).
 - A tabela `processed_messages` cresce sem limpeza.
 - A receita soma valores de moedas diferentes sem separar por moeda.
 - Não há paginação nem filtro por período.
-- O gateway não repassa papel (role); a única regra de acesso é «dono do evento», sem perfil de administrador.
-- Tipos de evento sem tratamento: cancelamento ou exclusão de atividade e exclusão de evento.
+- O gateway envia o papel em `X-User-Roles`, mas o serviço não o usa: a única regra de acesso é «dono do evento», sem perfil de administrador.
+- Tipos de evento sem tratamento: `ActivityDeleted`, `ActivityEnded` e `ActivityCancelled` (ver «Pendências conhecidas»).
 - Os tópicos são criados com fator de replicação 1 e o consumidor usa uma senha de desenvolvimento por padrão; ambos servem para o ambiente local, mas não para produção.
 - Exception tracking e audit log dependem de decisão do grupo.
 - Falta teste automatizado de integração com banco e broker.
 
+### Pendências conhecidas
+
+O que ainda NÃO foi feito (decisões de projeto a discutir):
+
+- `event_id` nas inscrições e nos check-ins: o serviço de inscrições não o envia e o relatório não o deduz; enquanto isso essas mensagens são rejeitadas e os indicadores de inscrição, ocupação e comparecimento não são alimentados.
+- Novos estados: `OFFERED`, `PENDING_PAYMENT` (hoje `RegistrationPendingPayment` vira `PENDING`), `REJECTED` e `REFUNDED`.
+- Dinheiro como inteiro em centavos por moeda (hoje é convertido para decimal e somado sem separar moedas).
+- Tratamento de `ActivityDeleted`, `ActivityEnded` e `ActivityCancelled`.
+- `AttendanceEligible`.
+- Convenções do monorepo: erros `problem+json`, identidade por UUID, regra do trace id, `x-gateway` e DLQ.
+
 ## 12. Dependências com os outros serviços
 
-1. O serviço de eventos precisa publicar `event.*` e `activity.*` em `events-events`, com `organizer_id` no evento criado e `capacity` nas atividades.
-2. O serviço de inscrições precisa publicar `registration.*` e `checkin.registered` em `subscription-events`, com `event_id` e `activity_id`.
-3. O serviço de pagamentos publica `payment.*` em `payments-events` no formato que o relatório já consome.
+1. O serviço de eventos publica `Event*` e `Activity*` em `events.events`, com `organizer_id` no evento criado e `capacity` nas atividades (atendido).
+2. O serviço de inscrições publica `Registration*` e `AttendanceRecorded` em `subscription.events`, mas sem `event_id`, que o relatório exige (pendente).
+3. O serviço de pagamentos publica `Payment*` em `payments.events` com `amount_minor` em centavos, que o relatório converte (atendido).
 4. O administrador do gateway precisa liberar as seis rotas de consulta com autenticação exigida.
 
 ## 13. Como executar

@@ -19,9 +19,9 @@ export const config = {
   kafkaBrokers: str('KAFKA_BROKERS', 'kafka:9092').split(',').map((s) => s.trim()).filter(Boolean),
   consumerGroup: str('REPORTS_CONSUMER_GROUP', 'reports-service'),
   topics: [
-    str('EVENTS_TOPIC', 'events-events'),
-    str('SUBSCRIPTION_TOPIC', 'subscription-events'),
-    str('PAYMENTS_TOPIC', 'payments-events'),
+    str('EVENTS_TOPIC', 'events.events'),
+    str('SUBSCRIPTION_TOPIC', 'subscription.events'),
+    str('PAYMENTS_TOPIC', 'payments.events'),
   ],
   topicPartitions: int('REPORTS_TOPIC_PARTITIONS', 6),
 };

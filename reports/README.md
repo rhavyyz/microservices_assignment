@@ -9,7 +9,7 @@ It never reads another service's database: it builds its own read model (Postgre
 - Boots even if Postgres, Kafka or the discoverer are down; migration, consumer and registration retry in the background.
 
 ## Endpoints (through the gateway: `/reports/...`)
-All need `X-User-Id`. The caller must be the `organizer_id` of the event (taken from the `event.*` messages);
+All need `X-User-Id`. The caller must be the `organizer_id` of the event (taken from the `Event*` messages);
 anything else is a 404, same as an unknown event (RN07).
 
 | Endpoint | Returns |
@@ -31,30 +31,50 @@ Rollout: the gateway adds new endpoints as private. Publish them once:
       curl -X PUT localhost:8080/admin/endpoints -d "{\"kind\":\"reports\",\"method\":\"GET\",\"path\":\"$p\",\"isPublic\":true,\"requireAuth\":true}"
     done
 
-## Event contract (what the other services must publish)
-Topics (one per producer, key = `event_id` or `registration_id` so related messages stay ordered):
-`events-events` (events service), `subscription-events` (subscription), `payments-events` (payments).
+## Event contract (what the other services publish)
+Topics (one per producer, key set by the producer, e.g. `event_id`, `activity_id` or `registration_id`, so related messages stay ordered):
+`events.events` (events service), `subscription.events` (subscription), `payments.events` (payments).
 Names are configurable (`EVENTS_TOPIC`, `SUBSCRIPTION_TOPIC`, `PAYMENTS_TOPIC`). The consumer group is `reports-service`.
 
-Envelope (JSON, `version` must be 1):
+Flat envelope (JSON): the type's fields sit at the top level, next to the envelope fields. There is no nested `data` object
+(the old format is rejected). `schema_version` must be 1 (missing counts as 1; greater is rejected).
 
-    {"message_id":"uuid","type":"payment.confirmed","version":1,"occurred_at":"2026-10-31T12:00:00Z",
-     "trace_id":"uuid","data":{...}}
+    {"message_id":"uuid","schema_version":1,"type":"PaymentApproved","occurred_at":"2026-10-31T12:00:00.000-03:00",
+     "trace_id":null,"payment_id":"uuid","registration_id":"uuid","user_id":"uuid","event_id":"uuid","activity_id":"uuid",
+     "amount_minor":2500,"currency":"BRL","status":"APPROVED","reason":null}
 
-| `type` | Producer | Required in `data` | Optional |
+| `type` | Producer | Required | Optional |
 |---|---|---|---|
-| `event.created`, `event.updated` | events | `event_id` | `organizer_id`, `name`, `status`, `starts_at`, `ends_at` |
-| `event.published`, `event.cancelled` | events | `event_id` | same (status is forced to `PUBLISHED` / `CANCELLED`) |
-| `activity.created`, `activity.updated` | events | `activity_id`, `event_id` | `name`, `capacity`, `paid` |
-| `registration.requested` / `confirmed` / `waitlisted` / `cancelled` / `expired` | subscription | `registration_id`, `event_id`, `activity_id` | `user_id` |
-| `checkin.registered` | subscription | `registration_id`, `event_id`, `activity_id` | `user_id` |
-| `payment.created` / `confirmed` / `refused` / `expired` / `cancelled` | payments | `payment_id`, `event_id` | `registration_id`, `activity_id`, `amount`, `currency` |
+| `EventCreated`, `EventUpdated` | events | `event_id` | `organizer_id`, `name`, `status`, `starts_at`, `ends_at` |
+| `EventPublished`, `EventCancelled` | events | `event_id` | same (status is forced to `PUBLISHED` / `CANCELLED`) |
+| `ActivityCreated`, `ActivityUpdated` | events | `activity_id`, `event_id` | `name`, `capacity`, `paid` |
+| `RegistrationPendingPayment` (stored as `PENDING`), `RegistrationConfirmed`, `RegistrationWaitlisted`, `RegistrationCancelled`, `RegistrationExpired` | subscription | `registration_id`, `event_id`, `activity_id` | `user_id` |
+| `AttendanceRecorded` (check-in) | subscription | `registration_id`, `event_id`, `activity_id` | `user_id` |
+| `PaymentCreated` (`PENDING`), `PaymentApproved` (`CONFIRMED`), `PaymentDeclined` (`REFUSED`), `PaymentExpired`, `PaymentCancelled` | payments | `payment_id`, `event_id` | `registration_id`, `activity_id`, `amount_minor`, `currency` |
+
+Money: payments send `amount_minor`, an integer in minor units (cents). Reports converts it exactly to the major unit
+(`2500` -> `25.00`, stored in `numeric(12,2)`); a negative, fractional, string or unsafe-integer value invalidates the message.
+
+Known gap: Subscription's registration and check-in messages do **not** carry `event_id` (only `AttendanceEligible` does), and Reports
+requires it, so those messages are currently rejected as invalid (`event_id is required (Subscription registration messages do not carry it yet)`).
+See "Known gaps" below.
+
+Everything else is ignored like any unknown type: `WaitlistOffered`, `RegistrationRejected`, `AttendanceEligible`, `PaymentRefunded`,
+`ActivityDeleted`, `ActivityEnded`, `ActivityCancelled`.
 
 Rules the producers must know:
-- `event.created` must carry `organizer_id`, otherwise nobody can see that event's reports.
+- `EventCreated` must carry `organizer_id`, otherwise nobody can see that event's reports.
 - `message_id` must be unique per message and stable on resend: it is the idempotency key.
 - Every message carries the full identifiers (`event_id`, `activity_id`), because the service never queries others.
 - Unknown types are ignored; invalid messages are logged and skipped (they never block a partition).
+
+## Known gaps
+Not done yet (design decisions pending):
+- `event_id` on registrations and check-ins (see above); until then registration and check-in data does not reach the read model.
+- New statuses: `OFFERED`, `PENDING_PAYMENT` (today `RegistrationPendingPayment` is stored as `PENDING`), `REJECTED`, `REFUNDED`.
+- Money as integer cents per currency (today converted to a decimal and summed across currencies).
+- `ActivityDeleted`, `ActivityEnded`, `ActivityCancelled` handling; `AttendanceEligible`.
+- Monorepo conventions: problem+json errors, UUID identity, trace id rule, `x-gateway`, DLQ.
 
 How duplicates and reordering are handled: `processed_messages` (unique `message_id`, written in the same transaction as the effect)
 cuts duplicates; each row keeps the latest state and ignores messages older than `last_event_at`. Totals are computed from that
