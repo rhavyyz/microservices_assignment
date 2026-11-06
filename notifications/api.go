@@ -106,7 +106,7 @@ func listHandler(l lister) http.HandlerFunc {
 			return
 		}
 		if err != nil {
-			log.Printf("list notifications: %v", err)
+			log.Printf("list notifications: %v trace_id=%s", err, traceIDFrom(r.Context()))
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
@@ -226,7 +226,7 @@ func updateStateHandler(u statusUpdater) http.HandlerFunc {
 			var notFound []string
 			updated, notFound, err = u.UpdateStatuses(r.Context(), userID, updates)
 			if err != nil {
-				log.Printf("update notification statuses: %v", err)
+				log.Printf("update notification statuses: %v trace_id=%s", err, traceIDFrom(r.Context()))
 				http.Error(w, "internal error", http.StatusInternalServerError)
 				return
 			}

@@ -179,11 +179,11 @@ def test_cancelled_event_found_by_the_scheduler_goes_to_the_dlq_and_deletes_the_
 
     scheduler.tick()
 
-    assert producer.produced == [(
-        settings.certificates_dlq_topic,
-        "subscription.events:3",
-        {"source_topic": "subscription.events", "partition": 3, "offset": 41, "reason": "EVENT_CANCELLED"},
-    )]
+    [(topic, key, record)] = producer.produced
+    assert (topic, key) == (settings.certificates_dlq_topic, "subscription.events:3")
+    # References only, plus the trace id the parked message was given (generated: the message had none).
+    uuid.UUID(record.pop("trace_id"))
+    assert record == {"source_topic": "subscription.events", "partition": 3, "offset": 41, "reason": "EVENT_CANCELLED"}
     assert rows(factory) == [] and certificates(factory) == []
 
 
@@ -196,6 +196,7 @@ def test_poison_on_a_parked_row_is_published_with_the_stored_source_offset(parke
 
     [(_, key, record)] = producer.produced
     assert key == "subscription.events:3"
+    uuid.UUID(record.pop("trace_id"))
     assert record == {"source_topic": "subscription.events", "partition": 3, "offset": 41, "reason": "USER_NOT_FOUND"}
     assert rows(factory) == []
 
@@ -293,3 +294,58 @@ def test_batches_are_drained_and_the_thread_stops(parked, monkeypatch):
     scheduler.start()
     scheduler.close()
     assert not scheduler.thread.is_alive()
+
+
+def test_parked_message_keeps_its_trace_id_until_the_scheduler_issues_it(env, caplog):
+    handler, directory, factory, _, clock = env
+    caplog.set_level("INFO")
+    clock["now"] = directory.event.ends_at - timedelta(days=2)
+    trace_id = "checkin-trace-0001"
+    handler.handle(event(trace_id=trace_id), SOURCE)
+    assert [r for r in caplog.messages if r.startswith("attendance_parked") and f"trace_id={trace_id}" in r]
+    assert directory.trace_ids == [trace_id]
+    scheduler = PendingScheduler(handler=handler, session_factory=factory, clock=lambda: clock["now"])
+
+    clock["now"] = directory.event.ends_at
+    assert scheduler.tick() == 1
+
+    assert len(certificates(factory)) == 1
+    assert set(directory.trace_ids) == {trace_id}
+    assert len(directory.trace_ids) == 3  # parked attempt, then event and user lookups
+    assert [r for r in caplog.messages if r.startswith("attendance_unparked") and f"trace_id={trace_id}" in r]
+
+
+def test_parked_message_with_invalid_trace_id_does_not_store_it(env, caplog):
+    handler, directory, factory, _, clock = env
+    caplog.set_level("INFO")
+    clock["now"] = directory.event.ends_at - timedelta(days=2)
+
+    handler.handle(event(trace_id="bad id!"), SOURCE)
+
+    [row] = rows(factory)
+    assert row.payload["trace_id"] == directory.trace_ids[0]
+    uuid.UUID(row.payload["trace_id"])
+    assert "bad id!" not in caplog.text
+
+
+def test_scheduler_failures_carry_the_trace_id(parked, caplog):
+    handler, directory, factory, clock, scheduler, producer = parked
+    caplog.set_level("INFO")
+    with factory() as session:
+        row = session.query(PendingAttendance).one()
+        row.payload = {**row.payload, "trace_id": "parked-trace-0001"}
+        session.commit()
+    clock["now"] = directory.event.ends_at
+    directory.errors["user"] = TransientError("users down")
+
+    scheduler.tick()
+
+    assert [r for r in caplog.messages if r.startswith("pending_transient_failure") and "trace_id=parked-trace-0001" in r]
+
+    directory.errors["user"] = PoisonMessage("USER_NOT_FOUND")
+    clock["now"] = clock["now"] + timedelta(hours=1)
+    scheduler.tick()
+
+    [(_, _, record)] = producer.produced
+    assert record["trace_id"] == "parked-trace-0001"
+    assert [r for r in caplog.messages if r.startswith("poison_parked_message") and "trace_id=parked-trace-0001" in r]

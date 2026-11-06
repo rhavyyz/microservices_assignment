@@ -58,14 +58,15 @@ func newKafkaPublisher(brokers []string, topic string) (*kafkaPublisher, error) 
 
 // Publish queues the record asynchronously; a failure is only logged.
 func (p *kafkaPublisher) Publish(ctx context.Context, n Notification) {
+	tid := traceIDFrom(ctx)
 	key, value, err := pushRecord(n)
 	if err != nil {
-		log.Printf("push %s: %v", n.ID, err)
+		log.Printf("push %s: %v trace_id=%s", n.ID, err, tid)
 		return
 	}
 	p.cl.Produce(ctx, &kgo.Record{Topic: p.topic, Key: key, Value: value}, func(_ *kgo.Record, err error) {
 		if err != nil {
-			log.Printf("push %s: %v", n.ID, err)
+			log.Printf("push %s: %v trace_id=%s", n.ID, err, tid)
 		}
 	})
 }

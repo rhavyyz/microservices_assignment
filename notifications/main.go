@@ -49,6 +49,34 @@ func partitionsFromEnv(getenv func(string) string, key string) (int, error) {
 	return defaultPartitions, nil
 }
 
+// traceIDParam is the optional X-Trace-Id request header of every operation.
+var traceIDParam = map[string]any{
+	"name": "X-Trace-Id", "in": "header", "required": false,
+	"description": "Correlation id, accepted only if it matches ^[A-Za-z0-9._-]{8,64}$, otherwise a fresh one is generated",
+	"schema":      map[string]any{"type": "string", "pattern": "^[A-Za-z0-9._-]{8,64}$"},
+}
+
+// traceIDResponseHeaders is the X-Trace-Id header of every response.
+var traceIDResponseHeaders = map[string]any{
+	"X-Trace-Id": map[string]any{"description": "The request's trace id (the accepted one or the generated one)", "schema": map[string]any{"type": "string"}},
+}
+
+// addTraceHeaders documents X-Trace-Id on every operation of the spec: as a request parameter and on each response.
+func addTraceHeaders(spec map[string]any) {
+	for _, ops := range spec["paths"].(map[string]any) {
+		for _, op := range ops.(map[string]any) {
+			op := op.(map[string]any)
+			params, _ := op["parameters"].([]any)
+			op["parameters"] = append(params, traceIDParam)
+			for _, resp := range op["responses"].(map[string]any) {
+				resp.(map[string]any)["headers"] = traceIDResponseHeaders
+			}
+		}
+	}
+}
+
+func init() { addTraceHeaders(openAPI) }
+
 // updateStateSchema is the JSON body of the 200 and of the per-item 400 of PUT /update-state.
 var updateStateSchema = map[string]any{
 	"type":     "object",
@@ -229,5 +257,5 @@ func main() {
 	}()
 
 	log.Printf("notifications listening on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, newMux(store)))
+	log.Fatal(http.ListenAndServe(":"+port, withTrace(newMux(store))))
 }
