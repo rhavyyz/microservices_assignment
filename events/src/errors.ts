@@ -14,7 +14,7 @@ export class AppError extends Error {
   }
 }
 
-export const unauthorized = (message = 'a valid access token is required') =>
+export const unauthorized = (message = 'authentication is required (X-User-Id header)') =>
   new AppError(401, 'UNAUTHENTICATED', message);
 
 export const forbidden = (message: string) => new AppError(403, 'FORBIDDEN', message);

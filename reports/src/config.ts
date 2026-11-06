@@ -1,5 +1,3 @@
-import os from 'node:os';
-
 function int(name: string, def: number): number {
   const v = process.env[name];
   if (v === undefined || v.trim() === '') return def;
@@ -21,11 +19,10 @@ export const config = {
   kafkaBrokers: str('KAFKA_BROKERS', 'kafka:9092').split(',').map((s) => s.trim()).filter(Boolean),
   consumerGroup: str('REPORTS_CONSUMER_GROUP', 'reports-service'),
   topics: [
-    str('EVENTS_TOPIC', 'events-events'),
-    str('SUBSCRIPTION_TOPIC', 'subscription-events'),
-    str('PAYMENTS_TOPIC', 'payments-events'),
+    str('EVENTS_TOPIC', 'events.events'),
+    str('SUBSCRIPTION_TOPIC', 'subscription.events'),
+    str('PAYMENTS_TOPIC', 'payments.events'),
   ],
+  dlqTopic: str('REPORTS_DLQ_TOPIC', 'reports.dlq'),
   topicPartitions: int('REPORTS_TOPIC_PARTITIONS', 6),
-  discovererUrl: str('SERVICE_DISCOVERER_URL', 'http://service-discoverer:8080'),
-  serviceHost: str('SERVICE_HOST', `${os.hostname()}:${port}`),
 };

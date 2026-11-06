@@ -51,7 +51,7 @@ func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 
 func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
-// Logging logs one line per request after the response: method, path, kind, status, duration, user, request id.
+// Logging logs one line per request after the response: method, path, kind, status, duration, user, trace id.
 func Logging() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -62,9 +62,9 @@ func Logging() Middleware {
 				sw.status = http.StatusOK
 			}
 			kind, _ := splitKind(r.URL.Path)
-			// Later stages mutate r.Header in place, so the generated request id is visible here.
-			log.Printf("%s %s kind=%s status=%d duration=%s user=%s request_id=%s",
-				r.Method, r.URL.Path, kind, sw.status, time.Since(start), dash(r.Header.Get("X-User-Id")), dash(r.Header.Get("X-Request-Id")))
+			// Later stages mutate r.Header in place, so the generated trace id is visible here.
+			log.Printf("%s %s kind=%s status=%d duration=%s user=%s trace_id=%s",
+				r.Method, r.URL.Path, kind, sw.status, time.Since(start), dash(r.Header.Get("X-User-Id")), dash(r.Header.Get("X-Trace-Id")))
 		})
 	}
 }

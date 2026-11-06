@@ -1,26 +1,21 @@
-// The kafkajs edge of the service: topic setup, the outbox publisher and the subscription consumer.
-import { Kafka, logLevel, type Consumer, type Producer, type TopicMessages } from 'kafkajs';
-import type { Log } from '../audit.ts';
+// The kafkajs edge of the service: topic setup and the outbox publisher. The service consumes nothing.
+import { Kafka, logLevel, type Producer, type TopicMessages } from 'kafkajs';
 import type { Config } from '../config.ts';
 import type { OutboxMessage } from '../repositories/outbox.ts';
-import type { SeatService } from '../services/seats.ts';
-import { handleRecord } from './consumer.ts';
 import type { Publisher } from './relay.ts';
 
 export function createKafka(config: Config): Kafka {
   return new Kafka({ clientId: 'events', brokers: config.kafkaBrokers, logLevel: logLevel.WARN });
 }
 
-/** Creates the topics this service uses when missing (idempotent), so it can start before any other service. */
+/** Creates the events topic when missing (idempotent), so the service can start before any other. */
 export async function ensureTopics(kafka: Kafka, config: Config): Promise<void> {
   const admin = kafka.admin();
   await admin.connect();
   try {
     await admin.createTopics({
       waitForLeaders: true,
-      topics: [config.eventsTopic, config.subscriptionTopic].map((topic) => ({
-        topic, numPartitions: config.topicPartitions, replicationFactor: 1,
-      })),
+      topics: [{ topic: config.eventsTopic, numPartitions: config.topicPartitions, replicationFactor: 1 }],
     });
   } finally {
     await admin.disconnect().catch(() => {});
@@ -69,27 +64,9 @@ function byTopic(messages: OutboxMessage[]): TopicMessages[] {
     group.messages.push({
       key: m.key,
       value: JSON.stringify(m.envelope),
-      headers: { 'message-type': m.envelope.type, 'correlation-id': m.envelope.correlation_id ?? '' },
+      headers: { 'message-type': m.envelope.type, 'trace-id': m.envelope.trace_id ?? '' },
     });
     groups.set(m.topic, group);
   }
   return [...groups.values()];
-}
-
-/** Joins the consumer group and processes the subscription topic (Idempotent Consumer, see consumer.ts). */
-export async function startConsumer(kafka: Kafka, config: Config, seats: SeatService, log: Log): Promise<Consumer> {
-  const consumer = kafka.consumer({ groupId: config.consumerGroup });
-  try {
-    await consumer.connect();
-    // A new group starts from the beginning: requests made while this service never ran are still answered.
-    await consumer.subscribe({ topics: [config.subscriptionTopic], fromBeginning: true });
-    await consumer.run({
-      eachMessage: ({ topic, partition, message }) =>
-        handleRecord(message.value?.toString('utf8'), { topic, partition, offset: message.offset }, seats, log),
-    });
-  } catch (e) {
-    await consumer.disconnect().catch(() => {});
-    throw e;
-  }
-  return consumer;
 }

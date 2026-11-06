@@ -1,36 +1,38 @@
-// Event contract consumed by the reports service. See README.md ("Event contract").
+// Event contract consumed by the reports service (flat envelope, PascalCase types). See README.md ("Event contract").
 
 export type Envelope = {
   message_id: string;
   type: string;
-  version: number;
+  schema_version: number;
   occurred_at: string;
-  correlation_id: string | null;
+  trace_id: string | null;
 };
 
 export type Change =
   | { kind: 'event'; eventId: string; organizerId: string | null; name: string | null; status: string | null; startsAt: string | null; endsAt: string | null }
   | { kind: 'activity'; activityId: string; eventId: string; name: string | null; capacity: number | null; paid: boolean | null }
   | { kind: 'registration'; registrationId: string; eventId: string; activityId: string; userId: string | null; status: string }
-  | { kind: 'payment'; paymentId: string; registrationId: string | null; eventId: string; activityId: string | null; amount: number | null; currency: string | null; status: string }
+  // amountMinor is the producer's integer in minor units (cents), kept as is.
+  | { kind: 'payment'; paymentId: string; registrationId: string | null; eventId: string; activityId: string | null; amountMinor: number | null; currency: string | null; status: string }
   | { kind: 'checkin'; registrationId: string; eventId: string; activityId: string; userId: string | null }
   | { kind: 'ignored' };
 
 export type Parsed = { envelope: Envelope; change: Change };
 export type ParseResult = { ok: true; value: Parsed } | { ok: false; error: string };
 
+// The type's fields sit at the root of the message, next to the envelope fields (no nested `data`).
 type Data = Record<string, unknown>;
 
 function reqStr(d: Data, k: string): string {
   const v = d[k];
-  if (typeof v !== 'string' || v.trim() === '') throw new Error(`data.${k} is required`);
+  if (typeof v !== 'string' || v.trim() === '') throw new Error(`${k} is required`);
   return v.trim();
 }
 
 function optStr(d: Data, k: string): string | null {
   const v = d[k];
   if (v === undefined || v === null) return null;
-  if (typeof v !== 'string') throw new Error(`data.${k} must be a string`);
+  if (typeof v !== 'string') throw new Error(`${k} must be a string`);
   const t = v.trim();
   return t === '' ? null : t;
 }
@@ -38,46 +40,59 @@ function optStr(d: Data, k: string): string | null {
 function optNum(d: Data, k: string): number | null {
   const v = d[k];
   if (v === undefined || v === null) return null;
-  if (typeof v !== 'number' || !Number.isFinite(v)) throw new Error(`data.${k} must be a number`);
+  if (typeof v !== 'number' || !Number.isFinite(v)) throw new Error(`${k} must be a number`);
   return v;
 }
 
 function optBool(d: Data, k: string): boolean | null {
   const v = d[k];
   if (v === undefined || v === null) return null;
-  if (typeof v !== 'boolean') throw new Error(`data.${k} must be a boolean`);
+  if (typeof v !== 'boolean') throw new Error(`${k} must be a boolean`);
   return v;
 }
 
 function optDate(d: Data, k: string): string | null {
   const s = optStr(d, k);
   if (s === null) return null;
-  if (Number.isNaN(Date.parse(s))) throw new Error(`data.${k} must be an ISO date`);
+  if (Number.isNaN(Date.parse(s))) throw new Error(`${k} must be an ISO date`);
   return s;
 }
 
-// A null status means "take it from data.status" (or keep the stored one).
+/** The producers' `amount_minor`: an integer in minor units (cents), non-negative and safe. */
+function optMinor(d: Data, k: string): number | null {
+  const v = d[k];
+  if (v === undefined || v === null) return null;
+  if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < 0) {
+    throw new Error(`${k} must be a non-negative integer (minor units)`);
+  }
+  return v;
+}
+
+// A null status means "take it from status" (or keep the stored one).
 const EVENT_STATUS: Record<string, string | null> = {
-  'event.created': null,
-  'event.updated': null,
-  'event.published': 'PUBLISHED',
-  'event.cancelled': 'CANCELLED',
+  EventCreated: null,
+  EventUpdated: null,
+  EventPublished: 'PUBLISHED',
+  EventCancelled: 'CANCELLED',
 };
 
 const REGISTRATION_STATUS: Record<string, string> = {
-  'registration.requested': 'PENDING',
-  'registration.confirmed': 'CONFIRMED',
-  'registration.waitlisted': 'WAITLISTED',
-  'registration.cancelled': 'CANCELLED',
-  'registration.expired': 'EXPIRED',
+  RegistrationWaitlisted: 'WAITLISTED',
+  WaitlistOffered: 'OFFERED',
+  RegistrationPendingPayment: 'PENDING_PAYMENT',
+  RegistrationConfirmed: 'CONFIRMED',
+  RegistrationCancelled: 'CANCELLED',
+  RegistrationExpired: 'EXPIRED',
+  RegistrationRejected: 'REJECTED',
 };
 
 const PAYMENT_STATUS: Record<string, string> = {
-  'payment.created': 'PENDING',
-  'payment.confirmed': 'CONFIRMED',
-  'payment.refused': 'REFUSED',
-  'payment.expired': 'EXPIRED',
-  'payment.cancelled': 'CANCELLED',
+  PaymentCreated: 'PENDING',
+  PaymentApproved: 'APPROVED',
+  PaymentDeclined: 'DECLINED',
+  PaymentExpired: 'EXPIRED',
+  PaymentCancelled: 'CANCELLED',
+  PaymentRefunded: 'REFUNDED',
 };
 
 function toChange(type: string, d: Data): Change {
@@ -92,7 +107,7 @@ function toChange(type: string, d: Data): Change {
       endsAt: optDate(d, 'ends_at'),
     };
   }
-  if (type === 'activity.created' || type === 'activity.updated') {
+  if (type === 'ActivityCreated' || type === 'ActivityUpdated') {
     return {
       kind: 'activity',
       activityId: reqStr(d, 'activity_id'),
@@ -119,12 +134,12 @@ function toChange(type: string, d: Data): Change {
       registrationId: optStr(d, 'registration_id'),
       eventId: reqStr(d, 'event_id'),
       activityId: optStr(d, 'activity_id'),
-      amount: optNum(d, 'amount'),
+      amountMinor: optMinor(d, 'amount_minor'),
       currency: optStr(d, 'currency'),
       status: PAYMENT_STATUS[type],
     };
   }
-  if (type === 'checkin.registered') {
+  if (type === 'AttendanceRecorded') {
     return {
       kind: 'checkin',
       registrationId: reqStr(d, 'registration_id'),
@@ -153,29 +168,26 @@ export function parseMessage(raw: string): ParseResult {
   const type = typeof o.type === 'string' ? o.type.trim() : '';
   if (!type) return { ok: false, error: 'type is required' };
 
-  const version = o.version === undefined ? 1 : o.version;
+  const version = o.schema_version === undefined ? 1 : o.schema_version;
   if (typeof version !== 'number' || !Number.isInteger(version) || version < 1) {
-    return { ok: false, error: 'version must be a positive integer' };
+    return { ok: false, error: 'schema_version must be a positive integer' };
   }
-  if (version > 1) return { ok: false, error: `unsupported version ${version} for ${type}` };
+  if (version > 1) return { ok: false, error: `unsupported schema_version ${version} for ${type}` };
 
   if (typeof o.occurred_at !== 'string' || Number.isNaN(Date.parse(o.occurred_at))) {
     return { ok: false, error: 'occurred_at must be an ISO date' };
   }
-  if (typeof o.data !== 'object' || o.data === null || Array.isArray(o.data)) {
-    return { ok: false, error: 'data must be an object' };
-  }
 
   let change: Change;
   try {
-    change = toChange(type, o.data as Data);
+    change = toChange(type, o);
   } catch (e) {
     return { ok: false, error: `${type}: ${(e as Error).message}` };
   }
 
-  const correlationId = typeof o.correlation_id === 'string' && o.correlation_id.trim() ? o.correlation_id.trim() : null;
+  const traceId = typeof o.trace_id === 'string' && o.trace_id.trim() ? o.trace_id.trim() : null;
   return {
     ok: true,
-    value: { envelope: { message_id: messageId, type, version, occurred_at: o.occurred_at, correlation_id: correlationId }, change },
+    value: { envelope: { message_id: messageId, type, schema_version: version, occurred_at: o.occurred_at, trace_id: traceId }, change },
   };
 }

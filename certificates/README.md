@@ -41,6 +41,7 @@ certificates/
 │   │   └── storage.py
 │   ├── config.py
 │   ├── consumer.py
+│   ├── pending.py
 │   ├── database.py
 │   ├── errors.py
 │   ├── main.py
@@ -64,7 +65,7 @@ certificates/
 
 The attendance rule (RN06) is about an **event**, not an activity: the percentage is the share of the event's activities the participant attended.
 
-1. The event must have ended (`now(UTC) >= ends_at` of the event, read from Events).
+1. The event must not be `CANCELLED` and must have ended (`now(UTC) >= ends_at` of the event, read from Events).
 2. The event attendance percentage must be at least **75%** (`MINIMUM_ATTENDANCE_PERCENTAGE` in `app/services/eligibility.py`, Certificates' own rule).
 3. A certificate must not already exist for the participant's registration, nor for the pair (user, event).
 
@@ -76,19 +77,37 @@ The consumer is the only way a certificate is created. It runs in a daemon threa
 
 - **Topic:** `subscription.events` (group `certificates-service`, manual offset commit **after** processing, `topic.metadata.refresh.interval.ms=10000`).
 - **Topic provisioning (ADR-005):** before consuming, the service creates `subscription.events` and `certificates.dlq` if absent (replication 1, `CERTIFICATES_TOPIC_PARTITIONS` partitions, existing topics are never altered), retrying with backoff in the background until Kafka is up.
-- **Envelope (JSON):** `event_id`, `schema_version` (must be `1`), `type`, `registration_id`, `activity_id`, `user_id`, `aggregate_version`, `occurred_at`, `status`, plus the event-level fields `parent_event_id` (UUID of the Events event), `attended_activities` and `total_activities` (integers, `total >= 1`, `0 <= attended <= total`) and `attendance_percentage` (finite number, `attended * 100 / total` rounded to 2 decimals). `registration_id` and `activity_id` are those of the triggering registration (the last one to end).
+- **Envelope (JSON):** `message_id`, `schema_version` (must be `1`), `type`, `registration_id`, `activity_id`, `user_id`, `aggregate_version`, `occurred_at`, `status`, `trace_id`, plus the event-level fields `event_id` (UUID of the Events event), `attended_activities` and `total_activities` (integers, `total >= 1`, `0 <= attended <= total`) and `attendance_percentage` (finite number, `attended * 100 / total` rounded to 2 decimals). `registration_id` and `activity_id` are those of the triggering registration (the last one to end).
 - **Only `type == "AttendanceEligible"` is acted on.** Every other type, including unknown ones, is acknowledged and ignored.
 
 For an `AttendanceEligible` event the service does its own validations before issuing:
 
-1. Contract validation: `parent_event_id` is a UUID; `attended_activities` and `total_activities` are integers (booleans rejected) with `total >= 1` and `0 <= attended <= total`; `attendance_percentage` is a finite number consistent with the counts. A violation is poison (`INVALID_CONTRACT`).
-2. If a certificate already exists for `registration_id` or for `(user_id, parent_event_id)`, the event is a duplicate: success, commit, no lookups.
-3. `GET /events/{parent_event_id}` on Events (through the discoverer) for `title`, `starts_at`, `ends_at`. `404` is poison (`EVENT_NOT_FOUND`); any other failure is transient.
-4. The event must have ended (`now(UTC) >= ends_at`); otherwise nothing is issued and the message is retried later.
-5. `GET /internal/users/{user_id}` on Users for the participant name (`200 {"id","name"}`; `404` is poison). This endpoint is unauthenticated and protected by network isolation; it is never registered on the gateway.
-6. `CertificateService.issue_certificate` applies the eligibility rule to the validated percentage (below 75% is poison, `NOT_ELIGIBLE`), renders the PDF (event name = event title, date = date of the event's `starts_at` in its own offset), stores it and saves the row.
+1. Contract validation: `event_id` is a UUID; `attended_activities` and `total_activities` are integers (booleans rejected) with `total >= 1` and `0 <= attended <= total`; `attendance_percentage` is a finite number consistent with the counts. A violation is poison (`INVALID_CONTRACT`).
+2. If a certificate already exists for `registration_id` or for `(user_id, event_id)`, the event is a duplicate: success, commit, no lookups.
+3. `GET /api/v1/events/{event_id}` on Events (through the discoverer; the body carries `event_id`, extra fields are ignored) for `title`, `starts_at`, `ends_at`, `status` (a body without a non-empty `status` is an invalid body, so transient). `404` is poison (`EVENT_NOT_FOUND`); any other failure is transient.
+4. `status == "CANCELLED"` is poison (`EVENT_CANCELLED`): a cancelled event is never certified, even if its `ends_at` has passed. Checked before the ended check. Other statuses behave as before.
+5. The event must have ended (`now(UTC) >= ends_at`); otherwise nothing is issued and the message is **parked** (see [Early messages](#early-messages-parked-in-the-database)) and its offset is committed.
+6. `GET /internal/users/{user_id}` on Users for the participant name (`200 {"id","name"}`; `404` is poison). This endpoint is unauthenticated and protected by network isolation; it is never registered on the gateway.
+7. `CertificateService.issue_certificate` applies the eligibility rule to the validated percentage (below 75% is poison, `NOT_ELIGIBLE`), renders the PDF (event name = event title, date = date of the event's `starts_at` in its own offset), stores it and saves the row.
 
-All outbound calls carry one `X-Request-Id` per message. Names and payloads are never logged; logs carry ids only.
+All outbound calls carry one `X-Trace-Id` per message. Names and payloads are never logged; logs carry ids only.
+
+### Early messages (parked in the database)
+
+Subscription emits `AttendanceEligible` as soon as the person's last confirmed **activity** ends, which can be days before the **event** ends. That is a normal case, so it must not block the partition:
+
+- When the event has not ended, `AttendanceHandler` stores the message in `pending_attendance` (in this service's own database) with `not_before = event.ends_at`, and `handle()` returns normally: the consumer commits the offset and goes on with the next message. There is no seek back and nothing waits for the event.
+- Parking is idempotent (`registration_id` is the primary key), so a crash between parking and the commit is harmless: the redelivery parks nothing new.
+- `PendingScheduler` (`app/pending.py`, a daemon thread started with the other workers in `app/runtime.py`, stopped on shutdown) wakes up every 30 s and processes due rows (`not_before <= now`) in batches of 10, ordered by `not_before`. On PostgreSQL the batch is selected with `FOR UPDATE SKIP LOCKED`, so several replicas never take the same row (other dialects, used by the unit tests, simply omit the lock clause). It runs the **same** issuing logic as the consumer (`AttendanceHandler.process`); a failing dependency delays only that row, never the consumer.
+
+| Parked row, when due | Action |
+|---|---|
+| Certificate issued, or already issued | Delete the row. |
+| Poison (`EVENT_CANCELLED`, `EVENT_NOT_FOUND`, `USER_NOT_FOUND`, `NOT_ELIGIBLE`, `INVALID_CONTRACT`, ...) | Publish the reference-only record to `certificates.dlq` with the **stored** `source_topic`/`partition`/`offset` (same shape as the consumer's), then delete the row. If the DLQ publish fails, keep the row and back off. |
+| Event still not ended (clock skew, or the end moved later) | `not_before = max(event's current ends_at, now + 60 s)`; `attempts` unchanged. |
+| Other transient failure (Events/Users down, storage, unexpected exception) | Keep the row, `attempts += 1`, `not_before = now + min(30 s * 2^attempts, 15 min)`. |
+
+Message outcomes in the consumer: event not ended (`PUBLISHED` or `DRAFT`) -> parked and committed; `CANCELLED` (ended or not) -> DLQ `EVENT_CANCELLED` and committed, nothing parked.
 
 **Failure handling**
 
@@ -96,10 +115,11 @@ All outbound calls carry one `X-Request-Id` per message. Names and payloads are 
 |---|---|---|
 | Ignored | Any other `type` | Commit. |
 | Duplicate | Certificate already exists for the registration or for (user, event), including a lost unique-violation race | Commit. |
-| Poison | Malformed JSON, missing or non-UUID ids, invalid or inconsistent attendance fields, `schema_version != 1`, unknown event or user, not eligible (below 75%) | Publish a reference-only record (`source_topic`, `partition`, `offset`, `reason`) to `certificates.dlq`, then commit. |
-| Transient | Events/Users unreachable or non-2xx, event not ended yet, storage or database failure, unexpected exception | Do not commit; seek back to the same message and retry after a backoff (2 s doubling to 30 s). The thread never crashes. |
+| Poison | Malformed JSON, missing or non-UUID ids, invalid or inconsistent attendance fields, `schema_version != 1`, unknown event or user, cancelled event (`EVENT_CANCELLED`), not eligible (below 75%) | Publish a reference-only record (`source_topic`, `partition`, `offset`, `reason`) to `certificates.dlq`, then commit. |
+| Early | Event not ended yet | Park in `pending_attendance`, then commit; the scheduler issues it after `ends_at`. Nothing is blocked. |
+| Transient | Events/Users unreachable or non-2xx, storage or database failure, unexpected exception | Do not commit; seek back to the same message and retry after a backoff (2 s doubling to 30 s). The thread never crashes. |
 
-If publishing to the DLQ itself fails, the message is treated as transient.
+If publishing to the DLQ itself fails, the message is treated as transient. Only these real dependency failures still retry in place (and block the partition behind them); early messages no longer do.
 
 ## Database Model
 
@@ -111,13 +131,24 @@ The `certificates` table contains the following fields:
 | `registration_id` | UUID identifying the participant's registration (the triggering one); unique |
 | `user_id` | UUID of the owner (from the event); indexed |
 | `activity_id` | UUID of the activity of the triggering registration (from the event) |
-| `event_id` | UUID of the Events event (`parent_event_id`); unique together with `user_id` |
+| `event_id` | UUID of the Events event; unique together with `user_id` |
 | `file_path` | Opaque storage key (`<uuid>.pdf`) of the generated PDF |
 | `issued_at` | Timestamp indicating when the certificate was issued |
 
 `user_id` and `activity_id` are nullable in the database only because rows created before migration `7c1d3e9a4b52` cannot be backfilled; `event_id` is nullable for the same reason (migration `9e4a6b2c1d83`, which also adds the unique index `uq_certificates_user_event` on `(user_id, event_id)`; NULLs are distinct, so old rows never collide). Every new certificate sets all three (the repository requires them), and a row without `user_id` belongs to nobody and is never served.
 
-The database stores metadata rather than the PDF contents. `file_path` is a storage key, not a filesystem path, and has the same meaning in both storage backends.
+The `pending_attendance` table (migration `b3f5a7d9c1e2`) holds messages parked until their event ends:
+
+| Field | Description |
+|---|---|
+| `registration_id` | UUID of the registration; **primary key** (parking twice is a no-op) |
+| `payload` | JSON: the validated `AttendanceEligible` message (ids and attendance counts, no names) |
+| `not_before` | `timestamptz`, indexed: when to try again (initially the event's `ends_at`) |
+| `attempts` | Failed attempts so far (default `0`) |
+| `source_topic`, `source_partition`, `source_offset` | Where the message came from, so a DLQ record keeps the same shape |
+| `created_at` | When it was parked |
+
+All columns are `NOT NULL`. The database stores metadata rather than the PDF contents. `file_path` is a storage key, not a filesystem path, and has the same meaning in both storage backends.
 
 Migrations run with `python -m app.migrate` (`alembic upgrade head`) before Uvicorn starts, as part of the image command. It is idempotent, retries with backoff while the database is unreachable, and exits non-zero if it still fails, so the container fails loudly instead of serving without a schema.
 
@@ -171,7 +202,7 @@ The service uses environment variables for configuration.
 | `S3_BUCKET` | `certificates` | Bucket for the PDFs. |
 | `S3_ACCESS_KEY` / `S3_SECRET_KEY` | Not configured | Credentials of the object store. |
 | `S3_REGION` | `us-east-1` | Region used to sign requests. |
-| `WORKERS_ENABLED` | `true` | Set to `false` to skip the background work (registration, bucket, consumer); used by the tests. |
+| `WORKERS_ENABLED` | `true` | Set to `false` to skip the background work (registration, bucket, consumer, pending scheduler); used by the tests. |
 
 The database URL should use the `postgresql+psycopg://` driver when connecting to PostgreSQL.
 
@@ -201,7 +232,7 @@ The same library is used to call Events (`Kind.EVENTS`) and Users (`Kind.USER`) 
 
 The service sits behind the gateway. The gateway verifies the JWT and injects `X-User-Id` (UUID) and `X-User-Roles`; Certificates trusts only those headers and never sees the token. A missing or non-UUID `X-User-Id` is answered with `401` and the problem code `UNAUTHENTICATED`.
 
-Errors are `application/problem+json` with `status`, `title`, `code` and `traceId`. `X-Request-Id` is echoed (a valid inbound value is kept, otherwise one is generated) and is the `traceId`.
+Errors are `application/problem+json` with `status`, `title`, `code` and `traceId`. `X-Trace-Id` is echoed (a valid inbound value is kept, otherwise one is generated) and is the `traceId`.
 
 ### `GET /api/v1/certificates/me?limit=&offset=`
 
@@ -317,9 +348,10 @@ The tests use fakes for Kafka, the discoverer, Events/Users and S3 (no network),
 
 - The 75% threshold is an implementation assumption to confirm with the team; it is applied both by Subscription and, independently, here.
 - Certificates cannot recount check-ins: it trusts `attended_activities`/`total_activities` after the consistency check with the percentage.
-- Events must expose `GET /events/{id}` (with `title`, `starts_at`, `ends_at`), and Users `GET /internal/users/{id}`, as described above; they are consumed through the discoverer.
+- Events must expose `GET /api/v1/events/{event_id}` (with `event_id`, `title`, `starts_at`, `ends_at`, `status`), and Users `GET /internal/users/{id}`, as described above; they are consumed through the discoverer.
 - The event date on the PDF is the date of the event's `starts_at`, in its own offset.
-- A message that depends on an unavailable service is retried indefinitely (backoff up to 30 s), which blocks the partition behind it; this favors never losing a certificate over throughput.
+- A message that depends on an unavailable service (Events, Users, storage) is still retried in place indefinitely (backoff up to 30 s), which blocks the partition behind it; this favors never losing a certificate over throughput. An event that has not ended is **not** such a case: the message is parked (see above).
+- The scheduler polls every 30 s (`INTERVAL` in `app/pending.py`), so a certificate for a parked message appears up to about 30 s after the event ends. The `FOR UPDATE SKIP LOCKED` query and the migration are only meant to run on PostgreSQL in the compose stack; the unit tests use SQLite.
 - Several replicas are safe for issuance (unique `registration_id` and unique `(user_id, event_id)`), but concurrent migrations at first boot are not serialized.
 - The S3 credentials of Compose are shared by SeaweedFS and the application; use a dedicated access key outside development.
 

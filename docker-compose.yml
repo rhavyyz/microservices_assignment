@@ -112,7 +112,11 @@ services:
     <<: *app
     deploy:
       replicas: 1
-    build: ./events
+    # additional_contexts gives the build access to the TypeScript discovery lib, which lives outside ./events
+    build:
+      context: ./events
+      additional_contexts:
+        discovery: ./service-discoverer/Libs/typescript
     networks: [backbone, events-net]
     depends_on:
       kafka:
@@ -122,10 +126,8 @@ services:
     environment:
       DATABASE_URL: postgres://events:${EVENTS_DB_PASSWORD:-events}@events-db:5432/events
       KAFKA_BROKERS: kafka:9092
-      # EVENTS_TOPIC: events-events # optional, this is the default: topic the service publishes to (outbox relay)
-      # SUBSCRIPTION_TOPIC: subscription-events # optional, this is the default: seat requests consumed by the service
-      # JWT_ISSUER: eventhub-users # optional, this is the default: issuer of the access tokens (user service)
-      # JWT_JWKS_URL: http://user:8080/.well-known/jwks.json # optional: by default the user service is found via the discoverer
+      # EVENTS_TOPIC: events.events # optional, this is the default: topic the service publishes to (outbox relay); it consumes nothing
+      # ACTIVITY_AUTO_END_AFTER_SECONDS: 86400 # optional, this is the default: seconds after an activity's scheduled end when it is ended automatically
   subscription:
     <<: *app
     deploy:
@@ -147,7 +149,11 @@ services:
     <<: *app
     deploy:
       replicas: 1
-    build: ./payments
+    # additional_contexts gives the build access to the TypeScript discovery lib, which lives outside ./payments
+    build:
+      context: ./payments
+      additional_contexts:
+        discovery: ./service-discoverer/Libs/typescript
     networks: [backbone, payments-net]
   user:
     <<: *app
@@ -205,8 +211,14 @@ services:
     <<: *app
     deploy:
       replicas: 1
-    build: ./reports
+    # additional_contexts gives the build access to the TypeScript discovery lib, which lives outside ./reports
+    build:
+      context: ./reports
+      additional_contexts:
+        discovery: ./service-discoverer/Libs/typescript
     networks: [backbone, reports-net]
+    environment:
+      DATABASE_URL: postgres://reports:${REPORTS_DB_PASSWORD:-reports}@reports-db:5432/reports
 
   # Identical replicas: just raise `deploy.replicas` on the service.
   # Only when an instance needs different config (env, ID...), copy its entry under a new name, e.g.:
@@ -214,7 +226,10 @@ services:
   #   <<: *app
   #   deploy:
   #     replicas: 1
-  #   build: ./payments
+  #   build:
+  #     context: ./payments
+  #     additional_contexts:
+  #       discovery: ./service-discoverer/Libs/typescript
   #   networks: [backbone, payments-net]
   #   environment:
   #     INSTANCE_ID: 2

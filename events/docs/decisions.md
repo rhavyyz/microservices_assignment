@@ -2,7 +2,8 @@
 
 As decisões principais já estavam tomadas no design da equipe (padrões marcados em verde no diagrama). Este
 documento mostra como cada uma foi aplicada no serviço de Eventos e registra as decisões **adicionais** que a
-implementação exigiu (ADR-E1 a ADR-E6).
+implementação exigiu (ADR-E1 a ADR-E7). O ADR-E7 atualiza os contratos vivos: onde ele substitui uma decisão anterior, a
+decisão antiga mantém o texto original e ganha uma "Nota (substituída)".
 
 ## Escopo herdado do design
 
@@ -17,15 +18,15 @@ início, fim e descrição.
 | Padrão (verde no design) | Aplicação no serviço de Eventos |
 |---|---|
 | Database per Service | PostgreSQL próprio (`events-db`), só na rede `events-net`; nenhum outro serviço lê suas tabelas. |
-| API Gateway | Rotas expostas como `/events/...` pelo Gateway; `GET /openapi.json` alimenta a tabela de endpoints; script abre as rotas. |
-| Server-side discovery | Registro como `events` no service-discoverer (re-registro a cada 30 s); a chave pública do serviço de Usuários é localizada via `consult`. |
-| Access Token | JWT RS256 emitido pelo serviço de Usuários, validado localmente com o JWKS (ADR-E4). |
-| Messaging (Kafka) | Publica `event.*`, `activity.*`, `seat.*` em `events-events`; consome `registration.*` de `subscription-events`. |
-| Saga / consistência de dados | Lado de capacidade da saga de inscrição, coreografada por mensagens (ADR-E2). |
-| Idempotent Consumer | `processed_messages` gravada na mesma transação do efeito + trava por inscrição. |
+| API Gateway | Rotas de negócio em `/api/v1/...`, expostas como `/events/api/v1/...` pelo Gateway; `GET /openapi.json` alimenta a tabela de endpoints; script abre as rotas. |
+| Server-side discovery | Registro como `events` no service-discoverer (registro único ao iniciar, pela biblioteca compartilhada); Inscrições resolve `events` por ele. |
+| Access Token | O Gateway verifica o JWT e envia `X-User-Id` / `X-User-Roles`; Eventos confia nesses cabeçalhos (ADR-E7; a validação local do ADR-E4 foi substituída). |
+| Messaging (Kafka) | Só publica, em `events.events`: `Event*`, `Activity*` (ADR-E7). Não consome nada. |
+| Saga / consistência de dados | Eventos guarda só a capacidade máxima; a saga de reserva de vaga (ADR-E2) saiu e Inscrições conta as vagas (ADR-E7). |
+| Idempotent Consumer | Não se aplica mais a Eventos (não consome). A tabela `processed_messages` ficou no banco, sem uso. |
 | Health check API | `GET /healthcheck`: 200 só com schema migrado e banco respondendo. |
-| Audit logging | Uma linha estruturada (`audit: true`) por operação de escrita, inclusive recusas. |
-| Exception tracking | Erros em `application/problem+json` com `code` e `traceId` (= `X-Request-Id`); 500 genérico, detalhe só no log. |
+| Audit logging | Uma linha estruturada (`audit: true`) por operação de escrita, inclusive recusas, e por atividade encerrada automaticamente (sem usuário). |
+| Exception tracking | Erros em `application/problem+json` com `code` e `traceId` (= `X-Trace-Id`); 500 genérico, detalhe só no log. |
 | Querying (CQRS/API Composition) | Eventos publica o estado completo de eventos e atividades nas mensagens, para projeções de leitura (ex.: Relatórios). |
 
 ---
@@ -51,9 +52,15 @@ início, fim e descrição.
   capacidade abaixo do já reservado".
 - **Consequências:** Inscrições referencia `activity_id` (além de `event_id`), o que deve ser refletido no modelo de
   inscrição do design. Mudar a capacidade exige criar outra atividade.
+- **Nota (nomes):** hoje o preço se chama `amount_minor` na API e nas mensagens (a coluna do banco continua `price_cents`) e
+  as mensagens seguem o formato de Inscrições (ADR-E7). O resto da decisão vale.
 
 ## ADR-E2 — Reserva de vaga por coreografia assíncrona com UPDATE condicional atômico
 
+- **Nota (substituída):** esta decisão foi substituída pelo ADR-E7. Eventos não conta mais vagas: a saga
+  (`registration.*` → `seat.*`), o consumidor Kafka, `reserved`/`available`, `seat_reservations` e `processed_messages` não são
+  mais usados (as colunas e tabelas ficam no banco, sem uso). Inscrições conta as vagas contra a `capacity` que Eventos
+  informa. O texto abaixo é o histórico da decisão original.
 - **Estado:** Proposto (define o contrato que o serviço de Inscrições deve seguir)
 - **Contexto:** a capacidade fica em Eventos e a inscrição em Inscrições, então reservar uma vaga é uma transação entre
   serviços (Database per Service). O design adotou Messaging e Saga; RPC não foi marcado. RN01/RQ04 exigem zero
@@ -99,10 +106,16 @@ início, fim e descrição.
   fatos que não aconteceram; (d) adiciona infraestrutura pesada para um protótipo. Com (c) o Kafka fora do ar só atrasa as
   mensagens: a API continua aceitando escritas.
 - **Consequências:** entrega *at-least-once*: consumidores precisam deduplicar por `message_id` (Relatórios já faz; o
-  próprio Eventos faz com `processed_messages`). Latência extra de até `OUTBOX_INTERVAL_MS` (500 ms). Uma tabela a mais.
+  próprio Eventos fazia com `processed_messages`). Latência extra de até `OUTBOX_INTERVAL_MS` (500 ms). Uma tabela a mais.
+- **Nota:** o outbox continua valendo; o encerramento automático (ADR-E7) também grava nele, na mesma transação da mudança.
+  Eventos não consome mais mensagens, então a parte de consumidor idempotente deixou de existir.
 
 ## ADR-E4 — Access Token validado localmente; RN07 como 404
 
+- **Nota (substituída):** a validação do JWT no próprio serviço (JWKS, verificador de token, `JWT_*`, `AUTH_UNAVAILABLE`)
+  foi substituída pelo ADR-E7: a identidade vem só dos cabeçalhos `X-User-Id` / `X-User-Roles` do Gateway. Seguem valendo o
+  papel `ORGANIZER` para criar evento, a posse do evento para alterar e o **404** para recursos alheios (RN07). O texto
+  abaixo é o histórico da decisão original.
 - **Estado:** Proposto (alinha com a pendência P3 do serviço de Usuários)
 - **Contexto:** o Gateway só verifica a presença de `X-User-Id`, sem validar identidade; qualquer cliente pode enviar esse
   cabeçalho. O serviço de Usuários emite JWT RS256 (`sub`, `roles`, `iss`, `exp`) e publica a chave em
@@ -141,6 +154,7 @@ início, fim e descrição.
   que o Gateway consome, de uma só fonte.
 - **Consequências:** não há biblioteca TypeScript do discoverer (o protocolo é usado direto, como em Relatórios); o
   código de registro poderia virar `service-discoverer/Libs/typescript` e ser compartilhado pelos dois serviços.
+  *Atualização:* essa biblioteca passou a existir e Eventos a usa (pacote `discovery`); o cliente próprio foi removido. Eventos agora usa a biblioteca TypeScript compartilhada e se registra uma única vez ao iniciar, com as tentativas padrão da biblioteca; não se registra mais periodicamente.
 
 ## ADR-E6 — Contrato de erros e de correlação
 
@@ -153,6 +167,56 @@ início, fim e descrição.
   em vez de ignorados.
 - **Consequências:** um erro reportado pelo usuário leva à linha de log exata; uma inscrição pode ser seguida de
   Inscrições a Eventos e de volta pelo mesmo id.
+- **Nota (renomeação):** o cabeçalho `X-Request-Id` citado acima passou a se chamar `X-Trace-Id` e o "id da requisição" a
+  "trace id" (`traceId`); `X-Request-Id` recebido é ignorado e não é devolvido. O texto acima é mantido como foi decidido.
+  Do mesmo modo, o `correlation_id` das mensagens Kafka (e o cabeçalho `correlation-id`) passou a se chamar `trace_id`
+  (cabeçalho `trace-id`); uma mensagem consumida que só traz `correlation_id` é aceita, mas o campo é ignorado (`trace_id` fica `null`).
+- **Nota (substituída em parte):** Eventos não consome mais mensagens (ADR-E7), então a propagação do identificador de uma
+  mensagem consumida deixou de existir; o `trace_id` das mensagens publicadas é o `X-Trace-Id` da requisição, ou `null` no
+  encerramento automático. O envelope agora é plano, com `schema_version` no lugar de `version`.
+
+## ADR-E7 — Eventos guarda só a capacidade; ciclo de vida da atividade; identidade pelo cabeçalho; nomes de Inscrições
+
+- **Estado:** Aceito
+- **Contexto:** Inscrições já implementa o contrato de integração (`subscription/CONTRACTS.md`): conta ela mesma as vagas
+  contra a `capacity` que lê de Eventos, consulta `registration_open`/`amount_minor` em `GET /api/v1/activities/{activity_id}`,
+  pergunta `permissions/me` antes de cada operação administrativa, consome `events.events` (inclusive `ActivityEnded` e
+  `ActivityCancelled`, que aplica sob o relógio dela e recusa quando antecipados) e recebe a identidade do Gateway por
+  `X-User-Id` / `X-User-Roles`. O Eventos original tinha o modelo antigo (saga de reserva, JWT validado localmente, nomes e
+  tópicos próprios).
+- **Alternativas:** manter a saga de vagas em Eventos e adaptar só os nomes; manter a validação do JWT e aceitar também o
+  cabeçalho; encerrar atividades só pelo organizador; ou só automaticamente.
+- **Decisão:**
+  1. **Capacidade.** Eventos guarda só a capacidade máxima (imutável); Inscrições conta as vagas ocupadas. A saga de reserva
+     sai: sem consumidor Kafka, sem `seat.*`, sem `SUBSCRIPTION_TOPIC` nem grupo de consumo, sem ler ou gravar `reserved`,
+     `available` e `seat_reservations`. O banco **não** perde colunas nem tabelas (`reserved`, `available`,
+     `seat_reservations`, `processed_messages` ficam sem uso). `available` some da API e das mensagens.
+  2. **Ciclo de vida da atividade.** Nova coluna `activities.ended_at` (nula). O `lifecycle` é derivado: `CANCELLED` se o
+     evento está cancelado, senão `ENDED` se `ended_at` existe, senão `OPEN`. O organizador encerra a atividade
+     (`POST /api/v1/activities/{activity_id}/end`) depois do `ends_at` previsto (antes disso, 409 `ACTIVITY_NOT_ENDED`,
+     porque Inscrições recusa um `ActivityEnded` antecipado e travaria o consumidor); repetir é idempotente e não publica de
+     novo. Um job automático encerra, `ACTIVITY_AUTO_END_AFTER_SECONDS` (padrão um dia) depois do `ends_at`, o que ninguém
+     encerrou, em lotes com `FOR UPDATE SKIP LOCKED` (seguro com várias réplicas), publicando `ActivityEnded` na mesma
+     transação. Cancelar o evento cancela as atividades: publica `EventCancelled` e um `ActivityCancelled` por atividade ainda
+     não encerrada. Encerrada ou cancelada, a atividade continua consultável; `registration_open` fica falso.
+  3. **Identidade.** Só `X-User-Id` (UUID; presente e inválido é 401, ausente é anônimo) e `X-User-Roles` (separados por
+     vírgula, comparados em maiúsculas), como nos outros serviços. O JWT e o JWKS saem do serviço (`JWT_ISSUER`,
+     `JWT_JWKS_URL`, `JWKS_CACHE_SECONDS`, o verificador e a chamada a Usuários). O serviço confia nos cabeçalhos por
+     isolamento de rede; o Gateway apaga os cabeçalhos enviados pelo cliente. As rotas de escrita passam a `requireAuth=true`.
+  4. **Nomes alinhados a Inscrições.** HTTP em `/api/v1`, parâmetros e campos `event_id`/`activity_id`, `amount_minor` e
+     `currency`; tópico `events.events`; envelope plano com `schema_version`; tipos em PascalCase; chave = `event_id` nas
+     mensagens de evento e de criação/edição/remoção de atividade e `activity_id` em `ActivityEnded`/`ActivityCancelled`.
+- **Evidências:** testes unitários das regras do `end` (dono, evento publicado, antes do `ends_at`, sucesso uma vez,
+  repetição sem mensagem), do cancelamento que publica `ActivityCancelled`, do job (só vencidas, uma vez, `trace_id` nulo,
+  sem sobreposição), da identidade por cabeçalho e do envelope; testes de integração das mesmas regras contra PostgreSQL.
+- **Justificativa:** quem registra as inscrições é quem conta as vagas sem corrida entre serviços; manter o contador em
+  Eventos obrigaria a saga assíncrona e duplicaria a regra. Deixar o fim da atividade só por conta do organizador travaria
+  quem esquece, e só automático tiraria o controle dele; os dois caminhos publicam a mesma mensagem. Confiar nos cabeçalhos
+  evita verificar o JWT duas vezes e a dependência de Usuários, com o mesmo modelo de confiança dos demais serviços.
+- **Consequências:** Relatórios ainda lê o formato antigo (`event.created`, `data` aninhado) e deixa de projetar eventos e
+  atividades até ser adaptado (aceito). O serviço só é seguro atrás do Gateway e da rede interna. Uma atividade de um evento
+  cancelado mostra `CANCELLED` mesmo que tivesse encerrado antes (o `ended_at` permanece). Mensagens ainda pendentes no outbox
+  no momento da atualização saem no formato antigo.
 
 ---
 
@@ -160,14 +224,14 @@ início, fim e descrição.
 
 | Serviço | O que precisa saber |
 |---|---|
-| Inscrições | Publicar `registration.requested`/`cancelled`/`expired` em `subscription-events` com `registration_id`, `event_id`, `activity_id`, `user_id`, chave = `registration_id`; consumir `seat.*` e `event.cancelled` (ADR-E2). |
-| Relatórios | Já consome `event.*` e `activity.*` sem mudanças. `activity.deleted` (só em rascunho) ainda é ignorado. |
-| Notificações | Eventos não conhece os inscritos; avisar participantes sobre `event.updated`/`event.cancelled` (RF08) cabe a Inscrições, que traduz para o tópico `notifications`. |
-| Gateway | Rodar `events/scripts/register-gateway-routes.sh` após o primeiro sync. |
-| Usuários | Eventos usa `iss`, `sub`, `roles` e o JWKS; não lê o banco de Usuários. |
+| Inscrições | Conta as vagas contra a `capacity`; lê `GET /api/v1/activities/{activity_id}` e `.../permissions/me`; consome `events.events` (`EventCancelled`, `Activity*`) (ADR-E7). |
+| Relatórios | Ainda lê o formato antigo (`event.*`, `data` aninhado, `events-events`) e deixa de projetar até ser adaptado (aceito; ADR-E7). |
+| Notificações | Eventos não conhece os inscritos; avisar participantes sobre `EventUpdated`/`EventCancelled` (RF08) cabe a Inscrições, que traduz para o tópico `notifications`. |
+| Gateway | Rodar `events/scripts/register-gateway-routes.sh` após o primeiro sync; o Gateway verifica o JWT e envia `X-User-Id` / `X-User-Roles`. |
+| Usuários | Nenhuma chamada: Eventos recebe só o `sub` e os papéis pelos cabeçalhos do Gateway (ADR-E7). |
 
 ## Limitações conhecidas
-- `processed_messages` não é expurgada (cresce com o volume de mensagens consumidas).
+- `reserved`, `available`, `seat_reservations` e `processed_messages` ficam no banco sem uso (a migração é não destrutiva); removê-las é uma migração futura.
 - Sem cache de leitura: no pico de RQ02 a escala é por réplicas (`deploy.replicas`) e índices; as consultas públicas são
   simples e indexadas.
 - O layer HTTP (Fastify) e o Kafka não puderam ser executados no ambiente onde o serviço foi escrito (sem acesso ao

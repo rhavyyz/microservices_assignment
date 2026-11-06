@@ -5,6 +5,7 @@ export type PaymentView = {
   registration_id: string;
   user_id: string;
   event_id: string | null;
+  activity_id: string | null;
   amount_minor: number;
   currency: string;
   status: string;
@@ -28,28 +29,30 @@ export function eventTypeFor(status: string): string {
 }
 
 /**
- * Flat envelope in Subscription's naming (see subscription/CONTRACTS.md): `event_id` is this message's unique id,
- * so the payment's Events-service event is published as `parent_event_id`. See README, "Events published".
+ * Flat envelope in Subscription's naming (see subscription/CONTRACTS.md): `message_id` is this message's unique id
+ * (consumers dedupe by it); `event_id` is the Events-service event the payment belongs to.
+ * See README, "Events published".
  */
 export function buildPaymentEvent(
   p: PaymentView,
   reason: string | null,
-  requestId: string | null,
-  eventId: string,
+  traceId: string | null,
+  messageId: string,
   occurredAt: Date,
 ): Outgoing {
   return {
     key: p.registration_id,
     value: JSON.stringify({
-      event_id: eventId,
+      message_id: messageId,
       schema_version: 1,
       type: eventTypeFor(p.status),
       occurred_at: occurredAt.toISOString(),
-      request_id: requestId,
+      trace_id: traceId,
       payment_id: p.payment_id,
       registration_id: p.registration_id,
       user_id: p.user_id,
-      parent_event_id: p.event_id,
+      event_id: p.event_id,
+      activity_id: p.activity_id,
       amount_minor: p.amount_minor,
       currency: p.currency,
       status: p.status,

@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import type { Pool } from 'pg';
 import { handleSubscriptionMessage } from '../src/consumer.ts';
 
-type Row = { payment_id: string; registration_id: string; user_id: string; event_id: string | null; amount_minor: string; currency: string; status: string; expires_at: Date; created_at: Date };
+type Row = { payment_id: string; registration_id: string; user_id: string; event_id: string | null; activity_id: string | null; amount_minor: string; currency: string; status: string; expires_at: Date; created_at: Date };
 
 const payment = (status: string): Row => ({
-  payment_id: 'p1', registration_id: 'r1', user_id: 'u1', event_id: 'e1', amount_minor: '2500', currency: 'BRL', status,
+  payment_id: 'p1', registration_id: 'r1', user_id: 'u1', event_id: 'e1', activity_id: 'a1', amount_minor: '2500', currency: 'BRL', status,
   expires_at: new Date('2030-01-01T00:00:00Z'), created_at: new Date('2026-01-01T00:00:00Z'),
 });
 
@@ -48,8 +48,8 @@ const logs: { level: string; o: any; m: string }[] = [];
 const log = { info: (o: object, m: string) => logs.push({ level: 'info', o, m }), warn: (o: object, m: string) => logs.push({ level: 'warn', o, m }) };
 
 const msg = (over: object = {}) => JSON.stringify({
-  event_id: 'ev1', schema_version: 1, type: 'RegistrationCancelled', registration_id: 'r1', user_id: 'u1',
-  aggregate_version: 2, occurred_at: '2026-10-31T12:00:00Z', status: 'CANCELLED', request_id: 'req-1', ...over,
+  message_id: 'ev1', schema_version: 1, type: 'RegistrationCancelled', registration_id: 'r1', user_id: 'u1',
+  aggregate_version: 2, occurred_at: '2026-10-31T12:00:00Z', status: 'CANCELLED', trace_id: 'req-1', ...over,
 });
 
 test('cancel for a PENDING payment cancels it (no notification), reason registration_cancelled', async () => {
@@ -90,7 +90,7 @@ test('no payment, or a payment already in a final state: no-op', async () => {
   }
 });
 
-test('duplicate event_id is applied once', async () => {
+test('duplicate message_id is applied once', async () => {
   const db = fakeDb([payment('APPROVED')]);
   assert.equal(await handleSubscriptionMessage(db.pool, msg(), {}, log), 'applied');
   assert.equal(await handleSubscriptionMessage(db.pool, msg(), {}, log), 'duplicate');

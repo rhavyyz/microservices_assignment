@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS payments (
   registration_id text NOT NULL UNIQUE,
   user_id         text NOT NULL,
   event_id        text,
+  activity_id     text,
   amount_minor    bigint NOT NULL CHECK (amount_minor > 0),
   currency        text NOT NULL,
   status          text NOT NULL CHECK (status IN ('PENDING','APPROVED','DECLINED','EXPIRED','CANCELLED','REFUNDED')),
@@ -28,7 +29,7 @@ CREATE TABLE IF NOT EXISTS payment_transitions (
   from_status    text,
   to_status      text NOT NULL,
   reason         text,
-  request_id     text,
+  trace_id       text,
   at             timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS payment_transitions_payment_idx ON payment_transitions (payment_id);
@@ -45,7 +46,7 @@ CREATE TABLE IF NOT EXISTS outbox (
 CREATE INDEX IF NOT EXISTS outbox_pending_idx ON outbox (id) WHERE published_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS processed_messages (
-  event_id     text PRIMARY KEY,
+  message_id   text PRIMARY KEY,
   processed_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -90,15 +91,6 @@ BEGIN
   END IF;
 END $$;
 
--- v4: processed_messages.message_id became event_id (only if the old column is still there).
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM information_schema.columns
-              WHERE table_schema = current_schema() AND table_name = 'processed_messages' AND column_name = 'message_id') THEN
-    ALTER TABLE processed_messages RENAME COLUMN message_id TO event_id;
-  END IF;
-END $$;
-
 -- v5: payment_transitions.correlation_id became request_id (only if the old column is there and the new one is not).
 DO $$
 BEGIN
@@ -110,17 +102,9 @@ BEGIN
   END IF;
 END $$;
 
--- v6: activity_id left Payments (payments belong to registrations). Drop the column only if it is still there;
--- Postgres drops any index or constraint that involves it together with the column. No-op on fresh databases and re-runs.
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM information_schema.columns
-              WHERE table_schema = current_schema() AND table_name = 'payments' AND column_name = 'activity_id') THEN
-    ALTER TABLE payments DROP COLUMN activity_id;
-  END IF;
-END $$;
+-- (There is no v6: that number was retired, like v4. It dropped payments.activity_id, which Payments keeps after all; v10 restores it.)
 
--- v7: REFUNDED status, and payments.event_id (the parent event) becomes nullable (Subscription may not know it for old rows).
+-- v7: REFUNDED status, and payments.event_id (the Events-service event) becomes nullable (Subscription may not know it for old rows).
 -- Replaces the status CHECK only when the current one does not mention REFUNDED yet; DROP NOT NULL is a no-op if already nullable.
 DO $$
 DECLARE c record;
@@ -139,6 +123,46 @@ BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.columns
               WHERE table_schema = current_schema() AND table_name = 'payments' AND column_name = 'event_id' AND is_nullable = 'NO') THEN
     ALTER TABLE payments ALTER COLUMN event_id DROP NOT NULL;
+  END IF;
+END $$;
+
+-- v8: processed_messages keeps message_id (the id of the Kafka message). A short-lived revision renamed it to event_id
+-- (the old v4 block, since removed); undo that on any database that already ran it. Renames only when event_id exists
+-- and message_id does not, so it is a no-op on fresh databases and re-runs. (There is no v4: that number was retired.)
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = current_schema() AND table_name = 'processed_messages' AND column_name = 'event_id')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = current_schema() AND table_name = 'processed_messages' AND column_name = 'message_id') THEN
+    ALTER TABLE processed_messages RENAME COLUMN event_id TO message_id;
+  END IF;
+END $$;
+
+-- v9: request_id became trace_id (the same value, renamed). payment_transitions.request_id is renamed
+-- only if the old column is there and the new one is not.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = current_schema() AND table_name = 'payment_transitions' AND column_name = 'request_id')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = current_schema() AND table_name = 'payment_transitions' AND column_name = 'trace_id') THEN
+    ALTER TABLE payment_transitions RENAME COLUMN request_id TO trace_id;
+  END IF;
+END $$;
+
+-- v10: payments.activity_id is back (it comes from Subscription's lookup). Adds the column if it is missing (databases that
+-- ran the retired v6) and makes it nullable if it is NOT NULL (databases from main): payments created while the column
+-- was gone cannot be backfilled. No-op on fresh databases and re-runs.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = current_schema() AND table_name = 'payments' AND column_name = 'activity_id') THEN
+    ALTER TABLE payments ADD COLUMN activity_id text;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = current_schema() AND table_name = 'payments' AND column_name = 'activity_id' AND is_nullable = 'NO') THEN
+    ALTER TABLE payments ALTER COLUMN activity_id DROP NOT NULL;
   END IF;
 END $$;
 `;

@@ -16,15 +16,15 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
- * Identificador de correlação (Exception Tracking). O Gateway do repositório propaga {@code X-Request-Id}
+ * Identificador de rastreio, trace id (Exception Tracking). O Gateway do repositório propaga {@code X-Trace-Id}
  * (gera um se faltar); o serviço aceita o valor recebido somente se tiver formato seguro, senão gera outro.
  * Roda antes da cadeia do Spring Security para que respostas 401/403 também tragam o identificador.
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE)
-public class CorrelationIdFilter extends OncePerRequestFilter {
+public class TraceIdFilter extends OncePerRequestFilter {
 
-    public static final String HEADER = "X-Request-Id";
+    public static final String HEADER = "X-Trace-Id";
     public static final String MDC_KEY = "traceId";
     private static final Pattern SAFE = Pattern.compile("^[A-Za-z0-9._-]{8,64}$");
 

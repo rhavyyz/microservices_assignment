@@ -1,5 +1,3 @@
-import os from 'node:os';
-
 function int(name: string, def: number): number {
   const v = process.env[name];
   if (v === undefined || v.trim() === '') return def;
@@ -13,10 +11,8 @@ function str(name: string, def: string): string {
   return v ? v : def;
 }
 
-const port = int('PORT', 8080);
-
 export const config = {
-  port,
+  port: int('PORT', 8080),
   databaseUrl: str('DATABASE_URL', 'postgres://payments:change-me@payments-db:5432/payments'),
   kafkaBrokers: str('KAFKA_BROKERS', 'kafka:9092').split(',').map((s) => s.trim()).filter(Boolean),
   consumerGroup: str('PAYMENTS_CONSUMER_GROUP', 'payments-service'),
@@ -31,6 +27,4 @@ export const config = {
   outboxIntervalMs: int('OUTBOX_INTERVAL_MS', 500),
   // The simulated provider endpoint (approve / decline / expire). Turn it off with SIMULATOR_ENABLED=false.
   simulatorEnabled: str('SIMULATOR_ENABLED', 'true').toLowerCase() !== 'false',
-  discovererUrl: str('SERVICE_DISCOVERER_URL', 'http://service-discoverer:8080'),
-  serviceHost: str('SERVICE_HOST', `${os.hostname()}:${port}`),
 };

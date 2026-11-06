@@ -19,6 +19,7 @@ export type CreateInput = {
   registrationId: string;
   userId: string;
   eventId: string | null;
+  activityId: string;
   amountMinor: number;
   currency: string;
   expiresAt: Date;
@@ -30,10 +31,10 @@ const CLOSING_TYPES: Record<string, string> = {
 };
 
 export type SubscriptionMessage = {
-  eventId: string;
+  messageId: string;
   type: string;
   registrationId: string;
-  requestId: string | null;
+  traceId: string | null;
   /** Set only for the types that close a registration (cancel / expire); null means "ignore this message". */
   closeReason: string | null;
 };
@@ -52,10 +53,10 @@ export function parseSubscriptionMessage(raw: string): Validation<SubscriptionMe
     const v = m[k];
     return typeof v === 'string' && v.trim() !== '' ? v.trim() : null;
   };
-  const eventId = need('event_id');
+  const messageId = need('message_id');
   const type = need('type');
   const registrationId = need('registration_id');
-  if (!eventId) return { ok: false, error: 'event_id is required' };
+  if (!messageId) return { ok: false, error: 'message_id is required' };
   if (!type) return { ok: false, error: 'type is required' };
   if (!registrationId) return { ok: false, error: 'registration_id is required' };
   const v = m.schema_version;
@@ -63,6 +64,6 @@ export function parseSubscriptionMessage(raw: string): Validation<SubscriptionMe
   if (v > 1) return { ok: false, error: `unsupported schema_version ${v}` };
   return {
     ok: true,
-    value: { eventId, type, registrationId, requestId: need('request_id'), closeReason: CLOSING_TYPES[type] ?? null },
+    value: { messageId, type, registrationId, traceId: need('trace_id'), closeReason: CLOSING_TYPES[type] ?? null },
   };
 }

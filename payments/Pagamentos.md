@@ -31,9 +31,9 @@ Node.js 22 com TypeScript, Fastify (contrato OpenAPI gerado pelo código), Postg
 | Tabela | Função |
 | --- | --- |
 | `payments` | Um pagamento por inscrição (`registration_id` único), com valor, moeda, estado e prazo (`expires_at`). |
-| `payment_transitions` | Histórico de toda mudança de estado: de, para, motivo e identificador da requisição (`request_id`). |
+| `payment_transitions` | Histórico de toda mudança de estado: de, para, motivo e identificador de rastreio (`trace_id`). |
 | `outbox` | Eventos a publicar no Kafka, gravados na mesma transação da mudança de estado. |
-| `processed_messages` | `event_id` das mensagens já tratadas (deduplicação do consumidor de `subscription.events`). |
+| `processed_messages` | `message_id` das mensagens já tratadas (deduplicação do consumidor de `subscription.events`). |
 
 Máquina de estados:
 
@@ -68,7 +68,7 @@ Corpo de `POST /payments`:
 {"registration_id":"<uuid>"}
 ```
 
-Só `registration_id` é lido (ausente ou fora do formato UUID resulta em 400 `VALIDATION_ERROR`); propriedades desconhecidas são ignoradas. Valor, moeda, dono e evento de origem vêm sempre da resposta do serviço de inscrições (`GET /internal/registrations/{id}`, endpoint dele, descoberto pelo kind `subscription` e chamado com o `X-Request-Id` do pedido), nunca do cliente. Resultados:
+Só `registration_id` é lido (ausente ou fora do formato UUID resulta em 400 `VALIDATION_ERROR`); propriedades desconhecidas são ignoradas. Valor, moeda, dono e evento de origem vêm sempre da resposta do serviço de inscrições (`GET /internal/registrations/{id}`, endpoint dele, descoberto pelo kind `subscription` e chamado com o `X-Trace-Id` do pedido), nunca do cliente. Resultados:
 
 - inscrição inexistente ou de outro usuário: 404 `REGISTRATION_NOT_FOUND` (nunca revela inscrições alheias);
 - inscrição que não está em `PENDING_PAYMENT`: 409 `REGISTRATION_NOT_PAYABLE`;
@@ -76,23 +76,23 @@ Só `registration_id` é lido (ausente ou fora do formato UUID resulta em 400 `V
 - serviço de inscrições fora do ar, com erro 5xx ou resposta inválida: 503 `UPSTREAM_UNAVAILABLE`, sem detalhes internos;
 - caso contrário, o pagamento nasce `PENDING` com prazo `agora + PAYMENT_TTL_SECONDS` (prazo próprio do serviço).
 
-O host do serviço de inscrições fica em cache; numa falha de conexão o discoverer é consultado de novo e a chamada repetida uma vez (timeout de 5 s). Repetir a chamada devolve o pagamento existente, sem consultar as inscrições (200 em vez de 201), após a checagem do dono.
+A chamada usa a biblioteca `discovery`: o host do serviço de inscrições fica em cache; numa falha de conexão o discoverer é consultado de novo e a chamada repetida uma vez (timeout de 5 s). Repetir a chamada devolve o pagamento existente, sem consultar as inscrições (200 em vez de 201), após a checagem do dono.
 
 As consultas e a simulação exigem o cabeçalho `X-User-Id`, que deve ser um UUID (ausente ou inválido resulta em 401 `UNAUTHENTICATED`), e só respondem ao dono do pagamento. Qualquer outro usuário recebe 404, igual a um pagamento inexistente (RN07). A simulação responde 409 `PAYMENT_NOT_APPLIED`, com o estado real em `payment_status`, quando o pedido não pôde ser atendido.
 
-O cabeçalho `X-Request-Id` (8 a 64 caracteres de `[A-Za-z0-9._-]`, senão é gerado um UUID) é sempre devolvido na resposta e vira o `request_id` dos eventos e do histórico. Todo erro sai como `application/problem+json` com `title`, `status`, `code` (`UNAUTHENTICATED`, `VALIDATION_ERROR`, `PAYMENT_NOT_FOUND`, `REGISTRATION_NOT_FOUND`, `REGISTRATION_NOT_PAYABLE`, `PAYMENT_NOT_APPLIED`, `UPSTREAM_UNAVAILABLE`, `INTERNAL_ERROR`), `detail` e `traceId` (o id da requisição); o erro 500 não expõe detalhes internos.
+O cabeçalho `X-Trace-Id` (8 a 64 caracteres de `[A-Za-z0-9._-]`, senão é gerado um UUID) é sempre devolvido na resposta e vira o `trace_id` dos eventos e do histórico. O antigo `X-Request-Id` é ignorado (não é lido nem devolvido). A migração v9 renomeia `payment_transitions.request_id` para `trace_id`. Todo erro sai como `application/problem+json` com `title`, `status`, `code` (`UNAUTHENTICATED`, `VALIDATION_ERROR`, `PAYMENT_NOT_FOUND`, `REGISTRATION_NOT_FOUND`, `REGISTRATION_NOT_PAYABLE`, `PAYMENT_NOT_APPLIED`, `UPSTREAM_UNAVAILABLE`, `INTERNAL_ERROR`), `detail` e `traceId` (o id de rastreio); o erro 500 não expõe detalhes internos.
 
 ### Kafka
 
-O serviço consome `subscription.events` (variável `SUBSCRIPTION_TOPIC`; grupo `PAYMENTS_CONSUMER_GROUP`, padrão `payments-service`; leitura desde o início; atualização de metadados a cada 10 s). O envelope é plano; são obrigatórios `event_id`, `schema_version` (inteiro; maior que 1 é rejeitado), `type` e `registration_id`, e campos extras e tipos desconhecidos são tolerados. Mensagens inválidas são registradas em log (só identificadores, nunca o conteúdo) e puladas.
+O serviço consome `subscription.events` (variável `SUBSCRIPTION_TOPIC`; grupo `PAYMENTS_CONSUMER_GROUP`, padrão `payments-service`; leitura desde o início; atualização de metadados a cada 10 s). O envelope é plano; são obrigatórios `message_id`, `schema_version` (inteiro; maior que 1 é rejeitado), `type` e `registration_id`, e campos extras e tipos desconhecidos são tolerados. Mensagens inválidas são registradas em log (só identificadores, nunca o conteúdo) e puladas.
 
 - `RegistrationCancelled` e `RegistrationExpired`: pagamento `PENDING` vira `CANCELLED`; pagamento `APPROVED` vira `REFUNDED` (motivos `registration_cancelled` e `registration_expired`). Qualquer outro estado, ou a ausência de pagamento, não tem efeito.
 - Os demais tipos (inclusive `RegistrationPendingPayment`) são ignorados.
-- A deduplicação é por `event_id` em `processed_messages`, gravado na mesma transação do efeito (entrega pelo menos uma vez). Erro de banco interrompe o processamento e o offset não é confirmado.
+- A deduplicação é por `message_id` em `processed_messages`, gravado na mesma transação do efeito (entrega pelo menos uma vez). Erro de banco interrompe o processamento e o offset não é confirmado.
 
 Na inicialização o serviço cria, se não existirem, `payments.events`, `notifications` e `subscription.events`. Não existe tópico `payments.commands`.
 
-O `activity_id` saiu do serviço: o pagamento se relaciona com a inscrição, não com a atividade. A coluna antiga é removida na migração.
+O `activity_id` vem da consulta ao Subscription (`GET /internal/registrations/{id}`, campo obrigatório: sem ele a resposta é inválida e `POST /payments` devolve 503). Nunca vem do cliente (um `activity_id` no corpo é ignorado). É gravado em `payments.activity_id` (coluna anulável: pagamentos criados enquanto a coluna não existia ficam com `null`), devolvido pela API e publicado nos eventos.
 
 O serviço guarda no máximo um pagamento por `registration_id` (deduplicado por ele).
 
@@ -100,7 +100,7 @@ O serviço guarda no máximo um pagamento por `registration_id` (deduplicado por
 
 ### Tópico `payments.events` (chave: `registration_id`)
 
-Eventos `PaymentCreated` (`PENDING`), `PaymentApproved` (`APPROVED`), `PaymentDeclined` (`DECLINED`), `PaymentExpired` (`EXPIRED`), `PaymentCancelled` (`CANCELLED`) e `PaymentRefunded` (`REFUNDED`), em envelope plano e versionado: `event_id` (id único da mensagem), `schema_version` (1), `type`, `occurred_at`, `request_id`, `registration_id`, `amount_minor` (inteiro em unidades menores), `currency`, `payment_id`, `user_id`, `parent_event_id`, `status` e `reason`. O evento do serviço de eventos a que o pagamento pertence sai como `parent_event_id`, porque `event_id` identifica a mensagem; na API HTTP o campo continua `event_id`. O `activity_id` não é mais publicado (o serviço de relatórios será atualizado à parte).
+Eventos `PaymentCreated` (`PENDING`), `PaymentApproved` (`APPROVED`), `PaymentDeclined` (`DECLINED`), `PaymentExpired` (`EXPIRED`), `PaymentCancelled` (`CANCELLED`) e `PaymentRefunded` (`REFUNDED`), em envelope plano e versionado: `message_id` (id único da mensagem), `schema_version` (1), `type`, `occurred_at`, `trace_id`, `registration_id`, `amount_minor` (inteiro em unidades menores), `currency`, `payment_id`, `user_id`, `event_id`, `activity_id` (a atividade da inscrição; `null` em pagamentos antigos), `status` e `reason`. `event_id` é o evento do serviço de eventos a que o pagamento pertence (mesmo nome na API HTTP e na coluna `payments.event_id`); `message_id` identifica a mensagem.
 
 O campo `reason` explica a causa: `simulated_approval`, `simulated_decline`, `simulated_expiration`, `payment_deadline` (prazo vencido), `expired_before_confirmation` (aprovação tardia), `registration_cancelled` e `registration_expired`.
 
@@ -142,8 +142,8 @@ Ao receber `RegistrationCancelled` ou `RegistrationExpired` em `subscription.eve
 | --- | --- | --- |
 | Database per service | PostgreSQL próprio, sem acesso de outros serviços | Implementado |
 | API Gateway | Rotas de front liberadas por endpoint; criação privada | Implementado (liberação por script de administrador) |
-| Server-side discovery | Registro no discoverer com o protocolo bruto e a mesma política de retentativa das bibliotecas (10 tentativas, 1 s até 30 s) | Implementado |
-| Messaging com consumidor idempotente | `event_id` gravado na mesma transação do efeito (`processed_messages`), usado pelo consumidor de `subscription.events` | Implementado (sem teste com Kafka real) |
+| Server-side discovery | Registro no discoverer pela biblioteca `discovery` (10 tentativas, 1 s até 30 s), sem bloquear a subida | Implementado |
+| Messaging com consumidor idempotente | `message_id` gravado na mesma transação do efeito (`processed_messages`), usado pelo consumidor de `subscription.events` | Implementado (sem teste com Kafka real) |
 | Transactional outbox | Evento e mudança de estado na mesma transação; worker publica depois | Implementado |
 | Health check API | `GET /healthcheck` responde 200 só se o banco responde ao ping, senão 503 | Implementado |
 | Access token | Identidade por `X-User-Id` repassado pelo gateway, sem verificação, como no resto do monorepo; autorização por dono do pagamento | Parcial |
@@ -165,13 +165,13 @@ Ao receber `RegistrationCancelled` ou `RegistrationExpired` em `subscription.eve
 | RQ03 Resiliência | O serviço sobe e responde sem Kafka. Os eventos aguardam na outbox até o Kafka voltar. |
 | RQ04 Consistência | Transições controladas por máquina de estados, com bloqueio de linha e evento na mesma transação. |
 | RQ05 Interoperabilidade | REST com OpenAPI e eventos JSON versionados. |
-| RQ06 Observabilidade | Logs estruturados e `X-Request-Id` (`request_id`) em requisições, eventos e histórico de transições. |
+| RQ06 Observabilidade | Logs estruturados e `X-Trace-Id` (`trace_id`) em requisições, eventos e histórico de transições. |
 | RQ07 Segurança | Senha do banco por variável de ambiente (o valor de desenvolvimento no compose deve ser trocado fora do repositório). |
 | RQ08 Operabilidade | Dockerfile, compose com o banco e README com instruções. |
 
 ## 10. Testes e validação
 
-Testes automatizados (58, todos passando, sem rede nem banco): máquina de estados, incluindo a aprovação tardia e o estorno; montagem dos eventos e das notificações; validação do corpo de `POST /payments`; `POST /payments` completo via `inject` com pool e consulta de inscrições falsos (criação, dono alheio, não pagável, upstream fora do ar, corpo inválido, idempotência); cliente de consulta (discoverer, cache, nova tentativa); consumidor de `subscription.events` com banco em memória (cancelamento, estorno, sem pagamento, estados finais, duplicata, mensagens inválidas ou desconhecidas); criação dos tópicos com admin falso; registro no discoverer e retentativas; valores padrão e validação de `PAYMENT_TTL_SECONDS`.
+Testes automatizados (60, todos passando, sem rede nem banco): máquina de estados, incluindo a aprovação tardia e o estorno; montagem dos eventos e das notificações; validação do corpo de `POST /payments`; `POST /payments` completo via `inject` com pool e consulta de inscrições falsos (criação, dono alheio, não pagável, upstream fora do ar, corpo inválido, idempotência); cliente de consulta de inscrições (mapeamento de status e validação do corpo, com a biblioteca `discovery` falsa); consumidor de `subscription.events` com banco em memória (cancelamento, estorno, sem pagamento, estados finais, duplicata, mensagens inválidas ou desconhecidas); criação dos tópicos com admin falso; valores padrão e validação de `PAYMENT_TTL_SECONDS`.
 
 A validação com Postgres, Kafka e serviço de inscrições reais ainda precisa ser executada e registrada: a migração v7, o consumidor, o cliente HTTP, a criação ponta a ponta, a expiração automática pelo job, o estorno e o comportamento com o Kafka parado.
 
@@ -180,7 +180,7 @@ A validação com Postgres, Kafka e serviço de inscrições reais ainda precisa
 - O estorno só muda o estado e avisa o usuário; não há devolução real de dinheiro (provedor simulado).
 - Não há autenticação entre serviços; o `GET /internal/registrations/{id}` do serviço de inscrições deve ficar privado no gateway.
 - Exception tracking e audit log dependem de decisão do grupo sobre a ferramenta e o formato do evento.
-- Em caso de queda entre o envio e a marcação da outbox, o mesmo evento ou aviso pode ser enviado duas vezes. Os consumidores precisam deduplicar por `event_id`.
+- Em caso de queda entre o envio e a marcação da outbox, o mesmo evento ou aviso pode ser enviado duas vezes. Os consumidores precisam deduplicar por `message_id`.
 - Moedas diferentes são guardadas, mas o serviço não faz conversão.
 - Falta o teste automatizado de integração com banco e broker.
 
@@ -189,7 +189,7 @@ A validação com Postgres, Kafka e serviço de inscrições reais ainda precisa
 Para a RN02 e a RN03 fecharem, o serviço de inscrições precisa:
 
 1. Expor `GET /internal/registrations/{id}` (registro no discoverer com o kind `subscription`).
-2. Publicar `RegistrationCancelled` e `RegistrationExpired` em `subscription.events`, com `event_id` único por mensagem.
+2. Publicar `RegistrationCancelled` e `RegistrationExpired` em `subscription.events`, com `message_id` único por mensagem.
 3. Consumir `PaymentApproved`, `PaymentDeclined`, `PaymentExpired` e `PaymentRefunded` do `payments.events`.
 
 O administrador do gateway precisa liberar as rotas de criação, consulta e simulação (a criação, `POST /payments`, é uma rota nova a liberar).

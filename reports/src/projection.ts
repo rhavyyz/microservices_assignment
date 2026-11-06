@@ -50,17 +50,17 @@ async function applyChange(c: PoolClient, change: Change, at: string): Promise<v
       return;
     case 'payment':
       await c.query(
-        `INSERT INTO payments (payment_id, registration_id, event_id, activity_id, amount, currency, status, last_event_at)
+        `INSERT INTO payments (payment_id, registration_id, event_id, activity_id, amount_minor, currency, status, last_event_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          ON CONFLICT (payment_id) DO UPDATE SET
            registration_id = COALESCE(EXCLUDED.registration_id, payments.registration_id),
            activity_id     = COALESCE(EXCLUDED.activity_id, payments.activity_id),
-           amount          = COALESCE(EXCLUDED.amount, payments.amount),
+           amount_minor    = COALESCE(EXCLUDED.amount_minor, payments.amount_minor),
            currency        = COALESCE(EXCLUDED.currency, payments.currency),
            status          = EXCLUDED.status,
            last_event_at   = EXCLUDED.last_event_at
          WHERE payments.last_event_at <= EXCLUDED.last_event_at`,
-        [change.paymentId, change.registrationId, change.eventId, change.activityId, change.amount, change.currency, change.status, at],
+        [change.paymentId, change.registrationId, change.eventId, change.activityId, change.amountMinor, change.currency, change.status, at],
       );
       return;
     case 'checkin':

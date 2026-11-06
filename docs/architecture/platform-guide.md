@@ -21,7 +21,7 @@ Sources of truth, in order: the code, the service's own README/`CONTRACTS.md`, t
    every service and do not call Users to "map a token to a user". The Users service is the exception: it issues the
    tokens and validates its own.
 3. **Authenticate once per request, never mid-trip.** A user-scoped flow must not fail halfway because a token expired.
-   When a service calls another on behalf of a user it forwards `X-User-Id`, `X-User-Roles`, `X-Request-Id` (and the
+   When a service calls another on behalf of a user it forwards `X-User-Id`, `X-User-Roles`, `X-Trace-Id` (and the
    `Authorization` header unchanged where the callee needs it). Background work (Kafka reactions, reconciliation jobs)
    carries no user identity.
 4. **Database per service.** Each service owns its store and never reads another's. Cross-service data goes through
@@ -34,7 +34,7 @@ Sources of truth, in order: the code, the service's own README/`CONTRACTS.md`, t
 7. **Kafka topics are created by whoever uses them, at startup** (ADR-005): create-if-absent, replication 1, configurable
    partitions (default 6), never alter an existing topic, retry in the background before consuming or producing.
    Consumers set a short `topic.metadata.refresh.interval.ms` (10 s) so a topic created later is noticed fast.
-8. **At-least-once delivery, idempotent handling.** Commit offsets after processing. Dedupe by `event_id` (inbox) or a
+8. **At-least-once delivery, idempotent handling.** Commit offsets after processing. Dedupe by `message_id` (inbox) or a
    natural unique key. Producers use a transactional outbox when a DB write and a message must go together. Poison
    messages go to a DLQ topic as references only (topic/partition/offset/reason), never payload copies. Transient
    failures retry without advancing the offset.
@@ -44,7 +44,7 @@ Sources of truth, in order: the code, the service's own README/`CONTRACTS.md`, t
     same. Return 404, not 403, for another user's resource to avoid enumeration. Never log personal data or payloads;
     log ids. Never put secrets in committed files.
 11. **Errors are `application/problem+json`** with at least `status`, `title`, `code`, `traceId` (where the service
-    follows the Python/Java pattern). `X-Request-Id` is accepted (8–64 chars of `[A-Za-z0-9._-]`), generated otherwise,
+    follows the Python/Java pattern). `X-Trace-Id` is accepted (8–64 chars of `[A-Za-z0-9._-]`), generated otherwise,
     and always echoed.
 12. **Small, boring, documented.** Match the surrounding code's style and comment density. Record decisions that took
     a debate as ADRs (`docs/decisions/ADR-00N-*.md`, Portuguese), keep each service's README current, and update
@@ -137,7 +137,7 @@ A service can thereby declare itself public (accepted risk, ADR-003); never decl
 the cooldown then yields 503s for up to 30 s.
 
 **Other behavior.** CORS is fully permissive for now (the gateway answers preflights, services must not set CORS
-headers). Client IP is the connection address unless inside `TRUSTED_PROXIES`. `X-Request-Id` is generated if absent
+headers). Client IP is the connection address unless inside `TRUSTED_PROXIES`. `X-Trace-Id` is generated if absent
 and echoed.
 
 **Admin API (no auth, no host port):** `GET /admin/endpoints[?kind=]`, `PUT /admin/endpoints` (partial update; `kind`,
@@ -234,11 +234,12 @@ organizer actions need role `ORGANIZER` **and** an Events permission check on th
   confirmed activity of the event ends, it emits `AttendanceEligible` once per user and event, only when the percentage
   is >= 75%. It does not issue certificates.
 
-**Messaging.** Consumes `payments.events` and `events.events` (group `subscription-service`); produces `payments.commands`,
+**Messaging.** Consumes `payments.events` and `events.events` (group `subscription-service`; only `ActivityEnded` and
+`ActivityCancelled` are handled, other Events message types are skipped without the DLQ); produces `payments.commands`,
 `subscription.events` (`Registration*`, `WaitlistOffered`, `AttendanceRecorded`, `AttendanceEligible`), `notifications`,
-and `subscription.dlq`. Transactional outbox, inbox dedupe by `event_id`, `aggregate_version` to reject stale states.
-Envelope: `event_id`, `schema_version=1`, `type`, `registration_id`, `activity_id`, `user_id`, `aggregate_version`,
-`occurred_at`, `status`; `AttendanceEligible` adds `parent_event_id`, `attended_activities`, `total_activities`,
+and `subscription.dlq`. Transactional outbox, inbox dedupe by `message_id`, `aggregate_version` to reject stale states.
+Envelope: `message_id`, `schema_version=1`, `type`, `registration_id`, `activity_id`, `user_id`, `aggregate_version`,
+`occurred_at`, `status`, `trace_id` (nullable); `AttendanceEligible` adds `event_id`, `attended_activities`, `total_activities`,
 `attendance_percentage`.
 
 **Config highlights:** `SUBSCRIPTION_DATABASE_URL`, `KAFKA_BROKERS`, `SERVICE_DISCOVERER_URL`, `RESERVATION_SECONDS`,
@@ -280,17 +281,16 @@ topic exists (ADR-005 pattern).
 
 ## 9. Known cross-service gaps (verify before relying on them)
 
-- **Subscription ↔ Events contract mismatch (from reading the code, not run).** Subscription's client calls Events at
-  `/api/v1/activities/{id}` (expecting `activity_id`, `amount_minor`, `currency`, `registration_open`,
-  `waitlist_enabled`, `starts_at`, `ends_at`) and `/api/v1/activities/{id}/permissions/me`. Events serves
-  `GET /activities/:id` (fields `id`, `price_cents`, `paid`, `title`, ...) and no `permissions/me` route that I found.
-  Until reconciled, Subscription cannot talk to the real Events service.
+- **Subscription ↔ Events contract mismatch: resolved (ADR-008).** Events now serves `/api/v1/activities/{id}` and
+  `/api/v1/activities/{id}/permissions/me` in the shape Subscription expects, publishes `ActivityEnded`/`ActivityCancelled`
+  on `events.events`, and no longer counts seats or consumes Kafka. Only exercised against test doubles/unit tests on
+  Subscription's side; not run end to end here.
+- **Reports** still reads the old Events message format and stops projecting events/activities until adapted.
 - **Payments** was only tested with a double on Subscription's side.
 - **Gateway cold-start 503** after a failed first JWKS fetch (30 s cooldown).
 - **Kafka replication factor is fixed at 1** in every topic-creation helper.
 - **No refresh tokens**; tokens last 30 minutes.
-- Open question: Events validates the JWT itself (it ignores `X-User-Id`), unlike the model in principle 2. Align it
-  when touching Events.
+- Events used to validate the JWT itself; resolved (ADR-008): it reads only `X-User-Id`/`X-User-Roles`, per principle 2.
 
 ## 10. Working in parallel
 

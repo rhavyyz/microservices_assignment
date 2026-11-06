@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 class Activity(BaseModel):
     """Resposta confiável de Eventos. Valores monetários são inteiros na menor unidade."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     activity_id: UUID
     event_id: UUID
     capacity: int = Field(ge=0, strict=True)
@@ -32,7 +32,7 @@ class PaymentEvent(BaseModel):
     """Resultado publicado por Pagamentos; campos adicionais são ignorados."""
 
     model_config = ConfigDict(extra="ignore")
-    event_id: UUID
+    message_id: UUID
     schema_version: Literal[1]
     type: Literal[
         "PaymentCreated",
@@ -45,13 +45,24 @@ class PaymentEvent(BaseModel):
     registration_id: UUID
     amount_minor: int = Field(ge=0, strict=True)
     currency: str
-    # Eco do request_id que originou o pagamento; nulo/ausente quando a origem foi trabalho de fundo.
-    request_id: str | None = None
+    # Eco do trace_id que originou o pagamento; nulo/ausente quando a origem foi trabalho de fundo.
+    trace_id: str | None = None
+
+
+class EventsEnvelope(BaseModel):
+    """Envelope plano comum a todas as mensagens de `events.events`; o tipo é validado só para os tratados."""
+
+    model_config = ConfigDict(extra="ignore")
+    message_id: UUID
+    schema_version: Literal[1]
+    type: str = Field(min_length=1)
 
 
 class ActivityEvent(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    event_id: UUID
+    """Mensagem de Eventos tratada aqui; os demais tipos de `events.events` são ignorados antes desta validação."""
+
+    model_config = ConfigDict(extra="ignore")
+    message_id: UUID
     schema_version: Literal[1]
     type: Literal["ActivityEnded", "ActivityCancelled"]
     activity_id: UUID

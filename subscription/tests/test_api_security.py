@@ -91,7 +91,7 @@ def test_api_headers_ownership_gateway_contract(db, settings):
         assert client.post(url, headers=headers, json={"user_id": str(uuid4())}).status_code == 422
         response = client.post(url, headers=headers, json={})
         assert response.status_code == 201
-        assert response.headers["X-Request-Id"]
+        assert response.headers["X-Trace-Id"]
         reg = response.json()
         assert reg["user_id"] == user
         original_activity = external.activity
@@ -154,8 +154,8 @@ def test_identity_headers_sent_to_events_on_every_route(db, settings):
         sent = external.headers[-1]
         assert sent["X-User-Id"] == user
         assert sent["X-User-Roles"] == roles
-        assert sent["X-Request-Id"]
-        assert sent["X-Request-Id"] == response.headers["X-Request-Id"]
+        assert sent["X-Trace-Id"]
+        assert sent["X-Trace-Id"] == response.headers["X-Trace-Id"]
         assert sent.get("Authorization") == bearer
 
     with TestClient(app) as client:
@@ -187,7 +187,7 @@ def test_accept_offer_sends_identity_headers(db, settings):
         sent = external.headers[-1]
         assert sent["X-User-Id"] == user
         assert sent["X-User-Roles"] == "PARTICIPANT"
-        assert sent["X-Request-Id"] == response.headers["X-Request-Id"]
+        assert sent["X-Trace-Id"] == response.headers["X-Trace-Id"]
         assert sent["Authorization"] == "Bearer tok.en.7"
 
 
@@ -226,7 +226,7 @@ def test_discovery_and_activity_http_contract(settings):
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
     services = Services(settings, client)
-    sent = {"X-User-Id": str(uuid4()), "X-User-Roles": "ORGANIZER", "X-Request-Id": "trace-12345678", "Authorization": "Bearer verified-token"}
+    sent = {"X-User-Id": str(uuid4()), "X-User-Roles": "ORGANIZER", "X-Trace-Id": "trace-12345678", "Authorization": "Bearer verified-token"}
     assert services.activity(act.activity_id, sent) == act
     for name, value in sent.items():
         assert calls[-1].headers[name] == value
@@ -234,7 +234,7 @@ def test_discovery_and_activity_http_contract(settings):
     assert calls[-1].url.path == f"/api/v1/activities/{act.activity_id}"
     # Caminho dos workers: sem chamador, nenhuma identidade.
     assert services.activity(act.activity_id) == act
-    for name in ("X-User-Id", "X-User-Roles", "X-Request-Id", "Authorization", "X-Service-Token"):
+    for name in ("X-User-Id", "X-User-Roles", "X-Trace-Id", "Authorization", "X-Service-Token"):
         assert name not in calls[-1].headers
     services.close()
 

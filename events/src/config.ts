@@ -1,15 +1,8 @@
-import os from 'node:os';
-
 type Env = Record<string, string | undefined>;
 
 function str(env: Env, name: string, def: string): string {
   const v = env[name]?.trim();
   return v ? v : def;
-}
-
-function optStr(env: Env, name: string): string | null {
-  const v = env[name]?.trim();
-  return v ? v : null;
 }
 
 function int(env: Env, name: string, def: number): number {
@@ -31,22 +24,14 @@ export function loadConfig(env: Env = process.env) {
     port,
     databaseUrl: str(env, 'DATABASE_URL', 'postgres://events:events@events-db:5432/events'),
     kafkaBrokers: list(env, 'KAFKA_BROKERS', 'kafka:9092'),
-    consumerGroup: str(env, 'EVENTS_CONSUMER_GROUP', 'events-service'),
-    /** Topic this service publishes to (consumed by reports, subscription, notifications...). */
-    eventsTopic: str(env, 'EVENTS_TOPIC', 'events-events'),
-    /** Topic this service consumes seat requests from (produced by the subscription service). */
-    subscriptionTopic: str(env, 'SUBSCRIPTION_TOPIC', 'subscription-events'),
+    /** Topic this service publishes to (consumed by subscription and others). The service consumes nothing. */
+    eventsTopic: str(env, 'EVENTS_TOPIC', 'events.events'),
     topicPartitions: int(env, 'EVENTS_TOPIC_PARTITIONS', 6),
     outboxIntervalMs: int(env, 'OUTBOX_INTERVAL_MS', 500),
     outboxBatchSize: int(env, 'OUTBOX_BATCH_SIZE', 100),
     outboxRetentionHours: int(env, 'OUTBOX_RETENTION_HOURS', 24),
-    discovererUrl: str(env, 'SERVICE_DISCOVERER_URL', 'http://service-discoverer:8080'),
-    serviceHost: str(env, 'SERVICE_HOST', `${os.hostname()}:${port}`),
-    reregisterIntervalMs: int(env, 'REREGISTER_INTERVAL_MS', 30000),
-    jwtIssuer: str(env, 'JWT_ISSUER', 'eventhub-users'),
-    /** Fixed JWKS URL; when absent the user service is located through the service-discoverer. */
-    jwksUrl: optStr(env, 'JWT_JWKS_URL'),
-    jwksCacheSeconds: int(env, 'JWKS_CACHE_SECONDS', 300),
+    /** An activity still open this long after its scheduled `ends_at` is ended automatically (default one day). */
+    activityAutoEndAfterSeconds: int(env, 'ACTIVITY_AUTO_END_AFTER_SECONDS', 86400),
   };
 }
 

@@ -50,9 +50,9 @@ export function toProblem(err: unknown, traceId: string): { problem: Problem; un
   return { problem: make(500, 'INTERNAL_ERROR', 'unexpected error; quote the traceId when reporting it'), unexpected: true };
 }
 
-const SAFE_REQUEST_ID = /^[A-Za-z0-9._-]{8,64}$/;
+const SAFE_TRACE_ID = /^[A-Za-z0-9._-]{8,64}$/;
 
-/** Keeps the gateway's X-Request-Id when it is well formed (it then ties all logs together), else a new one. */
-export function requestIdFrom(header: unknown, generate: () => string): string {
-  return typeof header === 'string' && SAFE_REQUEST_ID.test(header) ? header : generate();
+/** Keeps the gateway's X-Trace-Id when it is well formed (it then ties all logs together), else a new one. */
+export function traceIdFrom(header: unknown, generate: () => string): string {
+  return typeof header === 'string' && SAFE_TRACE_ID.test(header) ? header : generate();
 }

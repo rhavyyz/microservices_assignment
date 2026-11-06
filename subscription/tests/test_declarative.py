@@ -11,8 +11,8 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from test_api_security import FakeEvents
-from test_request_id import Result, reg
 from test_service import activity
+from test_trace_id import Result, reg
 
 from app.api import create_app
 from app.config import Settings
@@ -67,7 +67,7 @@ class Conn:
             if params[0] in self.seen:
                 return Result()
             self.seen.add(params[0])
-            return Result([{"event_id": params[0]}])
+            return Result([{"message_id": params[0]}])
         if "INSERT INTO registrations" in sql:
             self.reg = {
                 "id": params[0],
@@ -76,7 +76,7 @@ class Conn:
                 "status": "WAITLISTED",
                 "amount_minor": params[3],
                 "currency": params[4],
-                "parent_event_id": params[5],
+                "event_id": params[5],
                 "expires_at": None,
                 "version": 1,
             }
@@ -117,7 +117,7 @@ def domain_types(conn, svc):
 # --- RegistrationPendingPayment -------------------------------------------------------------
 
 
-def test_paid_create_emits_pending_payment_with_request_id_and_stores_parent_event():
+def test_paid_create_emits_pending_payment_with_trace_id_and_stores_event_id():
     act = activity(capacity=5, amount=1500)
     conn = Conn(act=act)
     svc = service_with(conn)
@@ -126,7 +126,7 @@ def test_paid_create_emits_pending_payment_with_request_id_and_stores_parent_eve
     assert conn.inserted[5] == act.event_id
     events = conn.topic(svc.settings.domain_topic)
     assert [e["type"] for e in events] == ["RegistrationPendingPayment"]
-    assert events[0]["request_id"] == RID and events[0]["status"] == "PENDING_PAYMENT"
+    assert events[0]["trace_id"] == RID and events[0]["status"] == "PENDING_PAYMENT"
     # Nada para Pagamentos: só o evento de domínio (este tipo não gera notificação).
     assert [t for t, _ in conn.outbox] == [svc.settings.domain_topic]
 
@@ -151,7 +151,7 @@ def test_accept_offer_emits_pending_payment_only_when_paid(amount, status, expec
     assert result["status"] == status
     events = conn.topic(svc.settings.domain_topic)
     assert [e["type"] for e in events] == [expected]
-    assert events[0]["request_id"] == RID
+    assert events[0]["trace_id"] == RID
 
 
 # --- PaymentEvent relaxado ------------------------------------------------------------------
@@ -159,7 +159,7 @@ def test_accept_offer_emits_pending_payment_only_when_paid(amount, status, expec
 
 def message(kind="PaymentApproved", **extra):
     return {
-        "event_id": str(uuid4()),
+        "message_id": str(uuid4()),
         "schema_version": 1,
         "type": kind,
         "registration_id": str(uuid4()),
@@ -177,7 +177,7 @@ def test_payment_event_accepts_all_six_types(kind):
 def test_payment_event_ignores_extras_and_attempt_fields_are_gone():
     event = PaymentEvent.model_validate(
         message(
-            request_id=RID,
+            trace_id=RID,
             payment_id=str(uuid4()),
             reason="x",
             payment_attempt_id=str(uuid4()),
@@ -185,7 +185,7 @@ def test_payment_event_ignores_extras_and_attempt_fields_are_gone():
         )
     )
     dumped = event.model_dump()
-    assert event.request_id == RID
+    assert event.trace_id == RID
     for name in ("payment_id", "reason", "payment_attempt_id", "provider_version"):
         assert name not in dumped and name not in PaymentEvent.model_fields
 
@@ -216,17 +216,17 @@ def pending(**overrides):
 def apply(registration, kind, db_now=None, **changes):
     conn = Conn(registration, db_now)
     svc = service_with(conn)
-    data = message(kind, registration_id=str(registration["id"]), request_id=RID) | changes
+    data = message(kind, registration_id=str(registration["id"]), trace_id=RID) | changes
     svc.payment_event(PaymentEvent.model_validate(data))
     return conn, svc
 
 
-def test_approved_confirms_pending_registration_and_propagates_request_id():
+def test_approved_confirms_pending_registration_and_propagates_trace_id():
     conn, svc = apply(pending(), "PaymentApproved")
     assert conn.reg["status"] == "CONFIRMED"
     events = conn.topic(svc.settings.domain_topic)
     assert [e["type"] for e in events] == ["RegistrationConfirmed"]
-    assert events[0]["request_id"] == RID
+    assert events[0]["trace_id"] == RID
     assert len(conn.topic(svc.settings.notifications_topic)) == 1
 
 
@@ -263,11 +263,11 @@ def test_declined_rejects_and_promotes_waitlist():
 
     conn = WithWaitlist(registration)
     svc = service_with(conn)
-    data = message("PaymentDeclined", registration_id=str(registration["id"]), request_id=RID)
+    data = message("PaymentDeclined", registration_id=str(registration["id"]), trace_id=RID)
     svc.payment_event(PaymentEvent.model_validate(data))
     events = conn.topic(svc.settings.domain_topic)
     assert [e["type"] for e in events] == ["RegistrationRejected", "WaitlistOffered"]
-    assert events[0]["request_id"] == RID and events[1]["request_id"] is None
+    assert events[0]["trace_id"] == RID and events[1]["trace_id"] is None
 
 
 def test_declined_ignored_when_not_pending_payment():
@@ -291,7 +291,7 @@ def test_unknown_registration_is_ignored_not_quarantined():
     assert conn.outbox == []
 
 
-def test_duplicate_event_id_is_processed_once():
+def test_duplicate_message_id_is_processed_once():
     registration = pending()
     conn = Conn(registration)
     svc = service_with(conn)
@@ -327,12 +327,13 @@ def test_internal_registration_returns_contract_shape_without_auth():
     expires = now() + timedelta(minutes=15)
     row = {
         "registration_id": uuid4(),
+        "activity_id": uuid4(),
         "user_id": uuid4(),
         "status": "PENDING_PAYMENT",
         "amount_minor": 2500,
         "currency": "BRL",
         "expires_at": expires,
-        "parent_event_id": uuid4(),
+        "event_id": uuid4(),
         "version": 9,
     }
     client, fake = internal_client(row)
@@ -341,15 +342,17 @@ def test_internal_registration_returns_contract_shape_without_auth():
     body = response.json()
     assert set(body) == {
         "registration_id",
+        "activity_id",
         "user_id",
         "status",
         "amount_minor",
         "currency",
         "expires_at",
-        "parent_event_id",
+        "event_id",
     }
     assert body["registration_id"] == str(row["registration_id"]) and body["status"] == "PENDING_PAYMENT"
-    assert body["amount_minor"] == 2500 and body["parent_event_id"] == str(row["parent_event_id"])
+    assert body["amount_minor"] == 2500 and body["event_id"] == str(row["event_id"])
+    assert body["activity_id"] == str(row["activity_id"])
     assert datetime.fromisoformat(body["expires_at"]) == expires
     assert str(fake.asked[0]) == str(row["registration_id"])
 
@@ -357,16 +360,17 @@ def test_internal_registration_returns_contract_shape_without_auth():
 def test_internal_registration_nullable_fields():
     row = {
         "registration_id": uuid4(),
+        "activity_id": uuid4(),
         "user_id": uuid4(),
         "status": "CONFIRMED",
         "amount_minor": 0,
         "currency": "BRL",
         "expires_at": None,
-        "parent_event_id": None,
+        "event_id": None,
     }
     client, _ = internal_client(row)
     body = client.get(f"/internal/registrations/{row['registration_id']}").json()
-    assert body["expires_at"] is None and body["parent_event_id"] is None
+    assert body["expires_at"] is None and body["event_id"] is None
 
 
 @pytest.mark.parametrize("path", [str(uuid4()), "not-a-uuid"])

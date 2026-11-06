@@ -11,6 +11,7 @@ export type PaymentRow = {
   registration_id: string;
   user_id: string;
   event_id: string | null;
+  activity_id: string | null; // null for payments created while Payments did not store it
   amount_minor: number;
   currency: string;
   status: Status;
@@ -18,7 +19,7 @@ export type PaymentRow = {
   created_at: Date;
 };
 
-const COLS = 'payment_id, registration_id, user_id, event_id, amount_minor, currency, status, expires_at, created_at';
+const COLS = 'payment_id, registration_id, user_id, event_id, activity_id, amount_minor, currency, status, expires_at, created_at';
 
 // bigint comes back from pg as a string.
 type RawRow = Omit<PaymentRow, 'amount_minor'> & { amount_minor: string };
@@ -38,9 +39,9 @@ export async function getByRegistration(pool: Pool, registrationId: string): Pro
 }
 
 /** What goes to Kafka for a payment that just reached `p.status`: the event and, when needed, a user notice. */
-function outboxFor(p: PaymentRow, reason: string | null, requestId: string | null): OutboxMessage[] {
+function outboxFor(p: PaymentRow, reason: string | null, traceId: string | null): OutboxMessage[] {
   const now = new Date();
-  const ev = buildPaymentEvent(p, reason, requestId, randomUUID(), now);
+  const ev = buildPaymentEvent(p, reason, traceId, randomUUID(), now);
   const out: OutboxMessage[] = [{ topic: config.paymentEventsTopic, ...ev }];
   const note = buildNotification(p);
   if (note) out.push({ topic: config.notificationsTopic, ...note });
@@ -60,7 +61,7 @@ export async function applyTarget(
   row: PaymentRow,
   target: Status,
   reason: string,
-  requestId: string | null,
+  traceId: string | null,
   now: Date,
 ): Promise<Settled> {
   const d = decide(row.status, target, reason, row.expires_at, now);
@@ -73,10 +74,10 @@ export async function applyTarget(
   );
   const payment = map(upd.rows[0]);
   await client.query(
-    'INSERT INTO payment_transitions (payment_id, from_status, to_status, reason, request_id) VALUES ($1, $2, $3, $4, $5)',
-    [row.payment_id, row.status, d.to, d.reason, requestId],
+    'INSERT INTO payment_transitions (payment_id, from_status, to_status, reason, trace_id) VALUES ($1, $2, $3, $4, $5)',
+    [row.payment_id, row.status, d.to, d.reason, traceId],
   );
-  await enqueue(client, outboxFor(payment, d.reason, requestId));
+  await enqueue(client, outboxFor(payment, d.reason, traceId));
   return d.granted
     ? { outcome: 'applied', payment }
     : { outcome: 'rejected', payment, detail: `payment ${d.to}: ${d.reason}` };
@@ -106,23 +107,23 @@ async function inTransaction<T>(pool: Pool, fn: (c: PoolClient) => Promise<T>): 
 export async function createPayment(
   pool: Pool,
   input: CreateInput,
-  requestId: string | null,
+  traceId: string | null,
 ): Promise<{ payment: PaymentRow; created: boolean }> {
   return inTransaction(pool, async (client) => {
     const ins = await client.query<RawRow>(
-      `INSERT INTO payments (payment_id, registration_id, user_id, event_id, amount_minor, currency, status, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, 'PENDING', $7)
+      `INSERT INTO payments (payment_id, registration_id, user_id, event_id, activity_id, amount_minor, currency, status, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'PENDING', $8)
        ON CONFLICT (registration_id) DO NOTHING
        RETURNING ${COLS}`,
-      [randomUUID(), input.registrationId, input.userId, input.eventId, input.amountMinor, input.currency, input.expiresAt],
+      [randomUUID(), input.registrationId, input.userId, input.eventId, input.activityId, input.amountMinor, input.currency, input.expiresAt],
     );
     if (ins.rows[0]) {
       const payment = map(ins.rows[0]);
       await client.query(
-        'INSERT INTO payment_transitions (payment_id, from_status, to_status, reason, request_id) VALUES ($1, NULL, $2, $3, $4)',
-        [payment.payment_id, 'PENDING', 'created', requestId],
+        'INSERT INTO payment_transitions (payment_id, from_status, to_status, reason, trace_id) VALUES ($1, NULL, $2, $3, $4)',
+        [payment.payment_id, 'PENDING', 'created', traceId],
       );
-      await enqueue(client, outboxFor(payment, null, requestId));
+      await enqueue(client, outboxFor(payment, null, traceId));
       return { payment, created: true };
     }
     const existing = await client.query<RawRow>(`SELECT ${COLS} FROM payments WHERE registration_id = $1`, [input.registrationId]);
@@ -136,12 +137,12 @@ export async function settleById(
   id: string,
   target: Status,
   reason: string,
-  requestId: string | null,
+  traceId: string | null,
 ): Promise<Settled | null> {
   return inTransaction(pool, async (client) => {
     const row = await lock(client, 'payment_id', id);
     if (!row) return null;
-    return applyTarget(client, row, target, reason, requestId, new Date());
+    return applyTarget(client, row, target, reason, traceId, new Date());
   });
 }
 
@@ -152,19 +153,19 @@ export async function settleById(
  */
 export async function closeForRegistration(
   pool: Pool,
-  eventId: string,
+  messageId: string,
   registrationId: string,
   reason: string,
-  requestId: string | null,
+  traceId: string | null,
 ): Promise<'duplicate' | 'no_payment' | Outcome> {
   return inTransaction(pool, async (client) => {
-    const seen = await client.query('INSERT INTO processed_messages (event_id) VALUES ($1) ON CONFLICT DO NOTHING', [eventId]);
+    const seen = await client.query('INSERT INTO processed_messages (message_id) VALUES ($1) ON CONFLICT DO NOTHING', [messageId]);
     if (seen.rowCount === 0) return 'duplicate';
     const row = await lock(client, 'registration_id', registrationId);
     if (!row) return 'no_payment';
     if (row.status !== 'PENDING' && row.status !== 'APPROVED') return 'noop';
     const target = row.status === 'APPROVED' ? 'REFUNDED' : 'CANCELLED';
-    const res = await applyTarget(client, row, target, reason, requestId, new Date());
+    const res = await applyTarget(client, row, target, reason, traceId, new Date());
     return res.outcome;
   });
 }

@@ -3,99 +3,127 @@ import type { Actor } from '../domain/model.ts';
 import { unauthorized } from '../errors.ts';
 import type { ActivityInput, ActivityPatch, EventInput, EventPatch, EventService } from '../services/events.ts';
 import type { AuthedCtx } from '../services/unit-of-work.ts';
-import { bearerToken, type TokenVerifier } from './auth.ts';
+import { actorFromHeaders } from './identity.ts';
 import { toListQuery, withDates } from './input.ts';
 import {
   activityListSchema, activityParams, activitySchema, createActivityBody, createEventBody, eventDetailSchema,
-  eventPageSchema, eventParams, eventSchema, listQuery, patchActivityBody, patchEventBody,
+  eventPageSchema, eventParams, eventSchema, listQuery, patchActivityBody, patchEventBody, permissionsSchema,
 } from './schemas.ts';
 
-const bearer = [{ bearer: [] }];
 const EVENTS = ['Events'];
 const SCHEDULE = ['Schedule'];
 
+const API = '/api/v1';
+/** Route option: the route needs an identity (checked before the body is validated). */
+const AUTH = { config: { auth: true } };
+
 /**
- * Public reads take an optional token (an organizer also sees their drafts); every change needs one.
- * Authorization by resource (RN07) is done by the use cases, not here.
+ * Public reads take an optional identity (an organizer also sees their drafts); every change needs one.
+ * The identity is the gateway's X-User-Id / X-User-Roles (see identity.ts). Authorization by resource (RN07)
+ * is done by the use cases, not here.
  */
-export function registerRoutes(app: FastifyInstance, deps: { events: EventService; verifyToken: TokenVerifier }) {
+export function registerRoutes(app: FastifyInstance, deps: { events: EventService }) {
   const { events } = deps;
 
-  /** The verified caller, or null without an Authorization header (an invalid token is still a 401). */
-  async function viewer(req: FastifyRequest): Promise<Actor | null> {
-    const token = bearerToken(req.headers.authorization);
-    return token ? deps.verifyToken(token) : null;
-  }
+  /** The caller from the gateway headers, or null when anonymous (an invalid X-User-Id is still a 401). */
+  const viewer = (req: FastifyRequest): Actor | null => actorFromHeaders(req.headers);
 
-  async function authed(req: FastifyRequest): Promise<AuthedCtx> {
-    const actor = await viewer(req);
+  function authed(req: FastifyRequest): AuthedCtx {
+    const actor = viewer(req);
     if (!actor) throw unauthorized();
-    return { actor, correlationId: req.id };
+    return { actor, traceId: req.id };
   }
 
-  const eventId = (req: FastifyRequest) => (req.params as { eventId: string }).eventId;
-  const activityId = (req: FastifyRequest) => (req.params as { activityId: string }).activityId;
+  // The headers are judged before anything else, on every business route: an invalid X-User-Id is a 401 even
+  // on a public read, and a route marked AUTH without identity is a 401 before its body is validated.
+  app.addHook('onRequest', async (req) => {
+    if (!req.routeOptions.url?.startsWith(API)) return;
+    const actor = viewer(req);
+    if (!actor && (req.routeOptions.config as { auth?: boolean }).auth) throw unauthorized();
+  });
+
+  const eventId = (req: FastifyRequest) => (req.params as { event_id: string }).event_id;
+  const activityId = (req: FastifyRequest) => (req.params as { activity_id: string }).activity_id;
 
   // ---- Consult and search (RF04) ------------------------------------------------------------------
 
-  app.get('/events', {
+  app.get(`${API}/events`, {
     schema: { summary: 'Search published events', tags: EVENTS, querystring: listQuery, response: { 200: eventPageSchema } },
   }, async (req) => events.listPublished(toListQuery(req.query)));
 
-  app.get('/me/events', {
-    schema: { summary: "The caller's own events, drafts included", tags: EVENTS, security: bearer, querystring: listQuery, response: { 200: eventPageSchema } },
-  }, async (req) => events.listOwn((await authed(req)).actor, toListQuery(req.query)));
+  app.get(`${API}/me/events`, {
+    ...AUTH,
+    schema: { summary: "The caller's own events, drafts included", tags: EVENTS, querystring: listQuery, response: { 200: eventPageSchema } },
+  }, async (req) => events.listOwn(authed(req).actor, toListQuery(req.query)));
 
-  app.get('/events/:eventId', {
-    schema: { summary: 'An event with its schedule and seats', tags: EVENTS, params: eventParams, response: { 200: eventDetailSchema } },
-  }, async (req) => events.getEvent(await viewer(req), eventId(req)));
+  app.get(`${API}/events/:event_id`, {
+    schema: { summary: 'An event with its schedule', tags: EVENTS, params: eventParams, response: { 200: eventDetailSchema } },
+  }, async (req) => events.getEvent(viewer(req), eventId(req)));
 
-  app.get('/events/:eventId/activities', {
-    schema: { summary: "An event's schedule with available seats", tags: SCHEDULE, params: eventParams, response: { 200: activityListSchema } },
-  }, async (req) => ({ items: await events.listEventActivities(await viewer(req), eventId(req)) }));
+  app.get(`${API}/events/:event_id/activities`, {
+    schema: { summary: "An event's schedule", tags: SCHEDULE, params: eventParams, response: { 200: activityListSchema } },
+  }, async (req) => ({ items: await events.listEventActivities(viewer(req), eventId(req)) }));
 
-  app.get('/activities/:activityId', {
-    schema: { summary: 'An activity with its available seats', tags: SCHEDULE, params: activityParams, response: { 200: activitySchema } },
-  }, async (req) => events.getActivity(await viewer(req), activityId(req)));
+  app.get(`${API}/activities/:activity_id`, {
+    schema: { summary: 'An activity, with its lifecycle and whether registration is open', tags: SCHEDULE, params: activityParams, response: { 200: activitySchema } },
+  }, async (req) => events.getActivity(viewer(req), activityId(req)));
+
+  // Called by Subscription (through the discoverer, not the gateway) before every administrative operation.
+  app.get(`${API}/activities/:activity_id/permissions/me`, {
+    ...AUTH,
+    schema: { summary: 'Whether the caller administers the activity (organizer of its event)', tags: SCHEDULE, params: activityParams, response: { 200: permissionsSchema } },
+  }, async (req) => events.getPermissions(authed(req).actor, activityId(req)));
 
   // ---- Events (RF02) ------------------------------------------------------------------------------
 
-  app.post('/events', {
-    schema: { summary: 'Create a draft event (organizers)', tags: EVENTS, security: bearer, body: createEventBody, response: { 201: eventSchema } },
+  app.post(`${API}/events`, {
+    ...AUTH,
+    schema: { summary: 'Create a draft event (organizers)', tags: EVENTS, body: createEventBody, response: { 201: eventSchema } },
   }, async (req, reply) => {
-    const created = await events.createEvent(await authed(req), withDates<EventInput>(req.body));
+    const created = await events.createEvent(authed(req), withDates<EventInput>(req.body));
     return reply.code(201).send(created);
   });
 
-  app.patch('/events/:eventId', {
-    schema: { summary: 'Edit an event (its organizer)', tags: EVENTS, security: bearer, params: eventParams, body: patchEventBody, response: { 200: eventSchema } },
-  }, async (req) => events.updateEvent(await authed(req), eventId(req), withDates<EventPatch>(req.body)));
+  app.patch(`${API}/events/:event_id`, {
+    ...AUTH,
+    schema: { summary: 'Edit an event (its organizer)', tags: EVENTS, params: eventParams, body: patchEventBody, response: { 200: eventSchema } },
+  }, async (req) => events.updateEvent(authed(req), eventId(req), withDates<EventPatch>(req.body)));
 
-  app.post('/events/:eventId/publish', {
-    schema: { summary: 'Publish a draft event (its organizer)', tags: EVENTS, security: bearer, params: eventParams, response: { 200: eventSchema } },
-  }, async (req) => events.publishEvent(await authed(req), eventId(req)));
+  app.post(`${API}/events/:event_id/publish`, {
+    ...AUTH,
+    schema: { summary: 'Publish a draft event (its organizer)', tags: EVENTS, params: eventParams, response: { 200: eventSchema } },
+  }, async (req) => events.publishEvent(authed(req), eventId(req)));
 
-  app.post('/events/:eventId/cancel', {
-    schema: { summary: 'Cancel an event (its organizer)', tags: EVENTS, security: bearer, params: eventParams, response: { 200: eventSchema } },
-  }, async (req) => events.cancelEvent(await authed(req), eventId(req)));
+  app.post(`${API}/events/:event_id/cancel`, {
+    ...AUTH,
+    schema: { summary: 'Cancel an event (its organizer)', tags: EVENTS, params: eventParams, response: { 200: eventSchema } },
+  }, async (req) => events.cancelEvent(authed(req), eventId(req)));
 
   // ---- Schedule (RF03) ----------------------------------------------------------------------------
 
-  app.post('/events/:eventId/activities', {
-    schema: { summary: 'Add an activity to the schedule (its organizer)', tags: SCHEDULE, security: bearer, params: eventParams, body: createActivityBody, response: { 201: activitySchema } },
+  app.post(`${API}/events/:event_id/activities`, {
+    ...AUTH,
+    schema: { summary: 'Add an activity to the schedule (its organizer)', tags: SCHEDULE, params: eventParams, body: createActivityBody, response: { 201: activitySchema } },
   }, async (req, reply) => {
-    const created = await events.addActivity(await authed(req), eventId(req), withDates<ActivityInput>(req.body));
+    const created = await events.addActivity(authed(req), eventId(req), withDates<ActivityInput>(req.body));
     return reply.code(201).send(created);
   });
 
-  app.patch('/activities/:activityId', {
-    schema: { summary: 'Edit an activity; capacity is immutable (its organizer)', tags: SCHEDULE, security: bearer, params: activityParams, body: patchActivityBody, response: { 200: activitySchema } },
-  }, async (req) => events.updateActivity(await authed(req), activityId(req), withDates<ActivityPatch>(req.body)));
+  app.patch(`${API}/activities/:activity_id`, {
+    ...AUTH,
+    schema: { summary: 'Edit an activity; capacity is immutable (its organizer)', tags: SCHEDULE, params: activityParams, body: patchActivityBody, response: { 200: activitySchema } },
+  }, async (req) => events.updateActivity(authed(req), activityId(req), withDates<ActivityPatch>(req.body)));
 
-  app.delete('/activities/:activityId', {
-    schema: { summary: 'Remove an activity of a draft event (its organizer)', tags: SCHEDULE, security: bearer, params: activityParams, response: { 204: { type: 'null' } } },
+  app.post(`${API}/activities/:activity_id/end`, {
+    ...AUTH,
+    schema: { summary: 'End an activity after its scheduled end (its organizer); repeating it is a no-op', tags: SCHEDULE, params: activityParams, response: { 200: activitySchema } },
+  }, async (req) => events.endActivity(authed(req), activityId(req)));
+
+  app.delete(`${API}/activities/:activity_id`, {
+    ...AUTH,
+    schema: { summary: 'Remove an activity of a draft event (its organizer)', tags: SCHEDULE, params: activityParams, response: { 204: { type: 'null' } } },
   }, async (req, reply) => {
-    await events.deleteActivity(await authed(req), activityId(req));
+    await events.deleteActivity(authed(req), activityId(req));
     return reply.code(204).send();
   });
 }

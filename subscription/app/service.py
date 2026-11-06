@@ -11,6 +11,7 @@ from uuid import uuid4
 from psycopg.types.json import Jsonb
 
 from .contracts import DomainError
+from .serialization import json_default
 
 ACTIVE = ("WAITLISTED", "OFFERED", "PENDING_PAYMENT", "CONFIRMED")
 HELD = ("OFFERED", "PENDING_PAYMENT")
@@ -18,7 +19,7 @@ HELD = ("OFFERED", "PENDING_PAYMENT")
 
 def serializable(value):
     """Converte UUIDs e datas para o contrato JSON."""
-    return json.loads(json.dumps(value, default=str))
+    return json.loads(json.dumps(value, default=json_default))
 
 
 class SubscriptionService:
@@ -88,20 +89,28 @@ class SubscriptionService:
 
     @staticmethod
     def enqueue(conn, topic, key, payload):
-        event_id = str(uuid4())
+        message_id = str(uuid4())
         conn.execute(
             "INSERT INTO outbox(id,topic,message_key,payload) VALUES (%s,%s,%s,%s)",
-            (event_id, topic, str(key), Jsonb(serializable(payload))),
+            (message_id, topic, str(key), Jsonb(serializable(payload))),
         )
 
-    def emit(self, conn, reg, event_type, request_id=None, extra=None):
+    def emit(self, conn, reg, event_type, trace_id=None, extra=None):
         """Evento de domínio e mensagem compatível com Notificações na mesma transação.
 
-        request_id só existe em ações originadas por HTTP; trabalho de fundo envia null.
+        trace_id só existe em ações originadas por HTTP; trabalho de fundo envia null.
         extra acrescenta campos próprios do tipo (ex.: AttendanceEligible).
+        event_id (evento de Eventos) vai em todo evento de domínio.
         """
+        event_id = reg.get("event_id")
+        if event_id is None:
+            # Linha anterior à migração 007; não deveria ocorrer. Nunca inventa um valor.
+            row = conn.execute(
+                "SELECT event_id FROM activity_inventory WHERE activity_id=%s", (reg["activity_id"],)
+            ).fetchone()
+            event_id = row["event_id"] if row else None
         payload = {
-            "event_id": str(uuid4()),
+            "message_id": str(uuid4()),
             "schema_version": 1,
             "type": event_type,
             "registration_id": reg["id"],
@@ -110,8 +119,9 @@ class SubscriptionService:
             "aggregate_version": reg["version"],
             "occurred_at": self.now(conn),
             "status": reg["status"],
-            "request_id": request_id,
+            "trace_id": trace_id,
             **(extra or {}),
+            "event_id": event_id,  # depois de extra: o valor do envelope não muda
         }
         self.enqueue(conn, self.settings.domain_topic, reg["id"], payload)
         messages = {
@@ -131,7 +141,7 @@ class SubscriptionService:
                     "message": messages[event_type],
                     "payload_type": event_type,
                     "payload": {
-                        "event_id": payload["event_id"],
+                        "message_id": payload["message_id"],
                         "registration_id": reg["id"],
                         "expires_at": reg["expires_at"],
                     },
@@ -181,7 +191,7 @@ class SubscriptionService:
             self.emit(conn, updated, "RegistrationExpired")
         self.promote(conn, activity_id)
 
-    def create(self, user_id, activity, join_waitlist=True, request_id=None):
+    def create(self, user_id, activity, join_waitlist=True, trace_id=None):
         with self.db.transaction() as conn:
             if not activity.registration_open or activity.starts_at <= self.now(conn):
                 raise DomainError(409, "REGISTRATION_CLOSED")
@@ -209,7 +219,7 @@ class SubscriptionService:
                 raise DomainError(409, "ACTIVITY_FULL")
             # Criar como WAITLISTED permite usar uma única função para todos os deltas.
             reg = conn.execute(
-                "INSERT INTO registrations(id,activity_id,user_id,status,amount_minor,currency,parent_event_id) "
+                "INSERT INTO registrations(id,activity_id,user_id,status,amount_minor,currency,event_id) "
                 "VALUES (%s,%s,%s,'WAITLISTED',%s,%s,%s) RETURNING *",
                 (
                     uuid4(),
@@ -228,10 +238,10 @@ class SubscriptionService:
                         "PENDING_PAYMENT",
                         self.now(conn) + timedelta(seconds=self.settings.reservation_seconds),
                     )
-                    self.emit(conn, reg, "RegistrationPendingPayment", request_id)
+                    self.emit(conn, reg, "RegistrationPendingPayment", trace_id)
                 else:
                     reg = self.transition(conn, reg, "CONFIRMED")
-                    self.emit(conn, reg, "RegistrationConfirmed", request_id)
+                    self.emit(conn, reg, "RegistrationConfirmed", trace_id)
             else:
                 position = conn.execute(
                     "UPDATE activity_inventory SET next_position=next_position+1 "
@@ -242,10 +252,10 @@ class SubscriptionService:
                     "INSERT INTO waitlist_entries VALUES (%s,%s,%s)",
                     (reg["id"], activity.activity_id, position["next_position"]),
                 )
-                self.emit(conn, reg, "RegistrationWaitlisted", request_id)
+                self.emit(conn, reg, "RegistrationWaitlisted", trace_id)
             return serializable(reg)
 
-    def cancel(self, registration_id, user_id, request_id=None):
+    def cancel(self, registration_id, user_id, trace_id=None):
         with self.db.transaction() as conn:
             inv, reg = self.locked_registration(conn, registration_id)
             self.owner(reg, user_id)
@@ -253,11 +263,11 @@ class SubscriptionService:
                 raise DomainError(409, "ACTIVITY_ENDED")
             if reg["status"] in ACTIVE:
                 reg = self.transition(conn, reg, "CANCELLED")
-                self.emit(conn, reg, "RegistrationCancelled", request_id)
+                self.emit(conn, reg, "RegistrationCancelled", trace_id)
                 self.promote(conn, reg["activity_id"])
             return serializable(reg)
 
-    def accept(self, registration_id, user_id, activity, request_id=None):
+    def accept(self, registration_id, user_id, activity, trace_id=None):
         with self.db.transaction() as conn:
             inv, reg = self.locked_registration(conn, registration_id)
             self.owner(reg, user_id)
@@ -279,24 +289,24 @@ class SubscriptionService:
                     "PENDING_PAYMENT",
                     self.now(conn) + timedelta(seconds=self.settings.reservation_seconds),
                 )
-                self.emit(conn, reg, "RegistrationPendingPayment", request_id)
+                self.emit(conn, reg, "RegistrationPendingPayment", trace_id)
             else:
                 reg = self.transition(conn, reg, "CONFIRMED")
-                self.emit(conn, reg, "RegistrationConfirmed", request_id)
+                self.emit(conn, reg, "RegistrationConfirmed", trace_id)
             return serializable(reg)
 
     def payment_event(self, event):
         """Regras declarativas: Pagamentos reage aos eventos de Inscrições, aqui só se aplica o resultado."""
-        rid = event.request_id
+        rid = event.trace_id
         with self.db.transaction() as conn:
             ref = conn.execute("SELECT * FROM registrations WHERE id=%s", (event.registration_id,)).fetchone()
             if not ref:
                 return
             _, reg = self.locked_registration(conn, event.registration_id)
             inserted = conn.execute(
-                "INSERT INTO inbox(source,event_id) VALUES ('payments',%s) "
-                "ON CONFLICT DO NOTHING RETURNING event_id",
-                (event.event_id,),
+                "INSERT INTO inbox(source,message_id) VALUES ('payments',%s) "
+                "ON CONFLICT DO NOTHING RETURNING message_id",
+                (event.message_id,),
             ).fetchone()
             if not inserted or reg["status"] != "PENDING_PAYMENT":
                 return
@@ -340,12 +350,13 @@ class SubscriptionService:
             reg = self.registration(conn, registration_id)
             return {
                 "registration_id": reg["id"],
+                "activity_id": reg["activity_id"],
                 "user_id": reg["user_id"],
                 "status": reg["status"],
                 "amount_minor": reg["amount_minor"],
                 "currency": reg["currency"],
                 "expires_at": reg["expires_at"],
-                "parent_event_id": reg["parent_event_id"],
+                "event_id": reg["event_id"],
             }
 
     def list(self, *, user_id=None, activity_id=None, limit=50, offset=0):
@@ -359,7 +370,7 @@ class SubscriptionService:
             ).fetchall()
             return serializable(rows)
 
-    def check_in(self, registration_id, organizer_id, activity, request_id=None):
+    def check_in(self, registration_id, organizer_id, activity, trace_id=None):
         with self.db.transaction() as conn:
             inv, reg = self.locked_registration(conn, registration_id)
             now = self.now(conn)
@@ -378,7 +389,7 @@ class SubscriptionService:
                     "WHERE id=%s RETURNING *",
                     (registration_id,),
                 ).fetchone()
-                self.emit(conn, reg, "AttendanceRecorded", request_id)
+                self.emit(conn, reg, "AttendanceRecorded", trace_id)
             else:
                 attendance = conn.execute(
                     "SELECT * FROM attendance WHERE registration_id=%s", (registration_id,)
@@ -394,9 +405,9 @@ class SubscriptionService:
             )
             inv = self.inventory(conn, activity.activity_id)
             if not conn.execute(
-                "INSERT INTO inbox(source,event_id) VALUES ('events',%s) ON CONFLICT DO NOTHING "
-                "RETURNING event_id",
-                (event.event_id,),
+                "INSERT INTO inbox(source,message_id) VALUES ('events',%s) ON CONFLICT DO NOTHING "
+                "RETURNING message_id",
+                (event.message_id,),
             ).fetchone():
                 return
             cancelled = event.type == "ActivityCancelled"
@@ -420,7 +431,7 @@ class SubscriptionService:
                     self.emit(conn, reg, "RegistrationCancelled" if cancelled else "RegistrationExpired")
             self.evaluate_event_attendance(conn, confirmed, inv["event_id"])
 
-    def evaluate_event_attendance(self, conn, triggers, parent_event_id):
+    def evaluate_event_attendance(self, conn, triggers, event_id):
         """RN06: certificado por evento com presença mínima, decidida quando a última atividade encerra.
 
         Roda no encerramento e também no cancelamento de uma atividade (a cancelada sai da conta).
@@ -431,14 +442,14 @@ class SubscriptionService:
         """
         # Encerramentos simultâneos de atividades do mesmo evento precisam enxergar um ao outro;
         # o lock por evento (liberado no commit) serializa a avaliação e evita que ambos desistam.
-        conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (str(parent_event_id),))
+        conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (str(event_id),))
         for trigger in triggers:
             rows = conn.execute(
                 "SELECT i.lifecycle, (a.registration_id IS NOT NULL) AS attended "
                 "FROM registrations r JOIN activity_inventory i ON i.activity_id=r.activity_id "
                 "LEFT JOIN attendance a ON a.registration_id=r.id "
                 "WHERE r.user_id=%s AND r.status='CONFIRMED' AND i.event_id=%s",
-                (trigger["user_id"], parent_event_id),
+                (trigger["user_id"], event_id),
             ).fetchall()
             if any(row["lifecycle"] != "ENDED" for row in rows):
                 continue  # será avaliado quando a última atividade confirmada da pessoa encerrar
@@ -451,7 +462,7 @@ class SubscriptionService:
             if not conn.execute(
                 "INSERT INTO event_attendance_emitted(user_id,event_id) VALUES (%s,%s) "
                 "ON CONFLICT DO NOTHING RETURNING user_id",
-                (trigger["user_id"], parent_event_id),
+                (trigger["user_id"], event_id),
             ).fetchone():
                 continue
             reg = conn.execute(
@@ -464,7 +475,7 @@ class SubscriptionService:
                 reg,
                 "AttendanceEligible",
                 extra={
-                    "parent_event_id": parent_event_id,
+                    "event_id": event_id,
                     "attended_activities": attended,
                     "total_activities": total,
                     "attendance_percentage": round(attended * 100 / total, 2),

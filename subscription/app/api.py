@@ -32,12 +32,13 @@ class InternalRegistration(BaseModel):
     """Fatos da inscrição lidos por Pagamentos; sem identidade nem dados de contato."""
 
     registration_id: UUID
+    activity_id: UUID
     user_id: UUID
     status: str
     amount_minor: int
     currency: str
     expires_at: datetime | None
-    parent_event_id: UUID | None
+    event_id: UUID | None
 
 
 def create_app(settings=None, database=None, services=None, authenticator=None):
@@ -72,11 +73,11 @@ def create_app(settings=None, database=None, services=None, authenticator=None):
     app.state.service = service
 
     @app.middleware("http")
-    async def request_id(request: Request, call_next):
-        supplied = request.headers.get("X-Request-Id", "")
+    async def trace_id(request: Request, call_next):
+        supplied = request.headers.get("X-Trace-Id", "")
         request.state.trace_id = supplied if re.fullmatch(r"[A-Za-z0-9._-]{8,64}", supplied) else str(uuid4())
         response = await call_next(request)
-        response.headers["X-Request-Id"] = request.state.trace_id
+        response.headers["X-Trace-Id"] = request.state.trace_id
         return response
 
     def problem(request, status, code):
@@ -106,7 +107,7 @@ def create_app(settings=None, database=None, services=None, authenticator=None):
         return auth.authenticate(request.headers)
 
     def outbound(request, who):
-        return {**who.identity_headers(), "X-Request-Id": request.state.trace_id}
+        return {**who.identity_headers(), "X-Trace-Id": request.state.trace_id}
 
     def organizer(activity_id, request, who):
         if "ORGANIZER" not in who.roles:

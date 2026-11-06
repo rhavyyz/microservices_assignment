@@ -31,9 +31,9 @@ def register(service, act, user=None):
     return service.create(user or uuid4(), act)
 
 
-def payment(reg, kind="PaymentApproved", event_id=None):
+def payment(reg, kind="PaymentApproved", message_id=None):
     return PaymentEvent(
-        event_id=event_id or uuid4(),
+        message_id=message_id or uuid4(),
         schema_version=1,
         type=kind,
         registration_id=reg["id"],
@@ -168,6 +168,9 @@ def test_payment_after_expiry_is_ignored(service, db):
     reg = register(service, act)
     overdue(db, reg)
     service.payment_event(payment(reg))
+    assert service.get(reg["id"])["status"] == "PENDING_PAYMENT"
+    assert domain_events(db, reg, "RegistrationConfirmed") == []
+    service.expire()
     assert service.get(reg["id"])["status"] == "EXPIRED"
     assert domain_events(db, reg, "RegistrationConfirmed") == []
     assert invariant(db, act.activity_id)["reserved"] == 0
@@ -266,9 +269,9 @@ def finished(act):
     return ongoing(act).model_copy(update={"ends_at": datetime.now(timezone.utc) - timedelta(seconds=1)})
 
 
-def end(service, act, kind="ActivityEnded", event_id=None):
+def end(service, act, kind="ActivityEnded", message_id=None):
     event = ActivityEvent(
-        event_id=event_id or uuid4(), schema_version=1, type=kind, activity_id=act.activity_id
+        message_id=message_id or uuid4(), schema_version=1, type=kind, activity_id=act.activity_id
     )
     service.activity_event(event, finished(act))
     return event
@@ -301,8 +304,8 @@ def test_presence_and_certificate_eligibility(service, db):
     assert len(rows) == 1
     payload = rows[0]["payload"]
     assert rows[0]["message_key"] == reg["id"]
-    assert payload["parent_event_id"] == str(act.event_id)
-    assert payload["event_id"] != str(act.event_id)
+    assert payload["event_id"] == str(act.event_id)
+    assert payload["message_id"] != str(act.event_id)
     assert payload["registration_id"] == reg["id"]
     assert payload["activity_id"] == str(act.activity_id)
     assert (payload["attended_activities"], payload["total_activities"]) == (1, 1)
@@ -427,7 +430,7 @@ def test_nothing_while_registered_activity_not_ended(service, db):
     # Quem só está em atividade não encerrada também não recebe nada.
     other = uuid4()
     service.create(other, acts[1])
-    end(service, acts[0], event_id=uuid4())
+    end(service, acts[0], message_id=uuid4())
     assert eligible(db, other) == []
 
 
@@ -486,7 +489,7 @@ def test_cancelled_activity_releases_everyone(service, db):
     reg = register(service, act)
     register(service, act)
     event = ActivityEvent(
-        event_id=uuid4(), schema_version=1, type="ActivityCancelled", activity_id=act.activity_id
+        message_id=uuid4(), schema_version=1, type="ActivityCancelled", activity_id=act.activity_id
     )
     service.activity_event(event, act)
     service.payment_event(payment(reg))
@@ -529,7 +532,7 @@ def test_activity_event_fetch_carries_no_identity(service, db, settings, kind):
             return act
 
     workers = Workers(db, service, FakeServices(), settings)
-    payload = {"event_id": str(uuid4()), "schema_version": 1, "type": kind, "activity_id": str(act.activity_id)}
+    payload = {"message_id": str(uuid4()), "schema_version": 1, "type": kind, "activity_id": str(act.activity_id)}
     workers.process(settings.events_topic, payload)
     assert calls == [((act.activity_id,), {})]
 
@@ -543,18 +546,23 @@ def test_ownership_and_payment_amount_mismatch_is_ignored(service):
     assert service.get(reg["id"])["status"] == "PENDING_PAYMENT"
 
 
-def test_internal_registration_exposes_facts_and_parent_event(service):
+def test_internal_registration_exposes_facts_and_event_id(service):
     act = activity(amount=100)
     reg = register(service, act)
     facts = service.internal_registration(reg["id"])
-    assert facts == {
+    expected = {
         "registration_id": reg["id"],
+        "activity_id": reg["activity_id"],
         "user_id": reg["user_id"],
         "status": "PENDING_PAYMENT",
         "amount_minor": 100,
         "currency": "BRL",
         "expires_at": facts["expires_at"],
-        "parent_event_id": act.event_id,
+        "event_id": act.event_id,
+    }
+    uuid_fields = ("registration_id", "activity_id", "user_id", "event_id")
+    assert {k: str(v) if k in uuid_fields else v for k, v in facts.items()} == {
+        k: str(v) if k in uuid_fields else v for k, v in expected.items()
     }
     assert facts["expires_at"] is not None
     with pytest.raises(DomainError, match="REGISTRATION_NOT_FOUND"):

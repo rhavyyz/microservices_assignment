@@ -78,19 +78,19 @@ def test_missing_or_invalid_identity_is_401_problem(env, path, headers):
     assert body["code"] == "UNAUTHENTICATED"
     assert body["status"] == 401
     assert body["title"] == "UNAUTHENTICATED"
-    assert body["traceId"] == response.headers["X-Request-Id"]
+    assert body["traceId"] == response.headers["X-Trace-Id"]
 
 
-def test_request_id_is_echoed_when_valid_and_replaced_otherwise(env):
+def test_trace_id_is_echoed_when_valid_and_replaced_otherwise(env):
     client, _, _ = env
 
-    kept = client.get("/api/v1/certificates/me", headers={"X-Request-Id": "trace-12345678"})
-    replaced = client.get("/api/v1/certificates/me", headers={"X-Request-Id": "bad id!"})
+    kept = client.get("/api/v1/certificates/me", headers={"X-Trace-Id": "trace-12345678"})
+    replaced = client.get("/api/v1/certificates/me", headers={"X-Trace-Id": "bad id!"})
 
     assert kept.json()["traceId"] == "trace-12345678"
-    assert kept.headers["X-Request-Id"] == "trace-12345678"
-    assert replaced.headers["X-Request-Id"] != "bad id!"
-    uuid.UUID(replaced.headers["X-Request-Id"])
+    assert kept.headers["X-Trace-Id"] == "trace-12345678"
+    assert replaced.headers["X-Trace-Id"] != "bad id!"
+    uuid.UUID(replaced.headers["X-Trace-Id"])
 
 
 def test_me_lists_only_own_certificates_newest_first(env):
@@ -197,3 +197,14 @@ def test_database_down_is_503_problem(client):
 
     assert response.status_code == 503
     assert response.json()["code"] == "DATABASE_UNAVAILABLE"
+
+
+def test_legacy_x_request_id_is_ignored_and_not_echoed(env):
+    client, _, _ = env
+
+    response = client.get("/api/v1/certificates/me", headers={"X-Request-Id": "legacy-12345678"})
+
+    assert "X-Request-Id" not in response.headers
+    assert response.headers["X-Trace-Id"] != "legacy-12345678"
+    assert response.json()["traceId"] == response.headers["X-Trace-Id"]
+    uuid.UUID(response.headers["X-Trace-Id"])
