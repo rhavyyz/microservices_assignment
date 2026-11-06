@@ -36,7 +36,7 @@ func wsGatewayWith(t *testing.T, v *Verifier, tune ...func(*Hub)) (*httptest.Ser
 	for _, f := range tune {
 		f(hub)
 	}
-	srv := httptest.NewServer(newMux(store, eps, hub, v, NewPipeline(eps, v, NewLimiter(time.Now), nil, NewProxy(NewDiscovery()))))
+	srv := httptest.NewServer(newMux(store, eps, hub, v, NewDocs(eps), NewPipeline(eps, v, NewLimiter(time.Now), nil, NewProxy(NewDiscovery()))))
 	t.Cleanup(srv.Close)
 	return srv, hub
 }

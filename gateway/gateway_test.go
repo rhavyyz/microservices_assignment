@@ -509,7 +509,7 @@ func newGatewayAuth(t *testing.T, store Store, disc *Discovery, v *Verifier) (*h
 		t.Fatal(err)
 	}
 	l := NewLimiter(time.Now)
-	srv := httptest.NewServer(newMux(store, eps, NewHub(), v, NewPipeline(eps, v, l, nil, NewProxy(disc))))
+	srv := httptest.NewServer(newMux(store, eps, NewHub(), v, NewDocs(eps), NewPipeline(eps, v, l, nil, NewProxy(disc))))
 	t.Cleanup(srv.Close)
 	return srv, eps
 }

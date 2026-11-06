@@ -19,9 +19,9 @@ func env(key, def string) string {
 }
 
 // newMux wires the admin API, the healthcheck, the websocket entry point and the middleware pipeline (everything
-// else), all wrapped in CORS so that error responses and preflights are covered too. /ws is not a proxied kind, so
-// it skips the endpoint pipeline and is logged here.
-func newMux(store Store, eps *Endpoints, hub *Hub, verifier *Verifier, pipeline http.Handler) http.Handler {
+// else), all wrapped in CORS so that error responses and preflights are covered too. /ws, /openapi.json and /docs
+// are not proxied kinds, so they skip the endpoint pipeline and are logged here.
+func newMux(store Store, eps *Endpoints, hub *Hub, verifier *Verifier, docs *Docs, pipeline http.Handler) http.Handler {
 	a := &admin{store: store, eps: eps}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /admin/endpoints", a.list)
@@ -30,6 +30,8 @@ func newMux(store Store, eps *Endpoints, hub *Hub, verifier *Verifier, pipeline 
 		w.WriteHeader(http.StatusOK)
 	})
 	mux.Handle("GET /ws", Chain(WebSocket(hub, verifier), Logging()))
+	mux.Handle("GET /openapi.json", Chain(http.HandlerFunc(docs.ServeSpec), Logging()))
+	mux.Handle("GET /docs", Chain(http.HandlerFunc(serveSwaggerUI), Logging()))
 	mux.Handle("/", pipeline)
 	return Chain(mux, Cors())
 }
@@ -54,6 +56,10 @@ func main() {
 	jwksCooldown, err := time.ParseDuration(env("JWKS_REFETCH_COOLDOWN", "30s"))
 	if err != nil || jwksCooldown < 0 {
 		log.Fatal("JWKS_REFETCH_COOLDOWN must be a non-negative Go duration, e.g. 30s")
+	}
+	docsEvery, err := parseDocsEvery(env("DOCS_REFRESH_EVERY", "5m"))
+	if err != nil {
+		log.Fatal(err)
 	}
 	// The discovery lib reads this variable for its host cache; validate it here to fail fast.
 	if _, err := discovery.ParseCacheTTL(env("DISCOVERY_CACHE_TTL_SECONDS", "10")); err != nil {
@@ -80,11 +86,14 @@ func main() {
 
 	go keys.Run(ctx, jwksEvery) // never blocks the server start; the keys are also fetched lazily
 
+	docs := NewDocs(eps)
+	go docs.Run(ctx, docsEvery) // never blocks the server start
+
 	hub := NewHub()
 	push := NewPushConsumer(env("KAFKA_BROKERS", "kafka:9092"), env("NOTIFICATIONS_PUSH_TOPIC", "notifications-push"), pushParts, hub)
 	go push.Run(ctx) // never blocks the server start
 
-	mux := newMux(store, eps, hub, verifier, NewPipeline(eps, verifier, limiter, proxies, NewProxy(disc)))
+	mux := newMux(store, eps, hub, verifier, docs, NewPipeline(eps, verifier, limiter, proxies, NewProxy(disc)))
 	port := env("PORT", "8080")
 	log.Printf("gateway listening on :%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, mux))

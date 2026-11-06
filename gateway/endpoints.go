@@ -175,6 +175,7 @@ type Endpoints struct {
 	store  Store
 	mu     sync.RWMutex
 	byKind map[Kind][]Endpoint
+	gen    uint64 // bumped on every refresh, so derived views (the OpenAPI document) know when to rebuild
 }
 
 func NewEndpoints(store Store) *Endpoints {
@@ -192,8 +193,25 @@ func (e *Endpoints) Refresh(ctx context.Context) error {
 	}
 	e.mu.Lock()
 	e.byKind = m
+	e.gen++
 	e.mu.Unlock()
 	return nil
+}
+
+// PublicSnapshot returns a copy of the public endpoints of the current table and the generation of that table
+// (it changes whenever the table is refreshed).
+func (e *Endpoints) PublicSnapshot() ([]Endpoint, uint64) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	var out []Endpoint
+	for _, list := range e.byKind {
+		for _, ep := range list {
+			if ep.IsPublic {
+				out = append(out, ep)
+			}
+		}
+	}
+	return out, e.gen
 }
 
 // Run refreshes the cache periodically as a fallback to the refreshes after PUTs and syncs.

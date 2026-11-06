@@ -130,6 +130,13 @@ All keys optional; an invalid key is ignored (default) and logged, it never fail
 honors the declaration: to re-apply a changed one, `PUT` the values or delete the endpoint document in `gateway-db`.
 A service can thereby declare itself public (accepted risk, ADR-003); never declare `/internal/...` routes public.
 
+**API docs.** `GET /openapi.json` (one merged OpenAPI 3.0.3 document) and `GET /docs` (Swagger UI) are public and
+served by the gateway itself, not proxied kinds. The document lists only the endpoints that are **public in the live
+table** (private endpoints are never listed; admin `PUT` changes appear without a restart), as `/{kind}/<service path>`,
+with `bearerAuth` where `requireAuth` is true and the effective `x-gateway` values; components are renamed
+`<Kind>_<name>`. The services' specs are fetched at startup (with backoff) and every `DOCS_REFRESH_EVERY` (default `5m`);
+a failed refresh keeps the previous copy and the description names the kinds whose spec is unavailable.
+
 **Identity.** The gateway fetches the JWKS of the Users service (through the discoverer), verifies RS256, `iss`, `exp`,
 `kid` (cooldown of 30 s between refetches, refresh every 10 min). For **every** route it first deletes the client's
 `X-User-Id`/`X-User-Roles`; with a valid token it sets `X-User-Id` = `sub` and `X-User-Roles` = `roles`
