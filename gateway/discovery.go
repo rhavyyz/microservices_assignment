@@ -2,58 +2,74 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
 	"net/http"
-	"net/url"
 	"sync"
-	"time"
+
+	"microservices/discovery"
 )
 
 var (
-	ErrUnknownKind = errors.New("unknown service kind")
-	ErrNoInstance  = errors.New("no healthy instance available")
+	ErrUnknownKind = discovery.ErrUnknownKind
+	ErrNoInstance  = discovery.ErrNoInstance
 )
 
-// Discovery is a small client for the service-discoverer, caching one host per kind.
+// Discovery caches one host per kind for the reverse proxy, which needs the host itself
+// (httputil.ReverseProxy cannot go through discovery.Request). The discoverer protocol is
+// the shared discovery lib's; the lib reads SERVICE_DISCOVERER_URL.
 type Discovery struct {
-	url    string
-	client *http.Client
-	mu     sync.Mutex
-	hosts  map[Kind]string
+	mu    sync.Mutex
+	hosts map[Kind]string
 }
 
-func NewDiscovery(baseURL string) *Discovery {
-	return &Discovery{url: baseURL, client: &http.Client{Timeout: 15 * time.Second}, hosts: map[Kind]string{}}
+func NewDiscovery() *Discovery {
+	return &Discovery{hosts: map[Kind]string{}}
 }
 
 // Consult asks the discoverer for a healthy host every time, without touching the cache.
+// The errors wrap ErrNoInstance (no healthy instance) or ErrUnknownKind (kind rejected by the discoverer).
+// The lib takes no context: on cancellation this returns ctx.Err() at once and the lib call
+// finishes in the background, bounded by the lib's own HTTP timeout.
 func (d *Discovery) Consult(ctx context.Context, kind Kind) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.url+"/consult?kind="+url.QueryEscape(string(kind)), nil)
-	if err != nil {
-		return "", err
+	type result struct {
+		host string
+		err  error
 	}
-	resp, err := d.client.Do(req)
-	if err != nil {
-		return "", err
+	ch := make(chan result, 1)
+	go func() {
+		h, err := discovery.Consult(discovery.Kind(kind))
+		ch <- result{h, err}
+	}()
+	select {
+	case r := <-ch:
+		return r.host, r.err
+	case <-ctx.Done():
+		return "", ctx.Err()
 	}
-	defer resp.Body.Close()
-	switch resp.StatusCode {
-	case http.StatusOK:
-		var body struct {
-			Host string `json:"host"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil || body.Host == "" {
-			return "", fmt.Errorf("bad consult response for %s", kind)
-		}
-		return body.Host, nil
-	case http.StatusServiceUnavailable:
-		return "", ErrNoInstance
-	case http.StatusBadRequest:
-		return "", ErrUnknownKind
+}
+
+// request is discovery.Request (cached host, one rediscovery on connection failure) that gives up
+// when ctx is done. A response that arrives after that is closed.
+func request(ctx context.Context, method string, kind Kind, path string) (*http.Response, error) {
+	type result struct {
+		resp *http.Response
+		err  error
 	}
-	return "", fmt.Errorf("consult %s: unexpected status %d", kind, resp.StatusCode)
+	ch := make(chan result, 1)
+	go func() {
+		resp, err := discovery.Request(method, discovery.Kind(kind), path, discovery.Options{})
+		ch <- result{resp, err}
+	}()
+	select {
+	case r := <-ch:
+		return r.resp, r.err
+	case <-ctx.Done():
+		go func() {
+			if r := <-ch; r.resp != nil {
+				r.resp.Body.Close()
+			}
+		}()
+		return nil, ctx.Err()
+	}
 }
 
 // Host returns the cached host of the kind, consulting the discoverer on a miss.

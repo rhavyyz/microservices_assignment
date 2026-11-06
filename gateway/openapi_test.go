@@ -130,9 +130,9 @@ func TestSyncInsertsDeclaredValues(t *testing.T) {
 		"/pub":{"get":{"x-gateway":{"isPublic":true,"requireAuth":true,"maxPerMin":5,"rateLimitBy":"global"}}},
 		"/bad":{"get":{"x-gateway":{"isPublic":"yes","maxPerMin":-1}}},
 		"/none":{"get":{}}}}`, 200)
-	ds, _ := fakeDiscoverer(t, map[string][]string{"events": {hostOf(svc)}})
+	fakeDiscoverer(t, map[string][]string{"events": {hostOf(svc)}})
 	store := newFakeStore()
-	s := NewSyncer(NewDiscovery(ds.URL), store, NewEndpoints(store), 60)
+	s := NewSyncer(store, NewEndpoints(store), 60)
 	if added, _, err := s.SyncKind(context.Background(), Events); err != nil || added != 3 {
 		t.Fatalf("added=%d err=%v", added, err)
 	}
@@ -148,11 +148,11 @@ func TestSyncInsertsDeclaredValues(t *testing.T) {
 
 func TestSyncDoesNotOverwriteAdminEditedEndpoint(t *testing.T) {
 	svc := openAPIServer(t, `{"paths":{"/a":{"get":{"x-gateway":{"isPublic":true,"requireAuth":false,"maxPerMin":999,"rateLimitBy":"ip"}}}}}`, 200)
-	ds, _ := fakeDiscoverer(t, map[string][]string{"events": {hostOf(svc)}})
+	fakeDiscoverer(t, map[string][]string{"events": {hostOf(svc)}})
 	stored := epWith(Events, "GET", "/a", 7, RateLimitGlobal, true)
 	stored.IsPublic = false // admin made it private
 	store := newFakeStore(stored)
-	s := NewSyncer(NewDiscovery(ds.URL), store, NewEndpoints(store), 60)
+	s := NewSyncer(store, NewEndpoints(store), 60)
 	if added, removed, err := s.SyncKind(context.Background(), Events); err != nil || added != 0 || removed != 0 {
 		t.Fatalf("added=%d removed=%d err=%v", added, removed, err)
 	}
@@ -163,9 +163,9 @@ func TestSyncDoesNotOverwriteAdminEditedEndpoint(t *testing.T) {
 
 func TestSyncWithBadDeclarationsStillSucceeds(t *testing.T) {
 	svc := openAPIServer(t, `{"paths":{"/a":{"get":{"x-gateway":"oops"}},"/b":{"get":{"x-gateway":{"maxPerMin":"x","zzz":1}}}}}`, 200)
-	ds, _ := fakeDiscoverer(t, map[string][]string{"events": {hostOf(svc)}})
+	fakeDiscoverer(t, map[string][]string{"events": {hostOf(svc)}})
 	store := newFakeStore(ep(Events, "GET", "/gone", 1))
-	s := NewSyncer(NewDiscovery(ds.URL), store, NewEndpoints(store), 60)
+	s := NewSyncer(store, NewEndpoints(store), 60)
 	if added, removed, err := s.SyncKind(context.Background(), Events); err != nil || added != 2 || removed != 1 {
 		t.Errorf("added=%d removed=%d err=%v", added, removed, err)
 	}
@@ -181,10 +181,10 @@ func TestDeclaredPublicEndpointIsReachable(t *testing.T) {
 		fmt.Fprint(w, "down:"+r.URL.Path)
 	}))
 	defer svc.Close()
-	ds, _ := fakeDiscoverer(t, map[string][]string{"events": {hostOf(svc)}})
+	fakeDiscoverer(t, map[string][]string{"events": {hostOf(svc)}})
 	store := newFakeStore()
-	gw, eps := newGateway(t, store, NewDiscovery(ds.URL))
-	s := NewSyncer(NewDiscovery(ds.URL), store, eps, 60)
+	gw, eps := newGateway(t, store, NewDiscovery())
+	s := NewSyncer(store, eps, 60)
 	if _, _, err := s.SyncKind(context.Background(), Events); err != nil {
 		t.Fatal(err)
 	}

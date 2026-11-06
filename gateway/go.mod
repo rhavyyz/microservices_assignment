@@ -8,6 +8,7 @@ require (
 	github.com/twmb/franz-go v1.20.4
 	github.com/twmb/franz-go/pkg/kadm v1.17.0
 	go.mongodb.org/mongo-driver/v2 v2.0.1
+	microservices/discovery v0.0.0
 )
 
 require (
@@ -23,3 +24,5 @@ require (
 	golang.org/x/sync v0.17.0 // indirect
 	golang.org/x/text v0.30.0 // indirect
 )
+
+replace microservices/discovery => ../service-discoverer/Libs/go

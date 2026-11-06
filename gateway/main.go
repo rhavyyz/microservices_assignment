@@ -57,10 +57,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	disc := NewDiscovery(env("SERVICE_DISCOVERER_URL", "http://service-discoverer:8080"))
+	disc := NewDiscovery()
 	eps := NewEndpoints(store)
 	limiter := NewLimiter(time.Now)
-	jwksFetch := NewDiscoveryJWKS(disc, &http.Client{Timeout: 10 * time.Second})
+	jwksFetch := NewDiscoveryJWKS()
 	if u := env("USERS_JWKS_URL", ""); u != "" {
 		jwksFetch = NewURLJWKS(u, &http.Client{Timeout: 10 * time.Second})
 	}
@@ -70,7 +70,7 @@ func main() {
 	ctx := context.Background()
 	go eps.Run(ctx)
 	go limiter.Run(ctx.Done())
-	go NewSyncer(disc, store, eps, defaultMax).Run(ctx) // never blocks the server start
+	go NewSyncer(store, eps, defaultMax).Run(ctx) // never blocks the server start
 
 	go keys.Run(ctx, jwksEvery) // never blocks the server start; the keys are also fetched lazily
 

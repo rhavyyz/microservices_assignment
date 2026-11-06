@@ -11,7 +11,6 @@ import (
 	"log"
 	"math/big"
 	"net/http"
-	"net/url"
 	"sync"
 	"time"
 )
@@ -46,19 +45,16 @@ func NewKeyCache(fetch jwksFetcher, cooldown time.Duration, now func() time.Time
 }
 
 // NewDiscoveryJWKS fetches the JWKS from a healthy Users instance obtained from the discoverer
-// (it is not routed through the gateway). The cached host is forgotten when the connection fails.
-func NewDiscoveryJWKS(disc *Discovery, client *http.Client) jwksFetcher {
+// (it is not routed through the gateway), through the discovery lib, which caches the host and
+// rediscovers it once when the connection fails.
+func NewDiscoveryJWKS() jwksFetcher {
 	return func(ctx context.Context) ([]byte, error) {
-		host, err := disc.Host(ctx, User)
+		resp, err := request(ctx, http.MethodGet, User, "/.well-known/jwks.json")
 		if err != nil {
 			return nil, err
 		}
-		b, err := getJWKS(ctx, client, "http://"+host+"/.well-known/jwks.json")
-		var ue *url.Error
-		if errors.As(err, &ue) { // the connection failed: the cached host may be gone
-			disc.Forget(User, host)
-		}
-		return b, err
+		defer resp.Body.Close()
+		return readJWKS(resp)
 	}
 }
 
@@ -77,6 +73,10 @@ func getJWKS(ctx context.Context, client *http.Client, u string) ([]byte, error)
 		return nil, err
 	}
 	defer resp.Body.Close()
+	return readJWKS(resp)
+}
+
+func readJWKS(resp *http.Response) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("jwks: unexpected status %d", resp.StatusCode)
 	}

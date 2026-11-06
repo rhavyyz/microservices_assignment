@@ -528,10 +528,10 @@ func TestJWKSDownAtStartup(t *testing.T) {
 	v := newTestVerifier(srv, clk) // constructing must not need the JWKS
 	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer down.Close()
-	ds, _ := fakeDiscoverer(t, map[string][]string{"user": {hostOf(down)}})
+	fakeDiscoverer(t, map[string][]string{"user": {hostOf(down)}})
 	gw, _ := newGatewayAuth(t, newFakeStore(
 		epWith(User, "GET", "/secure", 100, RateLimitGlobal, true),
-		epWith(User, "GET", "/open", 100, RateLimitGlobal, false)), NewDiscovery(ds.URL), v)
+		epWith(User, "GET", "/open", 100, RateLimitGlobal, false)), NewDiscovery(), v)
 	tok := authHdr("u1")
 
 	if resp, _ := get(t, "GET", gw.URL+"/user/secure", "", tok); resp.StatusCode != 503 {
@@ -559,14 +559,11 @@ func TestDiscoveryJWKSFetcher(t *testing.T) {
 	dead := httptest.NewServer(http.NotFoundHandler())
 	deadHost := hostOf(dead)
 	dead.Close()
-	ds, calls := fakeDiscoverer(t, map[string][]string{"user": {deadHost, hostOf(srv.Server)}})
-	disc := NewDiscovery(ds.URL)
-	kc := NewKeyCache(NewDiscoveryJWKS(disc, srv.Client()), time.Hour, time.Now)
+	_, calls := fakeDiscoverer(t, map[string][]string{"user": {deadHost, hostOf(srv.Server)}})
+	kc := NewKeyCache(NewDiscoveryJWKS(), time.Hour, time.Now)
 	ctx := context.Background()
-	if err := kc.Refresh(ctx); err == nil {
-		t.Fatal("dead host: want error")
-	}
-	// The failed host was forgotten, so the next fetch consults the discoverer again and reaches the live one.
+	// The discovery lib rediscovers once when the cached host is unreachable, so the first fetch
+	// goes from the dead host to the live one on its own.
 	if err := kc.Refresh(ctx); err != nil || *calls != 2 {
 		t.Errorf("err=%v consults=%d", err, *calls)
 	}

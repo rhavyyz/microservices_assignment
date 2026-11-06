@@ -5,10 +5,12 @@ mensagens de Eventos abaixo são **implementadas por Eventos** (ver ADR-008). Pa
 
 ## Descoberta, identidade e HTTP
 
-- Registro periódico: `POST {SERVICE_DISCOVERER_URL}/register`
-  com `{"kind":"subscription","host":"host:8080"}`.
-- Resolução: `GET /consult?kind=events|user` → `{"host":"host:8080"}`.
-- HTTP externo tem timeout de 5 segundos, sem retry de mutações HTTP.
+- Descoberta pela biblioteca compartilhada `discovery` (`service-discoverer/Libs/python`, instalada na
+  imagem): `register(Kind.SUBSCRIPTION)` a cada 30 segundos (o registry é volátil; a biblioteca já
+  repete até 10 vezes cada tentativa) e `request("GET", Kind.EVENTS, path, {"headers": ...})` para chamar
+  Eventos, com cache do host por tipo e nova consulta se ele estiver inacessível. A biblioteca lê
+  `SERVICE_DISCOVERER_URL`, `SERVICE_HOST` e `PORT` do ambiente.
+- HTTP externo tem timeout de 5 segundos (da biblioteca), sem retry de mutações HTTP.
 - Identidade: o gateway verifica o JWT e envia `X-User-Id` (UUID do `sub`) e `X-User-Roles`
   (separados por vírgula; ausente sem papéis). Inscrições não valida JWT e só aceita a
   identidade desses cabeçalhos (401 `UNAUTHENTICATED` se `X-User-Id` faltar ou for inválido).

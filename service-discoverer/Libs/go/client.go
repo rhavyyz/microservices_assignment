@@ -3,6 +3,7 @@ package discovery
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,13 @@ const (
 	registerAttempts     = 10
 	registerInitialDelay = time.Second
 	registerMaxDelay     = 30 * time.Second
+)
+
+var (
+	// ErrNoInstance is wrapped by the error of Consult (and Request) when the discoverer has no healthy instance of the kind (503).
+	ErrNoInstance = errors.New("no healthy instance available")
+	// ErrUnknownKind is wrapped by the error of Consult (and Request) when the discoverer does not know the kind (400).
+	ErrUnknownKind = errors.New("unknown service kind")
 )
 
 // sleep is time.Sleep, replaced in tests.
@@ -94,6 +102,7 @@ var caches = func() map[Kind]*kindCache {
 }()
 
 // Consult asks the service-discoverer for a healthy host of `kind`. No caching.
+// A 503 answer wraps ErrNoInstance and a 400 one wraps ErrUnknownKind (use errors.Is).
 func Consult(kind Kind) (string, error) {
 	resp, err := client.Get(discovererURL() + "/consult?kind=" + url.QueryEscape(string(kind)))
 	if err != nil {
@@ -102,7 +111,14 @@ func Consult(kind Kind) (string, error) {
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("consult %s failed: %d %s", kind, resp.StatusCode, strings.TrimSpace(string(raw)))
+		err := fmt.Errorf("consult %s failed: %d %s", kind, resp.StatusCode, strings.TrimSpace(string(raw)))
+		switch resp.StatusCode {
+		case http.StatusServiceUnavailable:
+			err = fmt.Errorf("%w (%w)", err, ErrNoInstance)
+		case http.StatusBadRequest:
+			err = fmt.Errorf("%w (%w)", err, ErrUnknownKind)
+		}
+		return "", err
 	}
 	var out struct {
 		Host string `json:"host"`
@@ -111,6 +127,15 @@ func Consult(kind Kind) (string, error) {
 		return "", fmt.Errorf("bad consult response: %s", raw)
 	}
 	return out.Host, nil
+}
+
+// Reset forgets every cached host, so the next Request consults the discoverer again. Meant for tests.
+func Reset() {
+	for _, c := range caches {
+		c.mu.Lock()
+		c.host = ""
+		c.mu.Unlock()
+	}
 }
 
 // resolve returns the cached host, calling Consult when there is none or when

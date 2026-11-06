@@ -16,7 +16,7 @@ em [CONTRACTS.md](CONTRACTS.md); Eventos implementa o contrato de atividades e d
 | `app/service.py` | Casos de uso, estados e transações locais |
 | `app/contracts.py` | Validação estrita das respostas e eventos externos |
 | `app/security.py` | Identidade pelos cabeçalhos `X-User-Id`/`X-User-Roles` do gateway |
-| `app/integrations.py` | HTTP com timeout e protocolo do discoverer |
+| `app/integrations.py` | Chamadas a Eventos e registro via biblioteca `discovery` |
 | `app/workers.py` | Expiração, outbox, consumo Kafka e registro |
 | `app/db.py` e `app/migrations/` | Pool, transações e migrações versionadas |
 | `tests/` | Concorrência em PostgreSQL real, API, identidade por cabeçalhos e falhas de mensageria |
@@ -100,6 +100,7 @@ python -m venv .venv
 # Ative o ambiente conforme seu shell.
 python -m pip install -r requirements.lock
 python -m pip install -e '.[test]'
+python -m pip install ../service-discoverer/Libs/python  # biblioteca discovery (na imagem vem de /opt/discovery)
 # Configure SUBSCRIPTION_DATABASE_URL, URL de descoberta e Kafka acessíveis localmente.
 python -m app
 ```
