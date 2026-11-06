@@ -59,7 +59,6 @@ def create_app(settings=None, database=None, services=None, authenticator=None):
             yield
         finally:
             workers.close()
-            external.close()
             db.close()
 
     app = FastAPI(

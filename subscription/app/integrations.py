@@ -1,53 +1,39 @@
-"""HTTP entre serviços: descoberta, contratos e timeouts fora das transações de negócio."""
+"""HTTP entre serviços: descoberta pela biblioteca compartilhada, fora das transações de negócio."""
 
-import os
-import socket
-
-import httpx
+from discovery import Kind, register, request
 
 from .contracts import Activity, DomainError
 
 
 class Services:
-    def __init__(self, settings, client=None):
+    def __init__(self, settings, request=request):
         self.settings = settings
-        self.http = client or httpx.Client(timeout=5, follow_redirects=False)
-
-    def close(self):
-        self.http.close()
-
-    def resolve(self, kind):
-        response = self.http.get(self.settings.discoverer_url + "/consult", params={"kind": kind})
-        response.raise_for_status()
-        host = response.json()["host"]
-        # O discoverer devolve host:porta, nunca uma URL ou caminho arbitrário.
-        if not isinstance(host, str) or any(c in host for c in "/@?#"):
-            raise ValueError("Resposta de descoberta inválida")
-        return "http://" + host
+        # Injetável para os testes não dependerem de rede nem do discoverer.
+        self.request = request
 
     def register(self):
-        host = self.settings.service_host or f"{socket.gethostname()}:{os.getenv('PORT', '8080')}"
-        self.http.post(
-            self.settings.discoverer_url + "/register", json={"kind": "subscription", "host": host}
-        ).raise_for_status()
+        register(Kind.SUBSCRIPTION)
 
     def get(self, kind, path, headers=None):
         # Envia apenas o que o chamador informar; chamadas de fundo (workers) não levam identidade.
         try:
-            response = self.http.get(self.resolve(kind) + path, headers=headers or {})
-            if response.status_code == 404:
-                raise DomainError(404, "RESOURCE_NOT_FOUND")
-            if response.status_code in (401, 403):
-                raise DomainError(403, "FORBIDDEN")
-            response.raise_for_status()
-            return response.json()
-        except (httpx.HTTPError, ValueError, KeyError) as exc:
+            response = self.request("GET", Kind(kind), path, {"headers": headers or {}})
+            status = response.status
+            body = response.json() if 200 <= status < 300 else None
+        except Exception as exc:
             raise DomainError(503, "DEPENDENCY_UNAVAILABLE") from exc
+        if status == 404:
+            raise DomainError(404, "RESOURCE_NOT_FOUND")
+        if status in (401, 403):
+            raise DomainError(403, "FORBIDDEN")
+        if body is None:
+            raise DomainError(503, "DEPENDENCY_UNAVAILABLE")
+        return body
 
     def activity(self, activity_id, headers=None):
         try:
             activity = Activity.model_validate(
-                self.get("events", f"/api/v1/activities/{activity_id}", headers)
+                self.get(Kind.EVENTS, f"/api/v1/activities/{activity_id}", headers)
             )
             if str(activity.activity_id) != str(activity_id):
                 raise ValueError("Atividade divergente")
@@ -57,6 +43,6 @@ class Services:
 
     def authorize_organizer(self, activity_id, headers):
         # Eventos decide a propriedade atual. Não confiamos apenas no papel informado pelo gateway.
-        result = self.get("events", f"/api/v1/activities/{activity_id}/permissions/me", headers)
+        result = self.get(Kind.EVENTS, f"/api/v1/activities/{activity_id}/permissions/me", headers)
         if result.get("can_manage") is not True:
             raise DomainError(403, "FORBIDDEN")

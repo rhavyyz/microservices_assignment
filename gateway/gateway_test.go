@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"microservices/discovery"
 )
 
 // fakeStore is an in-memory Store.
@@ -138,6 +140,9 @@ func fakeDiscoverer(t *testing.T, hosts map[string][]string) (*httptest.Server, 
 		json.NewEncoder(w).Encode(map[string]string{"host": hs[i]})
 	}))
 	t.Cleanup(srv.Close)
+	t.Setenv("SERVICE_DISCOVERER_URL", srv.URL) // read by the discovery lib
+	discovery.Reset()                           // the lib caches hosts per process, not per test
+	t.Cleanup(discovery.Reset)
 	return srv, &calls
 }
 
@@ -532,8 +537,8 @@ func TestProxyStripsPrefix(t *testing.T) {
 		fmt.Fprint(w, "ok")
 	}))
 	defer down.Close()
-	ds, _ := fakeDiscoverer(t, map[string][]string{"payments": {hostOf(down)}})
-	gw, _ := newGateway(t, newFakeStore(ep(Payments, "POST", "/charge/{id}", 10)), NewDiscovery(ds.URL))
+	fakeDiscoverer(t, map[string][]string{"payments": {hostOf(down)}})
+	gw, _ := newGateway(t, newFakeStore(ep(Payments, "POST", "/charge/{id}", 10)), NewDiscovery())
 	h := authHdr("u1")
 
 	resp, body := get(t, "POST", gw.URL+"/payments/charge/7?a=1&b=x", "hello", h)
@@ -557,8 +562,8 @@ func TestProxyStripsPrefix(t *testing.T) {
 }
 
 func TestProxyNoInstance(t *testing.T) {
-	ds, _ := fakeDiscoverer(t, nil)
-	gw, _ := newGateway(t, newFakeStore(ep(Payments, "GET", "/x", 10)), NewDiscovery(ds.URL))
+	fakeDiscoverer(t, nil)
+	gw, _ := newGateway(t, newFakeStore(ep(Payments, "GET", "/x", 10)), NewDiscovery())
 	if resp, _ := get(t, "GET", gw.URL+"/payments/x", "", authHdr("u")); resp.StatusCode != 503 {
 		t.Errorf("want 503, got %d", resp.StatusCode)
 	}
@@ -576,8 +581,8 @@ func TestProxyRediscoversOnDialFailure(t *testing.T) {
 	deadHost := hostOf(dead)
 	dead.Close() // nothing listens there any more
 
-	ds, calls := fakeDiscoverer(t, map[string][]string{"payments": {deadHost, hostOf(down)}})
-	gw, _ := newGateway(t, newFakeStore(ep(Payments, "POST", "/x", 10)), NewDiscovery(ds.URL))
+	_, calls := fakeDiscoverer(t, map[string][]string{"payments": {deadHost, hostOf(down)}})
+	gw, _ := newGateway(t, newFakeStore(ep(Payments, "POST", "/x", 10)), NewDiscovery())
 	h := authHdr("u")
 
 	resp, body := get(t, "POST", gw.URL+"/payments/x", "payload", h)
@@ -596,8 +601,8 @@ func TestProxyRediscoversOnDialFailure(t *testing.T) {
 
 func TestAdmin(t *testing.T) {
 	store := newFakeStore(ep(User, "GET", "/users/{id}", 60), ep(Payments, "GET", "/p", 60))
-	ds, _ := fakeDiscoverer(t, nil)
-	gw, eps := newGateway(t, store, NewDiscovery(ds.URL))
+	fakeDiscoverer(t, nil)
+	gw, eps := newGateway(t, store, NewDiscovery())
 	put := func(body string) (*http.Response, string) {
 		return get(t, "PUT", gw.URL+"/admin/endpoints", body, nil)
 	}
@@ -639,8 +644,8 @@ func TestAdmin(t *testing.T) {
 
 func TestAdminPartialUpdate(t *testing.T) {
 	store := newFakeStore(ep(User, "GET", "/users/{id}", 60), ep(Payments, "POST", "/charge", 60))
-	ds, _ := fakeDiscoverer(t, nil)
-	gw, eps := newGateway(t, store, NewDiscovery(ds.URL))
+	fakeDiscoverer(t, nil)
+	gw, eps := newGateway(t, store, NewDiscovery())
 	put := func(body string) (*http.Response, Endpoint) {
 		resp, b := get(t, "PUT", gw.URL+"/admin/endpoints", body, nil)
 		var e Endpoint
@@ -684,8 +689,8 @@ func TestAdminPartialUpdate(t *testing.T) {
 
 func TestMissingFieldsReadAsDefaults(t *testing.T) {
 	store := newFakeStore(private(ep(User, "GET", "/old", 5))) // stored by an earlier version
-	ds, _ := fakeDiscoverer(t, nil)
-	gw, eps := newGateway(t, store, NewDiscovery(ds.URL))
+	fakeDiscoverer(t, nil)
+	gw, eps := newGateway(t, store, NewDiscovery())
 	_, body := get(t, "GET", gw.URL+"/admin/endpoints", "", nil)
 	var list []Endpoint
 	json.Unmarshal([]byte(body), &list)
@@ -719,10 +724,10 @@ func openAPIServer(t *testing.T, spec string, status int) *httptest.Server {
 
 func TestSyncDoesNotOverwriteMax(t *testing.T) {
 	svc := openAPIServer(t, `{"paths":{"/a":{"get":{}},"/b":{"post":{}}}}`, 200)
-	ds, _ := fakeDiscoverer(t, map[string][]string{"events": {hostOf(svc)}})
+	fakeDiscoverer(t, map[string][]string{"events": {hostOf(svc)}})
 	store := newFakeStore(ep(Events, "GET", "/a", 7))
 	eps := NewEndpoints(store)
-	s := NewSyncer(NewDiscovery(ds.URL), store, eps, 60)
+	s := NewSyncer(store, eps, 60)
 
 	added, removed, err := s.SyncKind(context.Background(), Events)
 	if err != nil || added != 1 || removed != 0 {
@@ -739,9 +744,9 @@ func TestSyncDoesNotOverwriteMax(t *testing.T) {
 
 func TestSyncKeepsExistingAuthSettings(t *testing.T) {
 	svc := openAPIServer(t, `{"paths":{"/a":{"get":{}}}}`, 200)
-	ds, _ := fakeDiscoverer(t, map[string][]string{"events": {hostOf(svc)}})
+	fakeDiscoverer(t, map[string][]string{"events": {hostOf(svc)}})
 	store := newFakeStore(epWith(Events, "GET", "/a", 7, RateLimitGlobal, true))
-	s := NewSyncer(NewDiscovery(ds.URL), store, NewEndpoints(store), 60)
+	s := NewSyncer(store, NewEndpoints(store), 60)
 	if added, removed, err := s.SyncKind(context.Background(), Events); err != nil || added != 0 || removed != 0 {
 		t.Fatalf("added=%d removed=%d err=%v", added, removed, err)
 	}
@@ -753,9 +758,9 @@ func TestSyncKeepsExistingAuthSettings(t *testing.T) {
 
 func TestSyncKeepsExistingIsPublic(t *testing.T) {
 	svc := openAPIServer(t, `{"paths":{"/a":{"get":{}}}}`, 200)
-	ds, _ := fakeDiscoverer(t, map[string][]string{"events": {hostOf(svc)}})
+	fakeDiscoverer(t, map[string][]string{"events": {hostOf(svc)}})
 	store := newFakeStore(ep(Events, "GET", "/a", 7)) // public
-	s := NewSyncer(NewDiscovery(ds.URL), store, NewEndpoints(store), 60)
+	s := NewSyncer(store, NewEndpoints(store), 60)
 	if _, _, err := s.SyncKind(context.Background(), Events); err != nil {
 		t.Fatal(err)
 	}
@@ -768,13 +773,13 @@ func TestSyncRemovesStaleOnlyOnSuccess(t *testing.T) {
 	good := openAPIServer(t, `{"paths":{"/keep":{"get":{}}}}`, 200)
 	bad := openAPIServer(t, `garbage`, 200)
 	down := openAPIServer(t, ``, 500)
-	ds, _ := fakeDiscoverer(t, map[string][]string{
+	fakeDiscoverer(t, map[string][]string{
 		"events": {hostOf(good)}, "payments": {hostOf(bad)}, "user": {hostOf(down)}, // reports: no instance
 	})
 	store := newFakeStore(
 		ep(Events, "GET", "/keep", 1), ep(Events, "GET", "/gone", 1),
 		ep(Payments, "GET", "/old", 1), ep(User, "GET", "/old", 1), ep(Reports, "GET", "/old", 1))
-	s := NewSyncer(NewDiscovery(ds.URL), store, NewEndpoints(store), 60)
+	s := NewSyncer(store, NewEndpoints(store), 60)
 	ctx := context.Background()
 
 	if _, removed, err := s.SyncKind(ctx, Events); err != nil || removed != 1 {
@@ -816,9 +821,9 @@ func TestSyncRunRetriesFailedKinds(t *testing.T) {
 	for _, k := range allKinds {
 		hosts[string(k)] = []string{hostOf(svc)}
 	}
-	ds, _ := fakeDiscoverer(t, hosts)
+	fakeDiscoverer(t, hosts)
 	store := newFakeStore()
-	s := NewSyncer(NewDiscovery(ds.URL), store, NewEndpoints(store), 60)
+	s := NewSyncer(store, NewEndpoints(store), 60)
 	s.minDelay, s.maxDelay = time.Millisecond, 2*time.Millisecond
 
 	done := make(chan struct{})
@@ -843,10 +848,10 @@ func TestSyncRunRecoversWhenStoreComesUpLater(t *testing.T) {
 	for _, k := range allKinds {
 		hosts[string(k)] = []string{hostOf(svc)}
 	}
-	ds, _ := fakeDiscoverer(t, hosts)
+	fakeDiscoverer(t, hosts)
 	store := newFakeStore()
 	store.indexFails = 2
-	s := NewSyncer(NewDiscovery(ds.URL), store, NewEndpoints(store), 60)
+	s := NewSyncer(store, NewEndpoints(store), 60)
 	s.minDelay, s.maxDelay = time.Millisecond, 2*time.Millisecond
 
 	done := make(chan struct{})
@@ -886,8 +891,8 @@ func TestCors(t *testing.T) {
 		fmt.Fprint(w, "ok")
 	}))
 	defer down.Close()
-	ds, _ := fakeDiscoverer(t, map[string][]string{"payments": {hostOf(down)}})
-	gw, _ := newGateway(t, newFakeStore(ep(Payments, "GET", "/x", 10), epWith(Payments, "GET", "/secure", 10, RateLimitUserOrIP, true)), NewDiscovery(ds.URL))
+	fakeDiscoverer(t, map[string][]string{"payments": {hostOf(down)}})
+	gw, _ := newGateway(t, newFakeStore(ep(Payments, "GET", "/x", 10), epWith(Payments, "GET", "/secure", 10, RateLimitUserOrIP, true)), NewDiscovery())
 	origin := map[string]string{"Origin": "https://ui.example"}
 	withUser := map[string]string{"Origin": "https://ui.example", "Authorization": bearerFor("u1")}
 
@@ -969,7 +974,7 @@ func TestPrivateEndpoints(t *testing.T) {
 		fmt.Fprint(w, "down:"+r.URL.Path)
 	}))
 	defer down.Close()
-	ds, _ := fakeDiscoverer(t, map[string][]string{"user": {hostOf(down)}})
+	fakeDiscoverer(t, map[string][]string{"user": {hostOf(down)}})
 	store := newFakeStore(
 		private(ep(User, "GET", "/users/me", 1)),
 		ep(User, "GET", "/users/{id}", 60),
@@ -977,7 +982,7 @@ func TestPrivateEndpoints(t *testing.T) {
 		private(ep(User, "GET", "/secret", 1)),
 		private(ep(User, "GET", "/files/{name}", 60)),
 		ep(User, "GET", "/files/public", 60))
-	gw, _ := newGateway(t, store, NewDiscovery(ds.URL))
+	gw, _ := newGateway(t, store, NewDiscovery())
 	h := authHdr("u1")
 
 	ref, refBody := get(t, "GET", gw.URL+"/user/nothing-here", "", h)
@@ -1028,8 +1033,8 @@ func TestPrivateMethodIsolation(t *testing.T) {
 
 func TestAdminPutIsPublic(t *testing.T) {
 	store := newFakeStore(private(ep(User, "GET", "/users/{id}", 60)))
-	ds, _ := fakeDiscoverer(t, nil)
-	gw, eps := newGateway(t, store, NewDiscovery(ds.URL))
+	fakeDiscoverer(t, nil)
+	gw, eps := newGateway(t, store, NewDiscovery())
 	put := func(body string) (*http.Response, Endpoint) {
 		resp, b := get(t, "PUT", gw.URL+"/admin/endpoints", body, nil)
 		var e Endpoint
@@ -1064,9 +1069,9 @@ func TestAdminPutIsPublic(t *testing.T) {
 
 func TestSyncInsertsPrivate(t *testing.T) {
 	svc := openAPIServer(t, `{"paths":{"/a":{"get":{}}}}`, 200)
-	ds, _ := fakeDiscoverer(t, map[string][]string{"events": {hostOf(svc)}})
+	fakeDiscoverer(t, map[string][]string{"events": {hostOf(svc)}})
 	store := newFakeStore()
-	s := NewSyncer(NewDiscovery(ds.URL), store, NewEndpoints(store), 60)
+	s := NewSyncer(store, NewEndpoints(store), 60)
 	if _, _, err := s.SyncKind(context.Background(), Events); err != nil {
 		t.Fatal(err)
 	}

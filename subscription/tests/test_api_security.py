@@ -1,12 +1,15 @@
 """Rotas reais ASGI e identidade por cabeçalhos do gateway (o JWT é verificado no gateway)."""
 
+import json
+from types import SimpleNamespace
 from uuid import uuid4
 
-import httpx
 import pytest
+from discovery import Kind
 from fastapi.testclient import TestClient
 from test_service import activity
 
+from app import integrations
 from app.api import create_app
 from app.contracts import DomainError
 from app.integrations import Services
@@ -61,9 +64,6 @@ class FakeEvents:
         self.headers.append(headers)
         if not self.allowed:
             raise DomainError(403, "FORBIDDEN")
-
-    def close(self):
-        pass
 
 
 def ident(user=None, roles=None, **extra):
@@ -199,44 +199,69 @@ def test_openapi_has_no_identity_parameters(db, settings):
         assert name not in spec
 
 
+def fake_request(status=200, body=None, raw=None, error=None):
+    """Substitui discovery.request: registra as chamadas e devolve uma resposta pronta."""
+    calls = []
+
+    def request(method, kind, url, options=None):
+        calls.append((method, kind, url, options))
+        if error:
+            raise error
+        payload = json.dumps(body if body is not None else {}).encode() if raw is None else raw
+        return SimpleNamespace(status=status, json=lambda: json.loads(payload))
+
+    request.calls = calls
+    return request
+
+
 def test_services_get_without_bearer_sends_no_authorization(settings):
-    seen = []
-
-    def handler(request):
-        seen.append(request)
-        if request.url.path == "/consult":
-            return httpx.Response(200, json={"host": "events:8080"})
-        return httpx.Response(200, json={})
-
-    services = Services(settings, httpx.Client(transport=httpx.MockTransport(handler)))
-    services.get("events", "/x")
-    assert "Authorization" not in seen[-1].headers
-    services.close()
+    request = fake_request()
+    Services(settings, request).get(Kind.EVENTS, "/x")
+    assert request.calls == [("GET", Kind.EVENTS, "/x", {"headers": {}})]
 
 
 def test_discovery_and_activity_http_contract(settings):
     act = activity()
-    calls = []
-
-    def handler(request):
-        calls.append(request)
-        if request.url.path == "/consult":
-            return httpx.Response(200, json={"host": "events:8080"})
-        return httpx.Response(200, json=act.model_dump(mode="json"))
-
-    client = httpx.Client(transport=httpx.MockTransport(handler))
-    services = Services(settings, client)
+    request = fake_request(body=act.model_dump(mode="json"))
+    services = Services(settings, request)
     sent = {"X-User-Id": str(uuid4()), "X-User-Roles": "ORGANIZER", "X-Trace-Id": "trace-12345678", "Authorization": "Bearer verified-token"}
     assert services.activity(act.activity_id, sent) == act
-    for name, value in sent.items():
-        assert calls[-1].headers[name] == value
-    assert "X-Service-Token" not in calls[-1].headers
-    assert calls[-1].url.path == f"/api/v1/activities/{act.activity_id}"
+    method, kind, url, options = request.calls[-1]
+    assert (method, kind, url) == ("GET", Kind.EVENTS, f"/api/v1/activities/{act.activity_id}")
+    assert options == {"headers": sent}
+    assert "X-Service-Token" not in options["headers"]
     # Caminho dos workers: sem chamador, nenhuma identidade.
     assert services.activity(act.activity_id) == act
-    for name in ("X-User-Id", "X-User-Roles", "X-Trace-Id", "Authorization", "X-Service-Token"):
-        assert name not in calls[-1].headers
-    services.close()
+    assert request.calls[-1][3] == {"headers": {}}
+
+
+def test_services_get_success_returns_json(settings):
+    assert Services(settings, fake_request(body={"a": 1})).get(Kind.EVENTS, "/x") == {"a": 1}
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "status", "code"),
+    [
+        ({"status": 404}, 404, "RESOURCE_NOT_FOUND"),
+        ({"status": 401}, 403, "FORBIDDEN"),
+        ({"status": 403}, 403, "FORBIDDEN"),
+        ({"status": 500}, 503, "DEPENDENCY_UNAVAILABLE"),
+        ({"error": OSError("connection refused")}, 503, "DEPENDENCY_UNAVAILABLE"),
+        ({"error": RuntimeError("consult events failed: 404")}, 503, "DEPENDENCY_UNAVAILABLE"),
+        ({"raw": b"<html>"}, 503, "DEPENDENCY_UNAVAILABLE"),
+    ],
+)
+def test_services_get_error_mapping(settings, kwargs, status, code):
+    with pytest.raises(DomainError) as caught:
+        Services(settings, fake_request(**kwargs)).get(Kind.EVENTS, "/x")
+    assert (caught.value.status, caught.value.code) == (status, code)
+
+
+def test_services_register_uses_the_discovery_lib(settings, monkeypatch):
+    called = []
+    monkeypatch.setattr(integrations, "register", called.append)
+    Services(settings, fake_request()).register()
+    assert called == [Kind.SUBSCRIPTION]
 
 
 def test_signup_is_idempotent_per_user_and_activity(db, settings):

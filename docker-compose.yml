@@ -68,7 +68,11 @@ services:
     <<: *app
     deploy:
       replicas: 1 # The fixed host port below prevents scaling this service
-    build: ./gateway
+    # additional_contexts gives the build access to the Go discovery lib, which lives outside ./gateway
+    build:
+      context: ./gateway
+      additional_contexts:
+        discovery: ./service-discoverer/Libs/go
     networks: [backbone, gateway-net]
     ports:
       - "8080:8080" # UI-facing entry point
@@ -132,7 +136,11 @@ services:
     <<: *app
     deploy:
       replicas: 1 # We cant horizontally scalle this service at all
-    build: ./subscription
+    # additional_contexts gives the build access to the Python discovery lib, which lives outside ./subscription
+    build:
+      context: ./subscription
+      additional_contexts:
+        discovery: ./service-discoverer/Libs/python
     networks: [backbone, subscription-net]
     depends_on:
       subscription-db:

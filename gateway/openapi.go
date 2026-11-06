@@ -158,33 +158,23 @@ func parseOpenAPI(r io.Reader) ([]specEndpoint, error) {
 
 // Syncer registers the endpoints described by each service's /openapi.json.
 type Syncer struct {
-	disc       *Discovery
 	store      Store
 	eps        *Endpoints
-	client     *http.Client
 	defaultMax int
 	minDelay   time.Duration
 	maxDelay   time.Duration
 	indexed    bool
 }
 
-func NewSyncer(disc *Discovery, store Store, eps *Endpoints, defaultMax int) *Syncer {
-	return &Syncer{disc: disc, store: store, eps: eps, client: &http.Client{Timeout: 10 * time.Second},
+func NewSyncer(store Store, eps *Endpoints, defaultMax int) *Syncer {
+	return &Syncer{store: store, eps: eps,
 		defaultMax: defaultMax, minDelay: syncMinDelay, maxDelay: syncMaxDelay}
 }
 
+// fetch gets the spec through the discovery lib (cached host, one rediscovery on connection failure).
 func (s *Syncer) fetch(ctx context.Context, kind Kind) ([]specEndpoint, error) {
-	host, err := s.disc.Host(ctx, kind)
+	resp, err := request(ctx, http.MethodGet, kind, "/openapi.json")
 	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+host+"/openapi.json", nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := s.client.Do(req)
-	if err != nil {
-		s.disc.Forget(kind, host)
 		return nil, err
 	}
 	defer resp.Body.Close()

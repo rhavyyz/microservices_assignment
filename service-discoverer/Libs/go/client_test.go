@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -182,5 +183,49 @@ func TestConsultDoesNotCache(t *testing.T) {
 	}
 	if *consults != 2 {
 		t.Fatalf("consults = %d", *consults)
+	}
+}
+
+func TestConsultSentinelErrors(t *testing.T) {
+	status := 0
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "nope", status)
+	}))
+	defer s.Close()
+	t.Setenv("SERVICE_DISCOVERER_URL", s.URL)
+	for _, c := range []struct {
+		status int
+		want   error
+	}{{503, ErrNoInstance}, {400, ErrUnknownKind}} {
+		status = c.status
+		_, err := Consult(Payments)
+		if !errors.Is(err, c.want) || !strings.Contains(err.Error(), "consult payments failed: ") {
+			t.Errorf("status %d: err = %v", c.status, err)
+		}
+		other := ErrUnknownKind
+		if c.want == ErrUnknownKind {
+			other = ErrNoInstance
+		}
+		if errors.Is(err, other) {
+			t.Errorf("status %d: must not match %v", c.status, other)
+		}
+	}
+	status = 500
+	if _, err := Consult(Payments); err == nil || errors.Is(err, ErrNoInstance) || errors.Is(err, ErrUnknownKind) {
+		t.Errorf("500: err = %v", err)
+	}
+}
+
+func TestReset(t *testing.T) {
+	_, consults := fakeDiscoverer(t, "a:1", "b:2")
+	if h, _ := resolve(Payments, ""); h != "a:1" {
+		t.Fatalf("host = %q", h)
+	}
+	if h, _ := resolve(Payments, ""); h != "a:1" || *consults != 1 {
+		t.Fatalf("not cached: %q after %d consults", h, *consults)
+	}
+	Reset()
+	if h, _ := resolve(Payments, ""); h != "b:2" || *consults != 2 {
+		t.Errorf("after Reset: %q after %d consults", h, *consults)
 	}
 }
