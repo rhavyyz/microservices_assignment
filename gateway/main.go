@@ -53,11 +53,16 @@ func main() {
 	if err != nil || jwksCooldown < 0 {
 		log.Fatal("JWKS_REFETCH_COOLDOWN must be a non-negative Go duration, e.g. 30s")
 	}
+	discTTL, err := ParseCacheTTL(env("DISCOVERY_CACHE_TTL_SECONDS", "10"))
+	if err != nil {
+		log.Fatal(err)
+	}
 	store, err := newMongoStore(env("MONGO_URI", "mongodb://gateway-db:27017"))
 	if err != nil {
 		log.Fatal(err)
 	}
 	disc := NewDiscovery()
+	disc.ttl = discTTL
 	eps := NewEndpoints(store)
 	limiter := NewLimiter(time.Now)
 	jwksFetch := NewDiscoveryJWKS()

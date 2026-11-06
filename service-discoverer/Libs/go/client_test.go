@@ -29,9 +29,8 @@ func fakeDiscoverer(t *testing.T, hosts ...string) (*httptest.Server, *int) {
 	}))
 	t.Cleanup(s.Close)
 	t.Setenv("SERVICE_DISCOVERER_URL", s.URL)
-	for _, c := range caches {
-		c.host = ""
-	}
+	Reset()
+	t.Cleanup(Reset)
 	return s, &consults
 }
 
@@ -227,5 +226,139 @@ func TestReset(t *testing.T) {
 	Reset()
 	if h, _ := resolve(Payments, ""); h != "b:2" || *consults != 2 {
 		t.Errorf("after Reset: %q after %d consults", h, *consults)
+	}
+}
+
+// fakeClock replaces now for the test and returns a function advancing it.
+func fakeClock(t *testing.T) func(time.Duration) {
+	cur := time.Unix(1000, 0)
+	orig := now
+	now = func() time.Time { return cur }
+	t.Cleanup(func() { now = orig })
+	return func(d time.Duration) { cur = cur.Add(d) }
+}
+
+func TestCacheTTLExpiresAndMovesToNextHost(t *testing.T) {
+	advance := fakeClock(t)
+	_, consults := fakeDiscoverer(t, "a:1", "b:2", "c:3")
+	t.Setenv("DISCOVERY_CACHE_TTL_SECONDS", "5")
+	get := func(want string, wantConsults int) {
+		t.Helper()
+		if h, err := resolve(Payments, ""); err != nil || h != want || *consults != wantConsults {
+			t.Fatalf("got %q, %v after %d consults; want %q after %d", h, err, *consults, want, wantConsults)
+		}
+	}
+	get("a:1", 1)
+	advance(4 * time.Second)
+	get("a:1", 1)
+	advance(time.Second) // age == TTL: expired
+	get("b:2", 2)
+	advance(4 * time.Second)
+	get("b:2", 2)
+	advance(2 * time.Second)
+	get("c:3", 3)
+}
+
+func TestCacheTTLZeroConsultsEveryTime(t *testing.T) {
+	fakeClock(t)
+	_, consults := fakeDiscoverer(t, "a:1", "b:2")
+	t.Setenv("DISCOVERY_CACHE_TTL_SECONDS", "0")
+	for _, want := range []string{"a:1", "b:2", "b:2"} {
+		if h, _ := resolve(Payments, ""); h != want {
+			t.Fatalf("got %q, want %q", h, want)
+		}
+	}
+	if *consults != 3 {
+		t.Fatalf("consults = %d", *consults)
+	}
+}
+
+func TestCacheTTLDecimal(t *testing.T) {
+	advance := fakeClock(t)
+	_, consults := fakeDiscoverer(t, "a:1", "b:2")
+	t.Setenv("DISCOVERY_CACHE_TTL_SECONDS", "0.5")
+	resolve(Payments, "")
+	advance(400 * time.Millisecond)
+	resolve(Payments, "")
+	if *consults != 1 {
+		t.Fatalf("consults = %d", *consults)
+	}
+	advance(100 * time.Millisecond)
+	if h, _ := resolve(Payments, ""); h != "b:2" {
+		t.Fatalf("host = %q", h)
+	}
+}
+
+func TestParseCacheTTL(t *testing.T) {
+	for in, want := range map[string]time.Duration{"0": 0, "10": 10 * time.Second, "0.25": 250 * time.Millisecond, " 3 ": 3 * time.Second, "86400": 86400 * time.Second} {
+		if got, err := ParseCacheTTL(in); err != nil || got != want {
+			t.Errorf("%q: got %v, %v; want %v", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"", "abc", "-1", "NaN", "Inf", "-Inf", "86401", "1e99", "10s"} {
+		if _, err := ParseCacheTTL(in); err == nil {
+			t.Errorf("%q: expected an error", in)
+		}
+	}
+}
+
+func TestInvalidCacheTTLFallsBackToDefault(t *testing.T) {
+	for _, v := range []string{"", "abc", "-1", "NaN", "Inf", "100000"} {
+		t.Setenv("DISCOVERY_CACHE_TTL_SECONDS", v)
+		if got := cacheTTL(); got != DefaultCacheTTL {
+			t.Errorf("%q: ttl = %v", v, got)
+		}
+	}
+	t.Setenv("DISCOVERY_CACHE_TTL_SECONDS", "2.5")
+	if got := cacheTTL(); got != 2500*time.Millisecond {
+		t.Errorf("ttl = %v", got)
+	}
+}
+
+func TestStaleHostUsedWhenRefreshFails(t *testing.T) {
+	advance := fakeClock(t)
+	s, _ := fakeDiscoverer(t, "a:1")
+	t.Setenv("DISCOVERY_CACHE_TTL_SECONDS", "5")
+	if h, _ := resolve(Payments, ""); h != "a:1" {
+		t.Fatalf("host = %q", h)
+	}
+	s.Close() // discoverer unreachable
+	advance(6 * time.Second)
+	if h, err := resolve(Payments, ""); err != nil || h != "a:1" {
+		t.Fatalf("got %q, %v; want the stale a:1", h, err)
+	}
+	// the unreachable host itself is never reused when the refresh fails
+	if h, err := resolve(Payments, "a:1"); err == nil {
+		t.Fatalf("got %q, want an error", h)
+	}
+}
+
+func TestNoHostAndConsultFailsIsAnError(t *testing.T) {
+	fakeClock(t)
+	s, _ := fakeDiscoverer(t, "a:1")
+	s.Close()
+	if h, err := resolve(Payments, ""); err == nil {
+		t.Fatalf("got %q, want an error", h)
+	}
+}
+
+func TestRediscoveryResetsTTL(t *testing.T) {
+	advance := fakeClock(t)
+	dead := httptest.NewServer(http.NotFoundHandler())
+	deadHost := host(dead)
+	dead.Close()
+	good := target(t)
+	_, consults := fakeDiscoverer(t, deadHost, host(good))
+	t.Setenv("DISCOVERY_CACHE_TTL_SECONDS", "5")
+	resp, err := Request("GET", Events, "/x", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	advance(4 * time.Second)
+	resp, _ = Request("GET", Events, "/x", Options{})
+	resp.Body.Close()
+	if *consults != 2 {
+		t.Fatalf("consults = %d", *consults)
 	}
 }

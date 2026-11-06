@@ -211,6 +211,134 @@ test("caches are per kind", async () => {
   assert.equal(r.consults.length, 2);
 });
 
+// Fake clock (ms) injected as `now`.
+function withClock(handler: Handler, extra: { env?: Record<string, string>; ttlSeconds?: number } = {}) {
+  const clock = { t: 5000 };
+  const f = fakeFetch(handler);
+  const client = createClient({
+    fetchFn: f.fetchFn,
+    sleep: async () => {},
+    now: () => clock.t,
+    ttlSeconds: extra.ttlSeconds,
+    env: { SERVICE_DISCOVERER_URL: DISCOVERER, ...extra.env },
+  });
+  return { clock, client, ...f };
+}
+
+test("host is reused within the TTL and a new consult after it moves to the next host", async () => {
+  const r = routed(["a:1", "b:2"], () => new Response("ok"));
+  const t = withClock(r.handler);
+  await t.client.request("GET", Kind.USER, "/x");
+  t.clock.t += 9900;
+  await t.client.request("GET", Kind.USER, "/x");
+  assert.equal(r.consults.length, 1);
+  t.clock.t += 200;
+  await t.client.request("GET", Kind.USER, "/x");
+  assert.equal(r.consults.length, 2);
+  assert.equal(t.calls.at(-1)!.url, "http://b:2/x");
+});
+
+test("ttl comes from the env var (decimals) or the ttlSeconds option", async () => {
+  const r = routed(["a:1", "b:2", "c:3"], () => new Response("ok"));
+  const t = withClock(r.handler, { env: { DISCOVERY_CACHE_TTL_SECONDS: "0.5" } });
+  await t.client.request("GET", Kind.USER, "/x");
+  t.clock.t += 400;
+  await t.client.request("GET", Kind.USER, "/x");
+  assert.equal(r.consults.length, 1);
+  t.clock.t += 200;
+  await t.client.request("GET", Kind.USER, "/x");
+  assert.equal(r.consults.length, 2);
+
+  const r2 = routed(["a:1", "b:2"], () => new Response("ok"));
+  const o = withClock(r2.handler, { ttlSeconds: 1, env: { DISCOVERY_CACHE_TTL_SECONDS: "100" } });
+  await o.client.request("GET", Kind.USER, "/x");
+  o.clock.t += 1001;
+  await o.client.request("GET", Kind.USER, "/x");
+  assert.equal(r2.consults.length, 2);
+});
+
+test("ttl 0 consults before every request", async () => {
+  for (const opts of [{ ttlSeconds: 0 }, { env: { DISCOVERY_CACHE_TTL_SECONDS: "0" } }]) {
+    const r = routed(["a:1", "b:2", "c:3"], () => new Response("ok"));
+    const t = withClock(r.handler, opts);
+    for (let i = 0; i < 3; i++) await t.client.request("GET", Kind.USER, "/x");
+    assert.equal(r.consults.length, 3);
+    assert.deepEqual(t.calls.filter((c) => !c.url.includes("/consult")).map((c) => c.url), [
+      "http://a:1/x", "http://b:2/x", "http://c:3/x",
+    ]);
+  }
+});
+
+test("an invalid ttl falls back to 10 seconds", async () => {
+  for (const bad of ["", "abc", "-1", "NaN", "Infinity", "-Infinity"]) {
+    for (const how of ["env", "option"]) {
+      const r = routed(["a:1", "b:2"], () => new Response("ok"));
+      const t =
+        how === "env"
+          ? withClock(r.handler, { env: { DISCOVERY_CACHE_TTL_SECONDS: bad } })
+          : withClock(r.handler, { ttlSeconds: Number(bad === "" ? "x" : bad) });
+      await t.client.request("GET", Kind.USER, "/x");
+      t.clock.t += 9900;
+      await t.client.request("GET", Kind.USER, "/x");
+      assert.equal(r.consults.length, 1, `${how} ${bad}`);
+      t.clock.t += 200;
+      await t.client.request("GET", Kind.USER, "/x");
+      assert.equal(r.consults.length, 2, `${how} ${bad}`);
+    }
+  }
+});
+
+test("an expired host is kept when the refresh fails, and the refresh is retried next call", async () => {
+  let discovererUp = true;
+  const consults: number[] = [];
+  const t = withClock((c) => {
+    if (c.url.includes("/consult")) {
+      consults.push(1);
+      return discovererUp ? json({ host: "a:1" }) : new Response("down", { status: 503 });
+    }
+    return new Response("ok");
+  });
+  await t.client.request("GET", Kind.USER, "/x");
+  discovererUp = false;
+  t.clock.t += 11000;
+  const res = await t.client.request("GET", Kind.USER, "/x");
+  assert.equal(res.status, 200);
+  assert.equal(t.calls.at(-1)!.url, "http://a:1/x");
+  assert.equal(consults.length, 2);
+  await t.client.request("GET", Kind.USER, "/x");
+  assert.equal(consults.length, 3);
+});
+
+test("a failed refresh with nothing cached still rejects", async () => {
+  const t = withClock(() => new Response("none", { status: 503 }));
+  await assert.rejects(t.client.request("GET", Kind.USER, "/x"), /consult user failed: 503 none/);
+});
+
+test("rediscovery after a failure resets the TTL", async () => {
+  const r = routed(["dead:1", "good:2", "next:3"], (c) => (c.url.startsWith("http://dead") ? refused() : new Response("ok")));
+  const t = withClock(r.handler);
+  await t.client.request("GET", Kind.USER, "/x"); // dead:1 fails, rediscovers good:2
+  assert.equal(r.consults.length, 2);
+  t.clock.t += 9900;
+  await t.client.request("GET", Kind.USER, "/x");
+  assert.equal(r.consults.length, 2);
+  t.clock.t += 200;
+  await t.client.request("GET", Kind.USER, "/x");
+  assert.equal(r.consults.length, 3);
+  assert.equal(t.calls.at(-1)!.url, "http://next:3/x");
+});
+
+test("a failing rediscovery never falls back to the dead host", async () => {
+  let down = false;
+  const t = withClock((c) => {
+    if (c.url.includes("/consult")) return down ? new Response("down", { status: 503 }) : json({ host: "dead:1" });
+    return refused();
+  });
+  await t.client.request("GET", Kind.USER, "/x").catch(() => {}); // consults dead:1, then dead again
+  down = true;
+  await assert.rejects(t.client.request("GET", Kind.USER, "/x"), /consult user failed: 503 down/);
+});
+
 test("top-level functions are exported", () => {
   assert.equal(typeof register, "function");
   assert.equal(typeof consult, "function");

@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +31,38 @@ var (
 
 // sleep is time.Sleep, replaced in tests.
 var sleep = time.Sleep
+
+// now is time.Now, replaced in tests.
+var now = time.Now
+
+const (
+	// DefaultCacheTTL is how long a consulted host is reused when DISCOVERY_CACHE_TTL_SECONDS is unset or invalid.
+	DefaultCacheTTL = 10 * time.Second
+	maxCacheTTL     = 86400 * time.Second
+)
+
+// ParseCacheTTL parses a DISCOVERY_CACHE_TTL_SECONDS value: a number of seconds (decimals accepted),
+// 0 meaning no caching. Negative, non-numeric, NaN, infinite and absurd (> 86400) values are errors.
+func ParseCacheTTL(s string) (time.Duration, error) {
+	secs, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil || math.IsNaN(secs) || math.IsInf(secs, 0) || secs < 0 || secs > maxCacheTTL.Seconds() {
+		return 0, fmt.Errorf("DISCOVERY_CACHE_TTL_SECONDS must be a number of seconds between 0 and 86400, got %q", s)
+	}
+	return time.Duration(secs * float64(time.Second)), nil
+}
+
+// cacheTTL reads DISCOVERY_CACHE_TTL_SECONDS (default 10, invalid falls back to the default).
+func cacheTTL() time.Duration {
+	v := os.Getenv("DISCOVERY_CACHE_TTL_SECONDS")
+	if v == "" {
+		return DefaultCacheTTL
+	}
+	ttl, err := ParseCacheTTL(v)
+	if err != nil {
+		return DefaultCacheTTL
+	}
+	return ttl
+}
 
 var client = &http.Client{Timeout: 5 * time.Second}
 
@@ -90,6 +124,7 @@ func Register(kind Kind) error {
 type kindCache struct {
 	mu   sync.Mutex
 	host string
+	at   time.Time // when host was consulted
 }
 
 // One cache per kind for this process. The kinds are fixed, so the map never changes.
@@ -102,6 +137,7 @@ var caches = func() map[Kind]*kindCache {
 }()
 
 // Consult asks the service-discoverer for a healthy host of `kind`. No caching.
+// The discoverer balances round robin, so consecutive calls may return different instances.
 // A 503 answer wraps ErrNoInstance and a 400 one wraps ErrUnknownKind (use errors.Is).
 func Consult(kind Kind) (string, error) {
 	resp, err := client.Get(discovererURL() + "/consult?kind=" + url.QueryEscape(string(kind)))
@@ -134,12 +170,13 @@ func Reset() {
 	for _, c := range caches {
 		c.mu.Lock()
 		c.host = ""
+		c.at = time.Time{}
 		c.mu.Unlock()
 	}
 }
 
-// resolve returns the cached host, calling Consult when there is none or when
-// the cached one is `stale`.
+// resolve returns the cached host while it is younger than the cache TTL (DISCOVERY_CACHE_TTL_SECONDS),
+// calling Consult when there is none, when it expired, or when the cached one is `stale` (unreachable).
 func resolve(kind Kind, stale string) (string, error) {
 	c, ok := caches[kind]
 	if !ok {
@@ -147,19 +184,27 @@ func resolve(kind Kind, stale string) (string, error) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.host != "" && c.host != stale {
+	ttl := cacheTTL()
+	if c.host != "" && c.host != stale && ttl > 0 && now().Sub(c.at) < ttl {
 		return c.host, nil
 	}
+	consultedAt := now()
 	host, err := Consult(kind)
 	if err != nil {
+		// The refresh of an expired entry failed (discoverer down): keep using the previous host rather
+		// than failing. Never the `stale` one, which is known to be unreachable.
+		if c.host != "" && c.host != stale {
+			return c.host, nil
+		}
 		return "", err
 	}
-	c.host = host
+	c.host, c.at = host, consultedAt
 	return c.host, nil
 }
 
-// Request calls `path` (like "/charge") on an instance of `kind`. If the cached
-// host is unreachable, the host is rediscovered and the call retried once.
+// Request calls `path` (like "/charge") on an instance of `kind`. The host is cached per kind for
+// DISCOVERY_CACHE_TTL_SECONDS (default 10, 0 = consult every time), so calls spread over the instances
+// as the discoverer rotates them. If the host is unreachable, the host is rediscovered and the call retried once.
 // HTTP error statuses are returned as responses, not errors. The caller closes
 // the response body.
 func Request(method string, kind Kind, path string, opts Options) (*http.Response, error) {
