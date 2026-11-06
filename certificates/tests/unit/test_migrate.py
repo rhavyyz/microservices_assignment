@@ -96,7 +96,42 @@ def test_single_head():
 
     assert result.returncode == 0
     assert result.stdout.count("(head)") == 1
-    assert "9e4a6b2c1d83" in result.stdout
+    assert "b3f5a7d9c1e2" in result.stdout
+
+
+def test_pending_attendance_revision_creates_table_with_registration_primary_key(tmp_path):
+    url = f"sqlite:///{tmp_path / 'certs.db'}"
+    assert run_alembic(url, "upgrade", "9e4a6b2c1d83").returncode == 0
+    engine = create_engine(url)
+    assert "pending_attendance" not in inspect(engine).get_table_names()
+
+    result = run_alembic(url, "upgrade", "head")
+
+    assert result.returncode == 0, result.stderr
+    inspector = inspect(engine)
+    columns = {c["name"]: c for c in inspector.get_columns("pending_attendance")}
+    assert set(columns) == {
+        "registration_id", "payload", "not_before", "attempts",
+        "source_topic", "source_partition", "source_offset", "created_at",
+    }
+    assert all(not c["nullable"] for c in columns.values())
+    assert inspector.get_pk_constraint("pending_attendance")["constrained_columns"] == ["registration_id"]
+    assert "ix_pending_attendance_not_before" in {i["name"] for i in inspector.get_indexes("pending_attendance")}
+    with engine.begin() as connection:  # attempts defaults to 0 at the database level
+        connection.execute(text(
+            "INSERT INTO pending_attendance (registration_id, payload, not_before, source_topic, source_partition, "
+            "source_offset, created_at) VALUES ('a', '{}', '2026-01-01 00:00:00', 't', 0, 1, '2026-01-01 00:00:00')"
+        ))
+        assert connection.execute(text("SELECT attempts FROM pending_attendance")).scalar() == 0
+    with pytest.raises(Exception), engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO pending_attendance (registration_id, payload, not_before, source_topic, source_partition, "
+            "source_offset, created_at) VALUES ('a', '{}', '2026-01-01 00:00:00', 't', 0, 2, '2026-01-01 00:00:00')"
+        ))
+
+    assert run_alembic(url, "downgrade", "9e4a6b2c1d83").returncode == 0
+    assert "pending_attendance" not in inspect(engine).get_table_names()
+    engine.dispose()
 
 
 def test_migrate_retries_with_backoff_then_succeeds(monkeypatch):

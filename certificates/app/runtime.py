@@ -6,6 +6,7 @@ import threading
 from app.config import settings
 from app.consumer import AttendanceWorker
 from app.integrations.discovery import register_service
+from app.pending import PendingScheduler
 from app.services.storage import S3CertificateStorage, get_storage
 
 log = logging.getLogger(__name__)
@@ -18,6 +19,7 @@ class Runtime:
         self.stop = threading.Event()
         self.threads: list[threading.Thread] = []
         self.worker: AttendanceWorker | None = None
+        self.scheduler: PendingScheduler | None = None
 
     def start(self) -> None:
         targets = [self.register]
@@ -30,11 +32,16 @@ class Runtime:
 
         self.worker = AttendanceWorker()
         self.worker.start()
+        # The same handler: parked messages go through exactly the consumer's issuing logic.
+        self.scheduler = PendingScheduler(handler=self.worker.handler)
+        self.scheduler.start()
 
     def close(self) -> None:
         self.stop.set()
         if self.worker is not None:
             self.worker.close()
+        if self.scheduler is not None:
+            self.scheduler.close()
         for thread in self.threads:
             thread.join(timeout=5)
 

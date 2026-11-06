@@ -12,6 +12,7 @@ from app.consumer import AttendanceHandler, AttendanceWorker
 from app.database import Base
 from app.integrations.directory import Event, PoisonMessage, TransientError
 from app.models.certificate import Certificate
+from app.models.pending_attendance import PendingAttendance
 from app.services.storage import CertificateStorage, CertificateStorageError
 
 NOW = datetime(2026, 11, 4, 12, 0, tzinfo=timezone.utc)
@@ -44,6 +45,7 @@ class FakeDirectory:
             title="Software Week",
             starts_at=datetime(2026, 11, 2, 22, 0, tzinfo=timezone(timedelta(hours=-3))),
             ends_at=NOW - timedelta(hours=1),
+            status="PUBLISHED",
         )
         self.name = "Alex Example"
         self.errors = {}
@@ -248,14 +250,15 @@ def test_dependency_failures_are_transient(env, failing):
     assert certificates(factory) == []
 
 
-def test_event_not_ended_is_not_issued_and_is_transient(env):
+def test_event_not_ended_is_not_issued_and_is_parked(env):
     handler, directory, factory, storage, clock = env
     clock["now"] = directory.event.ends_at - timedelta(seconds=1)
 
-    with pytest.raises(TransientError, match="not ended yet"):
-        handler.handle(event())
+    handler.handle(event())  # returns normally: the consumer commits and moves on
 
     assert certificates(factory) == []
+    with factory() as session:
+        assert session.query(PendingAttendance).count() == 1
     assert not list(storage.storage_dir.glob("*.pdf"))
     assert "user" not in directory.calls
 
@@ -425,7 +428,7 @@ class ScriptedHandler:
     def __init__(self, outcome):
         self.outcome = outcome
 
-    def handle(self, raw):
+    def handle(self, raw, source=None):
         if isinstance(self.outcome, Exception):
             raise self.outcome
 

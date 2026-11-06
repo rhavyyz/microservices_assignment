@@ -3,6 +3,9 @@
 Delivery is at least once: the offset is committed after processing, and a redelivered event is a
 no-op because a certificate is unique per registration and per (user, event). The event is not trusted
 on its own; see AttendanceHandler.
+
+A message that arrives before its event has ended is parked in the service's own database (PendingAttendance)
+and its offset is committed, so it never blocks the partition; app/pending.py issues it once the event ends.
 """
 
 import json
@@ -12,13 +15,16 @@ import threading
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
+from typing import NamedTuple
 
 from confluent_kafka import Consumer, Producer, TopicPartition
+from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.database import get_session_factory
 from app.integrations.directory import Directory, PoisonMessage, TransientError
 from app.integrations.topics import ensure_topics
+from app.models.pending_attendance import PendingAttendance
 from app.repositories.certificate_repository import CertificateAlreadyExistsError
 from app.services.certificate_service import CertificateNotEligibleError, CertificateService
 from app.services.storage import CertificateStorageError, get_storage
@@ -62,8 +68,27 @@ def _attendance(payload: dict) -> tuple[int, int, float]:
     return attended, total, percentage
 
 
+class EventNotEnded(TransientError):
+    """The event's `ends_at` is still in the future. The consumer parks the message; the scheduler reschedules it."""
+
+    def __init__(self, ends_at: datetime) -> None:
+        self.ends_at = ends_at
+        super().__init__("event has not ended yet")
+
+
+class Source(NamedTuple):
+    """Where a message came from, kept with a parked message so a DLQ record keeps the same shape."""
+
+    topic: str
+    partition: int
+    offset: int
+
+
 class AttendanceHandler:
-    """Turns one raw Kafka message into a certificate, or raises PoisonMessage / TransientError."""
+    """Turns one raw Kafka message into a certificate, or raises PoisonMessage / TransientError.
+
+    A message for an event that has not ended is parked instead (see `park`) and handle() returns normally.
+    """
 
     def __init__(
         self,
@@ -77,7 +102,7 @@ class AttendanceHandler:
         self.storage_factory = storage_factory or get_storage
         self.clock = clock
 
-    def handle(self, raw: bytes | None) -> None:
+    def handle(self, raw: bytes | None, source: Source | None = None) -> None:
         try:
             payload = json.loads(raw or b"")
         except (ValueError, UnicodeError):
@@ -89,6 +114,18 @@ class AttendanceHandler:
         if payload.get("type") != ELIGIBLE_TYPE:
             return
 
+        try:
+            self.process(payload)
+        except EventNotEnded as early:
+            # Normal case: Subscription emits when the person's last activity ends, possibly days before the event.
+            self.park(payload, early.ends_at, source)
+
+    def process(self, payload: dict) -> None:
+        """Validate an `AttendanceEligible` payload and issue its certificate (shared by the consumer and the scheduler).
+
+        Returns on success (issued or already issued); raises PoisonMessage, or TransientError (EventNotEnded
+        when the event is still running).
+        """
         if payload.get("schema_version") != SCHEMA_VERSION or isinstance(payload.get("schema_version"), bool):
             raise PoisonMessage("UNSUPPORTED_SCHEMA_VERSION")
         registration_id = _uuid(payload, "registration_id")
@@ -137,9 +174,10 @@ class AttendanceHandler:
                 return
 
             event = self.directory.get_event(event_id, trace_id)
+            if event.status == "CANCELLED":
+                raise PoisonMessage("EVENT_CANCELLED")
             if self.clock() < event.ends_at:
-                # Subscription only emits after the last activity ends, so this is clock skew or an early event.
-                raise TransientError("event has not ended yet")
+                raise EventNotEnded(event.ends_at)
 
             participant_name = self.directory.get_participant_name(user_id, trace_id)
 
@@ -159,6 +197,65 @@ class AttendanceHandler:
             session.close()
 
 
+    def park(self, payload: dict, ends_at: datetime, source: Source | None) -> None:
+        """Keep the message in the database until the event ends. Idempotent per registration."""
+        source = source or Source(settings.subscription_events_topic, -1, -1)
+        registration_id = _uuid(payload, "registration_id")
+        session = self.session_factory()
+        try:
+            if session.get(PendingAttendance, registration_id) is None:
+                session.add(PendingAttendance(
+                    registration_id=registration_id,
+                    payload=payload,
+                    not_before=ends_at.astimezone(timezone.utc),
+                    attempts=0,
+                    source_topic=source.topic,
+                    source_partition=source.partition,
+                    source_offset=source.offset,
+                    created_at=self.clock(),
+                ))
+                try:
+                    session.commit()
+                except IntegrityError:
+                    session.rollback()  # another replica parked it first
+            log.info("attendance_parked registration_id=%s", registration_id)
+        finally:
+            session.close()
+
+
+class DeadLetters:
+    """Publishes reference-only records to the DLQ and waits for Kafka's confirmation."""
+
+    def __init__(self, producer_factory=None) -> None:
+        self.producer_factory = producer_factory or Producer
+        self.producer = None
+
+    def publish(self, topic: str, partition: int, offset: int, reason: str) -> None:
+        # Reference only (no payload copy, no personal data) for manual recovery.
+        if self.producer is None:
+            self.producer = self.producer_factory({
+                "bootstrap.servers": settings.kafka_brokers,
+                "enable.idempotence": True,
+                "acks": "all",
+                "delivery.timeout.ms": 5000,
+            })
+        result = []
+        self.producer.produce(
+            settings.certificates_dlq_topic,
+            key=f"{topic}:{partition}",
+            value=json.dumps({
+                "source_topic": topic,
+                "partition": partition,
+                "offset": offset,
+                "reason": reason,
+            }).encode(),
+            on_delivery=lambda error, delivered: result.append(error),
+        )
+        pending = self.producer.flush(6)
+        if pending or not result or result[0] is not None:
+            raise RuntimeError("Kafka did not confirm the delivery")
+
+
 class AttendanceWorker:
     """Daemon-thread Kafka loop: ensure topics, consume, process, commit after processing."""
 
@@ -168,9 +265,9 @@ class AttendanceWorker:
         self.consumer_factory = consumer_factory or Consumer
         self.producer_factory = producer_factory or Producer
         self.topics_ensurer = topics_ensurer or ensure_topics
+        self.dead_letters = DeadLetters(lambda config: self.producer_factory(config))
         self.stop = threading.Event()
         self.thread: threading.Thread | None = None
-        self.producer = None
         self.delay = 2.0
 
     def start(self) -> None:
@@ -240,7 +337,7 @@ class AttendanceWorker:
     def process(self, consumer, message) -> None:
         """Handle one message. Commit on success or poison; on a transient failure seek back and back off."""
         try:
-            self.handler.handle(message.value())
+            self.handler.handle(message.value(), Source(message.topic(), message.partition(), message.offset()))
         except PoisonMessage as exc:
             try:
                 self.quarantine(message, exc.reason)
@@ -272,26 +369,4 @@ class AttendanceWorker:
         self.delay = min(self.delay * 2, 30.0)
 
     def quarantine(self, message, reason: str) -> None:
-        # Reference only (no payload copy, no personal data) for manual recovery.
-        if self.producer is None:
-            self.producer = self.producer_factory({
-                "bootstrap.servers": settings.kafka_brokers,
-                "enable.idempotence": True,
-                "acks": "all",
-                "delivery.timeout.ms": 5000,
-            })
-        result = []
-        self.producer.produce(
-            settings.certificates_dlq_topic,
-            key=f"{message.topic()}:{message.partition()}",
-            value=json.dumps({
-                "source_topic": message.topic(),
-                "partition": message.partition(),
-                "offset": message.offset(),
-                "reason": reason,
-            }).encode(),
-            on_delivery=lambda error, delivered: result.append(error),
-        )
-        pending = self.producer.flush(6)
-        if pending or not result or result[0] is not None:
-            raise RuntimeError("Kafka did not confirm the delivery")
+        self.dead_letters.publish(message.topic(), message.partition(), message.offset(), reason)

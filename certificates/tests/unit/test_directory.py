@@ -1,3 +1,4 @@
+import json
 import uuid
 
 import pytest
@@ -26,7 +27,7 @@ def respond(monkeypatch, status=200, body=b"{}", error=None):
 
 EVENT = (
     b'{"event_id": "%s", "title": "Software Week", '
-    b'"starts_at": "2026-11-04T08:00:00-03:00", "ends_at": "2026-11-06T10:00:00Z"}'
+    b'"starts_at": "2026-11-04T08:00:00-03:00", "ends_at": "2026-11-06T10:00:00Z", "status": "PUBLISHED"}'
 )
 
 
@@ -40,6 +41,7 @@ def test_get_event_parses_and_sends_trace_id(monkeypatch):
     assert event.title == "Software Week"
     assert event.starts_at.utcoffset().total_seconds() == -3 * 3600
     assert event.ends_at.tzinfo is not None
+    assert event.status == "PUBLISHED"
 
 
 def test_get_event_ignores_extra_fields(monkeypatch):
@@ -55,8 +57,19 @@ def test_get_event_ignores_extra_fields(monkeypatch):
     assert event.title == "T"
 
 
+@pytest.mark.parametrize("status", [None, "", "  ", 3])
+def test_missing_or_invalid_status_is_transient(monkeypatch, status):
+    body = {"event_id": str(ID), "title": "T", "starts_at": "2026-11-04T08:00:00Z", "ends_at": "2026-11-04T10:00:00Z"}
+    if status is not None:
+        body["status"] = status
+    respond(monkeypatch, body=json.dumps(body).encode())
+
+    with pytest.raises(TransientError):
+        Directory().get_event(ID, "r")
+
+
 def test_naive_dates_are_rejected_as_transient(monkeypatch):
-    respond(monkeypatch, body=b'{"event_id": "%s", "title": "T", "starts_at": "2026-11-04T08:00:00", "ends_at": "2026-11-04T10:00:00"}' % str(ID).encode())
+    respond(monkeypatch, body=b'{"event_id": "%s", "title": "T", "starts_at": "2026-11-04T08:00:00", "ends_at": "2026-11-04T10:00:00", "status": "PUBLISHED"}' % str(ID).encode())
 
     with pytest.raises(TransientError):
         Directory().get_event(ID, "r")
@@ -93,7 +106,7 @@ def test_transport_errors_are_transient_without_details(monkeypatch):
 
 OLD_ID_ONLY = (
     b'{"id": "00000000-0000-0000-0000-000000000001", "title": "T", '
-    b'"starts_at": "2026-11-04T08:00:00Z", "ends_at": "2026-11-04T10:00:00Z"}'
+    b'"starts_at": "2026-11-04T08:00:00Z", "ends_at": "2026-11-04T10:00:00Z", "status": "PUBLISHED"}'
 )
 
 
