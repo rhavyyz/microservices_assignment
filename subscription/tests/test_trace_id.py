@@ -1,5 +1,7 @@
 """trace_id de ponta a ponta nas mensagens Kafka; sem PostgreSQL nem Kafka."""
 
+import logging
+import re
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -229,3 +231,85 @@ def test_legacy_request_id_header_is_ignored_and_not_echoed():
     response = TestClient(app).get("/openapi.json", headers={"X-Request-Id": RID})
     assert "X-Request-Id" not in response.headers
     assert response.headers["X-Trace-Id"] != RID
+
+
+ACCESS_LINE = re.compile(
+    r"^(?P<method>[A-Z]+) (?P<path>\S+) status=(?P<status>\d{3}) duration=\d+ms "
+    r"user=(?P<user>\S+) trace_id=(?P<trace>\S+)$"
+)
+
+
+@pytest.fixture
+def access(caplog):
+    caplog.set_level(logging.INFO, logger="app.access")
+    return lambda: [r.getMessage() for r in caplog.records if r.name == "app.access"]
+
+
+@pytest.fixture
+def http_app():
+    settings = Settings(database_url="unused", workers_enabled=False)
+    return create_app(settings, object(), FakeEvents(activity()), Authenticator(settings))
+
+
+def test_access_line_format_and_valid_trace_id(http_app, access):
+    user = str(uuid4())
+    cancel = f"/api/v1/registrations/{uuid4()}/cancel"
+    http_app.state.service.cancel = lambda *a, **k: {}
+    response = TestClient(http_app).post(cancel, headers={"X-User-Id": user, "X-Trace-Id": RID})
+    (line,) = access()
+    fields = ACCESS_LINE.match(line).groupdict()
+    assert fields["method"] == "POST" and fields["path"] == cancel and fields["status"] == "200"
+    assert fields["user"] == user
+    assert fields["trace"] == RID == response.headers["X-Trace-Id"]
+
+
+def test_access_line_shows_the_replacement_of_an_invalid_trace_id(http_app, access):
+    response = TestClient(http_app).get("/openapi.json", headers={"X-Trace-Id": "bad\nforged"})
+    (line,) = access()
+    assert ACCESS_LINE.match(line).group("trace") == response.headers["X-Trace-Id"]
+    assert "forged" not in line
+
+
+def test_access_line_user_only_for_a_valid_uuid(http_app, access):
+    client = TestClient(http_app)
+    client.get("/nope")
+    client.get("/nope", headers={"X-User-Id": "not-a-uuid"})
+    client.get("/nope", headers={"X-User-Id": "x\nfake status=200"})
+    client.get("/nope", headers={"X-User-Id": f"{uuid4()}\tfake"})
+    lines = access()
+    assert len(lines) == 4
+    assert all(ACCESS_LINE.match(line) and "fake" not in line for line in lines)
+    assert [ACCESS_LINE.match(line).group("user") for line in lines] == ["-"] * 4
+
+
+def test_access_line_has_no_query_string_or_authorization(http_app, access):
+    headers = {"Authorization": "Bearer sekrit-jwt", "X-User-Id": str(uuid4())}
+    TestClient(http_app).get("/openapi.json?token=s3cr3t", headers=headers)
+    (line,) = access()
+    assert ACCESS_LINE.match(line).group("path") == "/openapi.json"
+    assert "s3cr3t" not in line and "sekrit" not in line and "Bearer" not in line
+
+
+def test_healthcheck_is_not_logged(http_app, access):
+    TestClient(http_app, raise_server_exceptions=False).get("/healthcheck")  # sem banco: 500, mas sem linha
+    assert access() == []
+
+
+def test_client_errors_are_logged_once_each(http_app, access):
+    client = TestClient(http_app)
+    client.post(f"/api/v1/registrations/{uuid4()}/cancel")  # 401
+    client.get("/nope")  # 404
+    assert [ACCESS_LINE.match(line).group("status") for line in access()] == ["401", "404"]
+
+
+def test_unhandled_exception_logs_status_500_once(http_app, access):
+    @http_app.get("/__boom")
+    async def boom():
+        raise RuntimeError("secret detail")
+
+    response = TestClient(http_app, raise_server_exceptions=False).get("/__boom", headers={"X-Trace-Id": RID})
+    assert response.status_code == 500
+    (line,) = access()
+    fields = ACCESS_LINE.match(line).groupdict()
+    assert fields["status"] == "500" and fields["trace"] == RID
+    assert "secret" not in line

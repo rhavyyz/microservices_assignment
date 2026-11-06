@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
+import Fastify, { type FastifyReply, type FastifyRequest, type FastifyServerOptions } from 'fastify';
 import swagger from '@fastify/swagger';
 import type { Pool } from 'pg';
 import {
@@ -15,6 +15,7 @@ import {
   registrationsSection,
   type EventRow,
 } from './queries.ts';
+import { accessLogOptions, bindUserToLog } from './access-log.ts';
 
 const int = { type: 'integer' } as const;
 const str = { type: 'string' } as const;
@@ -133,12 +134,14 @@ const paged = (item: unknown, extra: Record<string, unknown> = {}) =>
   obj({ items: { type: 'array', items: item }, total: int, limit: int, offset: int, ...extra });
 
 /** `migrated` tells whether the first migration succeeded: /healthcheck is 503 until then. */
-export async function buildServer(pool: Pool, migrated: () => boolean = () => true) {
+export async function buildServer(pool: Pool, migrated: () => boolean = () => true, logger?: FastifyServerOptions['logger']) {
   const app = Fastify({
-    logger: true,
+    ...accessLogOptions(logger),
     requestIdHeader: false,
     genReqId: (req) => traceIdFrom(req.headers['x-trace-id']),
   });
+
+  bindUserToLog(app);
 
   await app.register(swagger, {
     openapi: {

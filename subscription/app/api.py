@@ -2,6 +2,7 @@
 
 import logging
 import re
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from uuid import UUID, uuid4
@@ -16,6 +17,7 @@ from .config import Settings
 from .contracts import DomainError
 from .db import Database
 from .integrations import Services
+from .logging_config import log_access
 from .security import Authenticator
 from .service import SubscriptionService
 from .workers import Workers
@@ -79,9 +81,16 @@ def create_app(settings=None, database=None, services=None, authenticator=None):
     async def trace_id(request: Request, call_next):
         supplied = request.headers.get("X-Trace-Id", "")
         request.state.trace_id = supplied if re.fullmatch(r"[A-Za-z0-9._-]{8,64}", supplied) else str(uuid4())
-        response = await call_next(request)
-        response.headers["X-Trace-Id"] = request.state.trace_id
-        return response
+        started = time.perf_counter()
+        status = 500  # exceção não tratada escapando
+        try:
+            response = await call_next(request)
+            status = response.status_code
+            response.headers["X-Trace-Id"] = request.state.trace_id
+            return response
+        finally:
+            if request.url.path != "/healthcheck":
+                log_access(request, status, started)
 
     def problem(request, status, code):
         return JSONResponse(

@@ -2,6 +2,7 @@
 
 import logging
 import re
+import time
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
@@ -11,6 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.database import DatabaseConfigurationError
+from app.logging_config import log_access
 from app.services.storage import CertificateStorageError
 
 log = logging.getLogger(__name__)
@@ -67,9 +69,16 @@ def install_error_handling(app: FastAPI) -> None:
     async def trace_id_middleware(request: Request, call_next):
         supplied = request.headers.get("X-Trace-Id", "")
         request.state.trace_id = supplied if re.fullmatch(r"[A-Za-z0-9._-]{8,64}", supplied) else str(uuid4())
-        response = await call_next(request)
-        response.headers["X-Trace-Id"] = request.state.trace_id
-        return response
+        started = time.perf_counter()
+        status = 500  # an unhandled exception escaping
+        try:
+            response = await call_next(request)
+            status = response.status_code
+            response.headers["X-Trace-Id"] = request.state.trace_id
+            return response
+        finally:
+            if request.url.path != "/healthcheck":
+                log_access(request, status, started)
 
     @app.exception_handler(ApiError)
     async def api_error(request: Request, exc: ApiError):
