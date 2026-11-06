@@ -5,6 +5,7 @@ export const REGISTER_ATTEMPTS = 10;
 export const REGISTER_INITIAL_DELAY = 1000; // ms
 export const REGISTER_MAX_DELAY = 30000; // ms
 export const TIMEOUT = 5000; // ms, per call
+export const DEFAULT_CACHE_TTL_SECONDS = 10;
 
 export type RequestOptions = { headers?: Record<string, string>; body?: unknown };
 
@@ -13,6 +14,10 @@ export type ClientDeps = {
   fetchFn?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
   env?: Record<string, string | undefined>;
+  // Host cache lifetime in seconds (0 = consult every time). Defaults to DISCOVERY_CACHE_TTL_SECONDS, then 10.
+  ttlSeconds?: number;
+  // Monotonic clock in ms. Defaults to performance.now.
+  now?: () => number;
 };
 
 export type Client = {
@@ -22,16 +27,29 @@ export type Client = {
 };
 
 // One cache per kind for a client. `pending` is the consult in flight, shared by concurrent callers.
-type KindCache = { host?: string; pending?: Promise<string> };
+// `expiresAt` is a `now()` time (ms) after which `host` must be refreshed.
+type KindCache = { host?: string; expiresAt: number; pending?: Promise<string> };
+
+const validTtl = (n: number) => Number.isFinite(n) && n >= 0;
 
 export function createClient(deps: ClientDeps = {}): Client {
   const doFetch = deps.fetchFn ?? fetch;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const env = () => deps.env ?? process.env;
+  const now = deps.now ?? (() => performance.now());
   const caches = new Map<Kind, KindCache>();
 
   const discovererUrl = () =>
     (env().SERVICE_DISCOVERER_URL || "http://service-discoverer:8080").replace(/\/+$/, "");
+
+  // Seconds a host stays cached: the explicit ttlSeconds, else DISCOVERY_CACHE_TTL_SECONDS
+  // (decimals accepted), else 10. Unset, empty, non-numeric, negative, NaN or infinite values give 10.
+  const ttlMs = () => {
+    if (deps.ttlSeconds !== undefined && validTtl(deps.ttlSeconds)) return deps.ttlSeconds * 1000;
+    const raw = env().DISCOVERY_CACHE_TTL_SECONDS?.trim();
+    const n = raw ? Number(raw) : NaN;
+    return (validTtl(n) ? n : DEFAULT_CACHE_TTL_SECONDS) * 1000;
+  };
 
   // Plain HTTP call. HTTP error statuses are returned; only transport errors reject.
   const send = (method: string, url: string, headers: Record<string, string>, body?: string) =>
@@ -71,22 +89,38 @@ export function createClient(deps: ClientDeps = {}): Client {
     return ((await res.json()) as { host: string }).host;
   }
 
-  // Returns the cached host, asking the discoverer if there is none or it is `stale`.
-  // Concurrent callers share one consult.
+  // Returns the cached host while its TTL lasts, asking the discoverer if there is none,
+  // it expired or it is `stale` (known unreachable). Concurrent callers share one consult.
+  // If an expired host cannot be refreshed, the old one is kept for this call and the error
+  // is swallowed. A failed refresh of a `stale` host rejects.
   function resolve(kind: Kind, stale?: string): Promise<string> {
     let cache = caches.get(kind);
-    if (!cache) caches.set(kind, (cache = {}));
+    if (!cache) caches.set(kind, (cache = { expiresAt: 0 }));
     const c = cache;
     if (c.pending) return c.pending;
-    if (c.host !== undefined && c.host !== stale) return Promise.resolve(c.host);
+    if (c.host !== undefined) {
+      if (stale !== undefined && c.host !== stale) return Promise.resolve(c.host); // already rediscovered
+      if (stale === undefined && now() < c.expiresAt) return Promise.resolve(c.host);
+    }
+    const previous = stale === undefined ? c.host : undefined;
+    const started = now();
     c.pending = consult(kind)
-      .then((host) => (c.host = host))
+      .then((host) => {
+        c.host = host;
+        c.expiresAt = started + ttlMs();
+        return host;
+      })
+      .catch((e) => {
+        if (previous !== undefined) return previous;
+        throw e;
+      })
       .finally(() => (c.pending = undefined));
     return c.pending;
   }
 
   // Calls `url` (a path like "/charge") on an instance of `kind`.
   // options: {headers, body}, both optional; body is sent as JSON.
+  // The host is cached per kind for DISCOVERY_CACHE_TTL_SECONDS (default 10, 0 = consult every time).
   // If the cached host is unreachable, the host is rediscovered and the call retried once.
   // Resolves to the platform Response (status, headers, text(), json()).
   async function request(method: string, kind: Kind, url: string, options: RequestOptions = {}): Promise<Response> {

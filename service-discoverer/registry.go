@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 )
@@ -32,11 +33,13 @@ type Config struct {
 
 // kindEntry holds the hosts of one kind behind its own mutex. hosts are in
 // rotation; recovering maps a host that failed a probe to its consecutive
-// failed rechecks.
+// failed rechecks. cursor is the round-robin position of the next consult,
+// used modulo the number of hosts.
 type kindEntry struct {
 	mu         sync.Mutex
 	hosts      map[string]struct{}
 	recovering map[string]int
+	cursor     uint64
 }
 
 // Registry keeps the hosts of every kind in memory. The kinds map is filled
@@ -75,9 +78,13 @@ func (r *Registry) Register(kind Kind, host string) error {
 	return nil
 }
 
-// Consult probes every host of the kind in parallel and returns the first one
-// that answers its health check. A host that fails all retries moves to
-// recovering, where the background recheck takes over.
+// Consult hands out healthy hosts of the kind in round-robin order. Each call
+// reserves the next slot of the kind's rotation cursor under the lock (so
+// concurrent consults start at consecutive hosts), then probes the hosts
+// sequentially in sorted order from that slot and returns the first healthy
+// one. A host that fails all retries moves to recovering, where the background
+// recheck takes over, and the probe falls through to the next host. Only as
+// many hosts as needed are probed.
 func (r *Registry) Consult(ctx context.Context, kind Kind) (string, error) {
 	e, ok := r.kinds[kind]
 	if !ok {
@@ -85,44 +92,64 @@ func (r *Registry) Consult(ctx context.Context, kind Kind) (string, error) {
 	}
 
 	e.mu.Lock()
+	hosts := e.sortedHosts()
+	if len(hosts) == 0 {
+		e.mu.Unlock()
+		return "", ErrNoInstance
+	}
+	// The cursor only ever grows or is reset to a position in a past host
+	// list, so it is always used modulo the current host count.
+	reserved := e.cursor + 1
+	start := int(e.cursor % uint64(len(hosts)))
+	e.cursor = reserved
+	e.mu.Unlock()
+
+	for i := range hosts {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		h := hosts[(start+i)%len(hosts)]
+		// Probes are not tied to ctx: a down host must still finish its
+		// retries and leave rotation.
+		if r.probe(h) {
+			if i > 0 {
+				e.continueAfter(reserved, h)
+			}
+			return h, nil
+		}
+		e.markRecovering(kind, h)
+	}
+	return "", ErrNoInstance
+}
+
+// sortedHosts returns the in-rotation hosts in a stable order. The caller
+// must hold e.mu.
+func (e *kindEntry) sortedHosts() []string {
 	hosts := make([]string, 0, len(e.hosts))
 	for h := range e.hosts {
 		hosts = append(hosts, h)
 	}
-	e.mu.Unlock()
+	sort.Strings(hosts)
+	return hosts
+}
 
-	if len(hosts) == 0 {
-		return "", ErrNoInstance
+// continueAfter runs after a consult skipped failed hosts and returned host.
+// Without it the cursor would sit one past the slot this consult started at,
+// so the next consult would probe the host just after the failed ones again
+// and the returned host's neighbour would get double load. It moves the cursor
+// to just after the returned host in the current sorted list, but only if the
+// cursor still equals reserved, the value this consult set: otherwise another
+// consult has advanced it since and its reservation must stand.
+func (e *kindEntry) continueAfter(reserved uint64, host string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.cursor != reserved {
+		return
 	}
-
-	type result struct {
-		host string
-		ok   bool
+	hosts := e.sortedHosts()
+	if i := sort.SearchStrings(hosts, host); i < len(hosts) && hosts[i] == host {
+		e.cursor = uint64(i + 1)
 	}
-	results := make(chan result, len(hosts))
-	for _, h := range hosts {
-		go func(h string) {
-			// Probes are not tied to ctx: a down host must still finish its
-			// retries and leave rotation even after another host already won.
-			healthy := r.probe(h)
-			if !healthy {
-				e.markRecovering(kind, h)
-			}
-			results <- result{h, healthy}
-		}(h)
-	}
-
-	for range hosts {
-		select {
-		case res := <-results:
-			if res.ok {
-				return res.host, nil
-			}
-		case <-ctx.Done():
-			return "", ctx.Err()
-		}
-	}
-	return "", ErrNoInstance
 }
 
 // markRecovering moves an active host to recovering. A no-op if a concurrent

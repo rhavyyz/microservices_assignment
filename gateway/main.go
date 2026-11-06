@@ -7,6 +7,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"microservices/discovery"
 )
 
 func env(key, def string) string {
@@ -52,6 +54,10 @@ func main() {
 	jwksCooldown, err := time.ParseDuration(env("JWKS_REFETCH_COOLDOWN", "30s"))
 	if err != nil || jwksCooldown < 0 {
 		log.Fatal("JWKS_REFETCH_COOLDOWN must be a non-negative Go duration, e.g. 30s")
+	}
+	// The discovery lib reads this variable for its host cache; validate it here to fail fast.
+	if _, err := discovery.ParseCacheTTL(env("DISCOVERY_CACHE_TTL_SECONDS", "10")); err != nil {
+		log.Fatal(err)
 	}
 	store, err := newMongoStore(env("MONGO_URI", "mongodb://gateway-db:27017"))
 	if err != nil {

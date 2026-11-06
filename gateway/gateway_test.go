@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -1077,5 +1078,54 @@ func TestSyncInsertsPrivate(t *testing.T) {
 	}
 	if list, _ := store.List(context.Background(), Events); len(list) != 1 || list[0].IsPublic {
 		t.Errorf("synced endpoint must be private: %+v", list)
+	}
+}
+
+// fakeClock moves the discovery lib's cache clock; advance moves it.
+func fakeClock(t *testing.T) func(time.Duration) {
+	cur := time.Unix(1000, 0)
+	t.Cleanup(discovery.SetClock(func() time.Time { return cur }))
+	return func(x time.Duration) { cur = cur.Add(x) }
+}
+
+func TestDiscoveryHostCancelled(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-release }))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+	t.Setenv("SERVICE_DISCOVERER_URL", srv.URL)
+	discovery.Reset()
+	t.Cleanup(discovery.Reset)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := NewDiscovery().Host(ctx, Payments); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
+func TestDiscoveryHostNoInstance(t *testing.T) {
+	fakeDiscoverer(t, nil)
+	if _, err := NewDiscovery().Host(context.Background(), Payments); !errors.Is(err, ErrNoInstance) {
+		t.Fatalf("err = %v, want ErrNoInstance", err)
+	}
+}
+
+func TestProxyRefreshesHostAfterTTL(t *testing.T) {
+	var hitsA, hitsB atomic.Int32
+	a := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hitsA.Add(1) }))
+	defer a.Close()
+	b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hitsB.Add(1) }))
+	defer b.Close()
+	fakeDiscoverer(t, map[string][]string{"payments": {hostOf(a), hostOf(b)}})
+	t.Setenv("DISCOVERY_CACHE_TTL_SECONDS", "5")
+	advance := fakeClock(t)
+	gw, _ := newGateway(t, newFakeStore(ep(Payments, "GET", "/x", 10)), NewDiscovery())
+	h := authHdr("u")
+	get(t, "GET", gw.URL+"/payments/x", "", h)
+	get(t, "GET", gw.URL+"/payments/x", "", h)
+	advance(6 * time.Second)
+	get(t, "GET", gw.URL+"/payments/x", "", h)
+	if hitsA.Load() != 2 || hitsB.Load() != 1 {
+		t.Errorf("hits a=%d b=%d, want 2 and 1", hitsA.Load(), hitsB.Load())
 	}
 }

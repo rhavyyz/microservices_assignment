@@ -151,7 +151,7 @@ slow consumers are closed (4001); ping every 30 s.
 **Push consumer.** Reads `NOTIFICATIONS_PUSH_TOPIC` as a broadcast (no consumer group, starts at the end of the topic),
 forwards to the connected user's socket, best-effort.
 
-**Env:** `PORT`, `MONGO_URI`, `SERVICE_DISCOVERER_URL`, `DEFAULT_MAX_PER_MIN`, `TRUSTED_PROXIES`, `KAFKA_BROKERS`,
+**Env:** `PORT`, `MONGO_URI`, `SERVICE_DISCOVERER_URL`, `DEFAULT_MAX_PER_MIN`, `DISCOVERY_CACHE_TTL_SECONDS` (10; read by the discovery lib's host cache, validated by the gateway at startup), `TRUSTED_PROXIES`, `KAFKA_BROKERS`,
 `NOTIFICATIONS_PUSH_TOPIC`, `NOTIFICATIONS_PUSH_PARTITIONS` (6). Full detail: root `README.md` (Gateway), ADR-003.
 
 ## 5. Service-discoverer (`service-discoverer/`, Go + client libs)
@@ -162,14 +162,15 @@ forwards to the connected user's socket, best-effort.
 **API.** `POST /register` with `{"kind","host"}` (204; 400 for an unknown kind). `GET /consult?kind=` returns
 `{"host":"host:port"}` of a healthy instance (503 when none, 400 for an unknown kind). `GET /healthcheck`.
 
-**Health.** `consult` probes every host of the kind in parallel against `GET /healthcheck` and returns the first healthy
-one. A host failing 5 retries leaves rotation and is rechecked every `RECHECK_INTERVAL` (5 s); it returns on its first
+**Health.** `consult` hands out hosts of the kind in round-robin order (sorted, one rotation cursor per kind): it probes
+`GET /healthcheck` sequentially from the next host and returns the first healthy one, so a down host falls through to
+the next. A host failing 5 retries leaves rotation and is rechecked every `RECHECK_INTERVAL` (5 s); it returns on its first
 success (or by re-registering) and is dropped after `RECHECK_MAX_FAILURES` (12) failed rechecks (about 1 minute).
 
 **Client libs** (`Libs/python` stdlib only, `Libs/go`, `Libs/java`): `register(kind)` (retries 10 times, 1 s doubling to
-30 s, blocks: call from a thread), `request(method, kind, path, {headers, body})` (caches the host per kind;
+30 s, blocks: call from a thread), `request(method, kind, path, {headers, body})` (caches the host per kind for `DISCOVERY_CACHE_TTL_SECONDS`, default 10, `0` = no cache, so calls follow the discoverer's round robin;
 rediscovers and retries once if the cached host is unreachable; HTTP error statuses are returned, not raised), `consult(kind)`
-(no cache). Env: `SERVICE_DISCOVERER_URL`, `SERVICE_HOST` (default `<hostname>:<PORT or 8080>`), `PORT`.
+(no cache). Env: `SERVICE_DISCOVERER_URL`, `DISCOVERY_CACHE_TTL_SECONDS`, `SERVICE_HOST` (default `<hostname>:<PORT or 8080>`), `PORT`.
 Because the registry is in memory, **re-register periodically**. Docker builds receive the Python lib through a named
 `discovery` build context (`additional_contexts` in the root compose). See `service-discoverer/Libs/README.md`.
 

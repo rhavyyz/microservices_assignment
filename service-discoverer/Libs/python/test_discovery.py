@@ -48,8 +48,10 @@ def discoverer(monkeypatch):
 
     srv, host = serve(H)
     monkeypatch.setenv("SERVICE_DISCOVERER_URL", "http://" + host)
+    monkeypatch.delenv("DISCOVERY_CACHE_TTL_SECONDS", raising=False)
     for c in client._caches.values():
         c.host = None
+        c.expires_at = 0.0
     return state
 
 
@@ -137,3 +139,119 @@ def test_consult_does_not_cache(discoverer):
     assert discovery.consult(discovery.Kind.USER) == "a:1"
     assert discovery.consult(discovery.Kind.USER) == "b:2"
     assert discoverer["consults"] == 2
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    t = [1000.0]
+    monkeypatch.setattr(client, "_now", lambda: t[0])
+    return t
+
+
+def call(kind):
+    return discovery.request("POST", kind, "/x", {"body": {}})
+
+
+def test_cache_expires_and_moves_to_next_host(discoverer, clock):
+    s1, h1 = serve(Target)
+    s2, h2 = serve(Target)
+    discoverer["hosts"] = [h1, h2]
+    call(discovery.Kind.USER)
+    clock[0] += 9.9
+    call(discovery.Kind.USER)
+    assert discoverer["consults"] == 1
+    assert client._caches[discovery.Kind.USER].host == h1
+    clock[0] += 0.2
+    call(discovery.Kind.USER)
+    assert discoverer["consults"] == 2
+    assert client._caches[discovery.Kind.USER].host == h2
+
+
+def test_ttl_from_env_decimal(discoverer, clock, monkeypatch):
+    monkeypatch.setenv("DISCOVERY_CACHE_TTL_SECONDS", "0.5")
+    _, h = serve(Target)
+    discoverer["hosts"] = [h, h]
+    call(discovery.Kind.USER)
+    clock[0] += 0.4
+    call(discovery.Kind.USER)
+    assert discoverer["consults"] == 1
+    clock[0] += 0.2
+    call(discovery.Kind.USER)
+    assert discoverer["consults"] == 2
+
+
+def test_ttl_zero_consults_every_time(discoverer, clock, monkeypatch):
+    monkeypatch.setenv("DISCOVERY_CACHE_TTL_SECONDS", "0")
+    _, h = serve(Target)
+    discoverer["hosts"] = [h, h, h]
+    for _ in range(3):
+        call(discovery.Kind.USER)
+    assert discoverer["consults"] == 3
+
+
+@pytest.mark.parametrize("value", ["", "abc", "-1", "nan", "inf", "-inf"])
+def test_invalid_ttl_falls_back_to_default(value, monkeypatch):
+    monkeypatch.setenv("DISCOVERY_CACHE_TTL_SECONDS", value)
+    assert client._cache_ttl() == 10.0
+
+
+def test_ttl_default_and_values(monkeypatch):
+    monkeypatch.delenv("DISCOVERY_CACHE_TTL_SECONDS", raising=False)
+    assert client._cache_ttl() == 10.0
+    monkeypatch.setenv("DISCOVERY_CACHE_TTL_SECONDS", "2.5")
+    assert client._cache_ttl() == 2.5
+    monkeypatch.setenv("DISCOVERY_CACHE_TTL_SECONDS", "0")
+    assert client._cache_ttl() == 0.0
+
+
+def test_invalid_ttl_used_in_request(discoverer, clock, monkeypatch):
+    monkeypatch.setenv("DISCOVERY_CACHE_TTL_SECONDS", "junk")
+    _, h = serve(Target)
+    discoverer["hosts"] = [h, h]
+    call(discovery.Kind.USER)
+    clock[0] += 9
+    call(discovery.Kind.USER)
+    assert discoverer["consults"] == 1
+    clock[0] += 2
+    call(discovery.Kind.USER)
+    assert discoverer["consults"] == 2
+
+
+def test_stale_host_reused_when_refresh_fails(discoverer, clock):
+    _, h = serve(Target)
+    discoverer["hosts"] = [h]  # the next consult pops from an empty list: the handler fails
+    call(discovery.Kind.USER)
+    clock[0] += 11
+    r = call(discovery.Kind.USER)  # refresh fails, old host kept
+    assert r.status == 200
+    assert discoverer["consults"] == 2
+    discoverer["hosts"] = [h]
+    clock[0] += 0.1
+    call(discovery.Kind.USER)  # still expired, so it tries again
+    assert discoverer["consults"] == 3
+
+
+def test_expired_refresh_failure_with_nothing_cached_raises(discoverer):
+    with pytest.raises(Exception):
+        call(discovery.Kind.USER)
+
+
+def test_rediscovery_resets_ttl_and_failure_raises(discoverer, clock):
+    dead, dead_host = serve(Target)
+    dead.shutdown()
+    dead.server_close()
+    _, good = serve(Target)
+    discoverer["hosts"] = [good, "unused"]
+    call(discovery.Kind.USER)
+    good_srv_cache = client._caches[discovery.Kind.USER]
+    good_srv_cache.host = dead_host  # cached host died
+    clock[0] += 5
+    discoverer["hosts"] = [good]
+    call(discovery.Kind.USER)
+    assert client._caches[discovery.Kind.USER].host == good
+    assert client._caches[discovery.Kind.USER].expires_at == 1005.0 + 10
+    # dead host and the rediscovery consult fails: raise, no fallback to the dead host
+    good_srv_cache.host = dead_host
+    discoverer["hosts"] = []
+    with pytest.raises(Exception):
+        call(discovery.Kind.USER)

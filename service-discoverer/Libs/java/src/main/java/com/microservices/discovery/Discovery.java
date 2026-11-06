@@ -12,17 +12,21 @@ import java.time.Duration;
 import java.util.EnumMap;
 import java.util.Map;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
  * Registers this instance with the service-discoverer and calls other services
- * by kind, caching the discovered host per kind.
+ * by kind, caching the discovered host per kind for a short TTL
+ * (env DISCOVERY_CACHE_TTL_SECONDS, default 10, 0 = consult every time).
  */
 public final class Discovery {
     private static final int REGISTER_ATTEMPTS = 10;
     private static final long REGISTER_INITIAL_DELAY_MS = 1000;
     private static final long REGISTER_MAX_DELAY_MS = 30_000;
+    private static final double DEFAULT_CACHE_TTL_SECONDS = 10;
     private static final Pattern HOST = Pattern.compile("\"host\"\\s*:\\s*\"([^\"]+)\"");
 
     private static final HttpClient CLIENT = HttpClient.newBuilder()
@@ -38,6 +42,7 @@ public final class Discovery {
     private static final class KindCache {
         final ReentrantLock lock = new ReentrantLock();
         String host;
+        long expiresAt; // nanoTime-style monotonic reading after which host must be refreshed
     }
 
     /** Sleeps between register attempts; package-private so tests can replace it. */
@@ -45,12 +50,35 @@ public final class Discovery {
 
     static Sleeper sleeper = Thread::sleep;
 
+    /** Monotonic clock in nanoseconds for the cache TTL; package-private so tests can replace it. */
+    static LongSupplier clock = System::nanoTime;
+
+    /** Raw DISCOVERY_CACHE_TTL_SECONDS value; package-private so tests can replace it. */
+    static Supplier<String> ttlSetting = () -> System.getenv("DISCOVERY_CACHE_TTL_SECONDS");
+
     private Discovery() {}
 
     private static String discovererUrl() {
         String u = System.getenv("SERVICE_DISCOVERER_URL");
         if (u == null || u.isEmpty()) u = "http://service-discoverer:8080";
         return u.endsWith("/") ? u.substring(0, u.length() - 1) : u;
+    }
+
+    /** Parses a TTL in seconds (decimals accepted, 0 = no caching); anything invalid gives 10. */
+    static double parseTtlSeconds(String raw) {
+        if (raw == null || raw.isBlank()) return DEFAULT_CACHE_TTL_SECONDS;
+        try {
+            double t = Double.parseDouble(raw.trim());
+            if (Double.isNaN(t) || Double.isInfinite(t) || t < 0) return DEFAULT_CACHE_TTL_SECONDS;
+            return t;
+        } catch (NumberFormatException e) {
+            return DEFAULT_CACHE_TTL_SECONDS;
+        }
+    }
+
+    private static long ttlNanos() {
+        double nanos = parseTtlSeconds(ttlSetting.get()) * 1e9;
+        return (long) Math.min(nanos, Long.MAX_VALUE / 4); // keep the deadline from overflowing
     }
 
     /**
@@ -104,14 +132,28 @@ public final class Discovery {
         return m.group(1);
     }
 
-    /** Returns the cached host, calling {@link #consult} if there is none or it is {@code stale}. */
+    /**
+     * Returns the cached host while its TTL lasts, calling {@link #consult} if there is none,
+     * it expired or it is {@code stale} (known unreachable). If an expired host cannot be
+     * refreshed, the old one is kept for this call and the error is swallowed. A failed
+     * refresh of a {@code stale} host throws.
+     */
     private static String resolve(Kind kind, String stale) throws IOException, InterruptedException {
         KindCache c = CACHES.get(kind);
         c.lock.lock();
         try {
-            if (c.host == null || c.host.equals(stale)) {
-                c.host = consult(kind);
+            if (c.host != null) {
+                if (stale != null && !c.host.equals(stale)) return c.host; // already rediscovered
+                if (stale == null && clock.getAsLong() - c.expiresAt < 0) return c.host;
             }
+            long started = clock.getAsLong();
+            try {
+                c.host = consult(kind);
+            } catch (IOException e) {
+                if (c.host != null && stale == null) return c.host;
+                throw e;
+            }
+            c.expiresAt = started + ttlNanos();
             return c.host;
         } finally {
             c.lock.unlock();
@@ -120,8 +162,9 @@ public final class Discovery {
 
     /**
      * Calls {@code url} (a path like "/charge") on an instance of {@code kind}.
-     * If the cached host is unreachable, the host is rediscovered and the call
-     * retried once. HTTP error statuses are returned, not thrown.
+     * The host is cached per kind for DISCOVERY_CACHE_TTL_SECONDS (default 10, 0 =
+     * consult every time). If the cached host is unreachable, the host is
+     * rediscovered and the call retried once. HTTP error statuses are returned, not thrown.
      */
     public static HttpResponse<String> request(String method, Kind kind, String url, RequestOptions options)
             throws IOException, InterruptedException {

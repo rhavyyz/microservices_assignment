@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -21,6 +22,7 @@ public class DiscoveryTest {
     static final AtomicReference<String> registered = new AtomicReference<>();
     static final AtomicReference<String> nextHost = new AtomicReference<>();
     static final AtomicInteger consults = new AtomicInteger();
+    static final AtomicInteger consultStatus = new AtomicInteger(200);
     static final AtomicInteger registerCalls = new AtomicInteger();
     static final AtomicInteger registerFailures = new AtomicInteger();
 
@@ -63,6 +65,7 @@ public class DiscoveryTest {
                 reply(ex, 204, "");
             } else {
                 consults.incrementAndGet();
+                if (consultStatus.get() != 200) { reply(ex, consultStatus.get(), "down"); return; }
                 reply(ex, 200, "{\"host\":\"" + nextHost.get() + "\"}");
             }
         });
@@ -121,6 +124,103 @@ public class DiscoveryTest {
         nextHost.set("b:2");
         check(Discovery.consult(Kind.REPORTS).equals("b:2"), "consult b");
         check(consults.get() == 4, "consults after consult(): " + consults.get());
+
+        // host cache TTL, with a fake clock (nanoseconds) and the ttl setting replaced
+        AtomicLong now = new AtomicLong(1_000_000_000L);
+        AtomicReference<String> ttl = new AtomicReference<>(null);
+        Discovery.clock = now::get;
+        Discovery.ttlSetting = ttl::get;
+        long sec = 1_000_000_000L;
+        HttpServer h1 = serve(0, ex -> reply(ex, 200, "h1"));
+        HttpServer h2 = serve(0, ex -> reply(ex, 200, "h2"));
+
+        // default 10s: reused within the TTL, a new consult after it moves to the next host
+        int base = consults.get();
+        nextHost.set(host(h1));
+        check(Discovery.request("GET", Kind.CERTIFICATES, "/x", null).body().equals("h1"), "ttl first");
+        now.addAndGet(9 * sec + sec / 2);
+        check(Discovery.request("GET", Kind.CERTIFICATES, "/x", null).body().equals("h1"), "ttl within");
+        check(consults.get() == base + 1, "consults within ttl: " + (consults.get() - base));
+        nextHost.set(host(h2));
+        now.addAndGet(sec);
+        check(Discovery.request("GET", Kind.CERTIFICATES, "/x", null).body().equals("h2"), "ttl after expiry");
+        check(consults.get() == base + 2, "consults after ttl: " + (consults.get() - base));
+
+        // decimal ttl from the setting
+        ttl.set("0.5");
+        base = consults.get();
+        nextHost.set(host(h1));
+        now.addAndGet(sec); // expire the h2 entry
+        Discovery.request("GET", Kind.EVENTS, "/x", null);
+        now.addAndGet(sec * 4 / 10);
+        Discovery.request("GET", Kind.EVENTS, "/x", null);
+        check(consults.get() == base + 1, "consults within 0.5s: " + (consults.get() - base));
+        now.addAndGet(sec / 5);
+        Discovery.request("GET", Kind.EVENTS, "/x", null);
+        check(consults.get() == base + 2, "consults after 0.5s: " + (consults.get() - base));
+
+        // ttl 0: consult before every request
+        ttl.set("0");
+        base = consults.get();
+        for (int i = 0; i < 3; i++) Discovery.request("GET", Kind.NOTIFICATIONS, "/x", null);
+        check(consults.get() == base + 3, "consults with ttl 0: " + (consults.get() - base));
+
+        // invalid settings give the default 10s
+        for (String bad : new String[] {null, "", "abc", "-1", "NaN", "Infinity", "-Infinity"}) {
+            check(Discovery.parseTtlSeconds(bad) == 10.0, "invalid ttl " + bad);
+        }
+        check(Discovery.parseTtlSeconds("2.5") == 2.5 && Discovery.parseTtlSeconds("0") == 0.0, "valid ttl");
+        ttl.set("junk");
+        base = consults.get();
+        Discovery.request("GET", Kind.SUBSCRIPTION, "/x", null);
+        now.addAndGet(9 * sec);
+        Discovery.request("GET", Kind.SUBSCRIPTION, "/x", null);
+        check(consults.get() == base + 1, "invalid ttl within 10s: " + (consults.get() - base));
+        now.addAndGet(2 * sec);
+        Discovery.request("GET", Kind.SUBSCRIPTION, "/x", null);
+        check(consults.get() == base + 2, "invalid ttl after 10s: " + (consults.get() - base));
+
+        // stale host reused when the refresh fails; nothing cached still throws
+        ttl.set(null);
+        consultStatus.set(503);
+        try {
+            Discovery.request("GET", Kind.PAYMENTS, "/x", null);
+            check(false, "nothing cached should throw");
+        } catch (IOException e) {
+            check(e.getMessage().contains("consult payments failed: 503"), "message: " + e.getMessage());
+        }
+        consultStatus.set(200);
+        nextHost.set(host(h1));
+        Discovery.request("GET", Kind.PAYMENTS, "/x", null);
+        now.addAndGet(11 * sec);
+        consultStatus.set(503);
+        base = consults.get();
+        check(Discovery.request("GET", Kind.PAYMENTS, "/x", null).body().equals("h1"), "stale host reused");
+        check(consults.get() == base + 1, "refresh attempted: " + (consults.get() - base));
+        Discovery.request("GET", Kind.PAYMENTS, "/x", null);
+        check(consults.get() == base + 2, "refresh retried while expired: " + (consults.get() - base));
+
+        // rediscovery after failure still works, resets the TTL, and a failing rediscovery throws
+        consultStatus.set(200);
+        HttpServer dying = serve(0, ex -> reply(ex, 200, "dying"));
+        nextHost.set(host(dying));
+        Discovery.request("GET", Kind.REPORTS, "/x", null);
+        dying.stop(0);
+        nextHost.set(host(h2));
+        base = consults.get();
+        check(Discovery.request("GET", Kind.REPORTS, "/x", null).body().equals("h2"), "rediscovered");
+        check(consults.get() == base + 1, "rediscovery consult: " + (consults.get() - base));
+        now.addAndGet(9 * sec);
+        Discovery.request("GET", Kind.REPORTS, "/x", null);
+        check(consults.get() == base + 1, "ttl reset by rediscovery");
+        h2.stop(0);
+        consultStatus.set(503);
+        try {
+            Discovery.request("GET", Kind.REPORTS, "/x", null);
+            check(false, "failing rediscovery should throw");
+        } catch (IOException e) {
+            check(e.getMessage().contains("consult reports failed: 503"), "message: " + e.getMessage());
+        }
 
         System.out.println("OK");
         System.exit(0);

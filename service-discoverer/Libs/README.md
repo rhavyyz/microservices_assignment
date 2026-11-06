@@ -1,6 +1,6 @@
 # Integrating with the service-discoverer
 
-Every instance registers itself at startup. To call another service, ask the discoverer for a healthy instance of its **kind** instead of hardcoding a host. The libs in this folder do both and cache the host per kind, so the discoverer is only consulted on the first call or when the cached instance is unreachable.
+Every instance registers itself at startup. To call another service, ask the discoverer for a healthy instance of its **kind** instead of hardcoding a host. The libs in this folder do both and cache the host per kind for a short TTL (10s by default), so the discoverer is consulted on the first call, once the TTL expires, or when the cached instance is unreachable. See [Host cache](#host-cache).
 
 **Kinds:** `certificates`, `events`, `subscription`, `payments`, `user`, `notifications`, `reports` (gateway and service-discoverer are not kinds).
 
@@ -15,11 +15,15 @@ Every instance registers itself at startup. To call another service, ask the dis
 | `SERVICE_DISCOVERER_URL` | `http://service-discoverer:8080` | Where the discoverer is |
 | `SERVICE_HOST` | `<container hostname>:<PORT>` | Host other services use to reach this instance |
 | `PORT` | `8080` | Port used when building the default `SERVICE_HOST` |
+| `DISCOVERY_CACHE_TTL_SECONDS` | `10` | Seconds a discovered host is reused before the discoverer is consulted again. Decimals accepted; `0` disables caching (consult before every request). Unset, empty, non-numeric, negative, NaN or infinite values fall back to `10`. Read on each use, like `SERVICE_DISCOVERER_URL` |
 
 Discoverer env (all optional): `RECHECK_INTERVAL` (`5s`), `RECHECK_MAX_FAILURES` (`12`, so ~1 minute of grace by default).
 
 ## Usage
-Both functions: `register(kind)` once at startup with the service's own kind (it retries up to 10 times with exponential backoff, 1s doubling up to a 30s cap, about 2.5 minutes in all, then returns/raises an error; it blocks while retrying, so a service that must not wait should call it from a goroutine/thread; in TypeScript it is async, so do not `await` it before listening), and `request(method, kind, url, {headers, body})` to call another service. `url` is a path like `/charge`; `body` is sent as JSON. `consult(kind)` is also exposed on its own: it asks the discoverer for a host every time, with no caching (`request` uses it internally). HTTP error statuses (4xx/5xx) are returned, not raised. Only an unreachable host triggers one rediscovery and retry.
+Both functions: `register(kind)` once at startup with the service's own kind (it retries up to 10 times with exponential backoff, 1s doubling up to a 30s cap, about 2.5 minutes in all, then returns/raises an error; it blocks while retrying, so a service that must not wait should call it from a goroutine/thread; in TypeScript it is async, so do not `await` it before listening), and `request(method, kind, url, {headers, body})` to call another service. `url` is a path like `/charge`; `body` is sent as JSON. `consult(kind)` is also exposed on its own: it asks the discoverer for a host every time, with no caching. HTTP error statuses (4xx/5xx) are returned, not raised. Only an unreachable host triggers one rediscovery and retry.
+
+### Host cache
+The discoverer's `/consult` rotates through the healthy instances (round robin), so the libs re-consult regularly to spread load. A host is cached per kind for `DISCOVERY_CACHE_TTL_SECONDS` (default 10), measured from when it was consulted with a monotonic clock; after that the next `request` consults the discoverer again and moves to the next instance. Concurrent callers share a single in-flight consult. If the cached host is unreachable, the lib rediscovers and retries once, and that consult also restarts the TTL; if that consult fails the error is raised (the known-dead host is not used again). If refreshing an expired entry fails (discoverer unreachable) but a host was cached earlier, the lib keeps using that stale host for the call and swallows the error silently, trying again on the next call; with nothing cached the error is raised. Registration is not affected.
 
 ### Python (`service-discoverer/Libs/python`, stdlib only; `pip install ./service-discoverer/Libs/python`)
 ```python
@@ -38,6 +42,10 @@ discovery.Register(discovery.User)
 resp, err := discovery.Request("POST", discovery.Payments, "/charge",
     discovery.Options{Headers: map[string]string{"X-Id": "1"}, Body: map[string]any{"amount": 10}})
 // caller closes resp.Body
+
+// The cached host itself, for callers that cannot go through Request (e.g. a reverse proxy):
+host, err := discovery.Host(discovery.Payments)
+discovery.Forget(discovery.Payments, host) // drop it if unreachable and still the cached one
 ```
 
 ### Java (`service-discoverer/Libs/java`, Java 17+, no dependencies)
@@ -58,7 +66,7 @@ register(Kind.USER).catch((e) => console.error(e));
 const res = await request("POST", Kind.PAYMENTS, "/charge", { headers: { "X-Id": "1" }, body: { amount: 10 } });
 console.log(res.status, await res.json());
 ```
-`request` resolves to the platform `fetch` `Response` (`status`, `headers`, `text()`, `json()`). `createClient({ fetchFn, sleep, env })` builds an isolated client (own host cache), which is what the tests use. The package ships its `.ts` sources (an `exports` map points at `src/index.ts`), so there is no build step for the lib itself.
+`request` resolves to the platform `fetch` `Response` (`status`, `headers`, `text()`, `json()`). `createClient({ fetchFn, sleep, env, ttlSeconds, now })` builds an isolated client (own host cache), which is what the tests use. `ttlSeconds` overrides `DISCOVERY_CACHE_TTL_SECONDS` (an invalid value falls back to the env var, then 10) and `now` is an injectable monotonic clock in milliseconds (default `performance.now`), so tests can use a fake clock. The package ships its `.ts` sources (an `exports` map points at `src/index.ts`), so there is no build step for the lib itself.
 
 ### Using the Go lib in a service's Docker build
 A service's build context (e.g. `./notifications`) cannot see `service-discoverer/Libs/go`, so pass the lib as a named additional context and mirror the repo layout in the image (`/src` is the service folder, so `../service-discoverer/Libs/go` resolves the same on the host and in the image):

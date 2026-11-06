@@ -1,4 +1,5 @@
 import json as _json
+import math
 import os
 import socket
 import threading
@@ -14,12 +15,25 @@ REGISTER_ATTEMPTS = 10
 REGISTER_INITIAL_DELAY = 1.0
 REGISTER_MAX_DELAY = 30.0
 TIMEOUT = 5.0
+DEFAULT_CACHE_TTL = 10.0  # seconds
 
 _sleep = time.sleep  # replaced in tests
+_now = time.monotonic  # replaced in tests
 
 
 def _discoverer_url() -> str:
     return os.environ.get("SERVICE_DISCOVERER_URL", "http://service-discoverer:8080").rstrip("/")
+
+
+def _cache_ttl() -> float:
+    """DISCOVERY_CACHE_TTL_SECONDS (decimals accepted, 0 = no caching); anything invalid gives 10."""
+    try:
+        ttl = float(os.environ.get("DISCOVERY_CACHE_TTL_SECONDS", ""))
+    except ValueError:
+        return DEFAULT_CACHE_TTL
+    if math.isnan(ttl) or math.isinf(ttl) or ttl < 0:
+        return DEFAULT_CACHE_TTL
+    return ttl
 
 
 @dataclass
@@ -75,6 +89,7 @@ class _KindCache:
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.host: Optional[str] = None
+        self.expires_at = 0.0  # monotonic time after which `host` must be refreshed
 
 
 # One cache per kind for this process. The kinds are fixed, so the dict never changes.
@@ -91,19 +106,37 @@ def consult(kind: Kind) -> str:
 
 
 def _resolve(kind: Kind, stale: Optional[str] = None) -> str:
-    """Returns the cached host, asking the discoverer if there is none or it is `stale`."""
+    """Returns the cached host while its TTL lasts, asking the discoverer if there is none,
+    it expired or it is `stale` (known unreachable).
+
+    If an expired host cannot be refreshed, the old one is kept for this call and the error
+    is swallowed. A failed refresh of a `stale` host raises.
+    """
     cache = _caches[kind]
     with cache.lock:
-        if cache.host is None or cache.host == stale:
-            cache.host = consult(kind)
-        return cache.host
+        if cache.host is not None:
+            if stale is not None and cache.host != stale:
+                return cache.host  # someone already rediscovered
+            if stale is None and _now() < cache.expires_at:
+                return cache.host
+        started = _now()
+        try:
+            host = consult(kind)
+        except Exception:
+            if cache.host is not None and stale is None:
+                return cache.host
+            raise
+        cache.host = host
+        cache.expires_at = started + _cache_ttl()
+        return host
 
 
 def request(method: str, kind: Kind, url: str, options: Optional[Dict[str, Any]] = None) -> Response:
     """Calls `url` (a path like "/charge") on an instance of `kind`.
 
     options: {"headers": {...}, "body": <json-serializable>}, both optional.
-    If the cached host is unreachable, the host is rediscovered and the call retried once.
+    The host is cached per kind for DISCOVERY_CACHE_TTL_SECONDS (default 10, 0 = consult
+    every time). If the cached host is unreachable, the host is rediscovered and the call retried once.
     """
     kind = Kind(kind)
     options = options or {}
