@@ -29,6 +29,7 @@ class Event:
     title: str
     starts_at: datetime
     ends_at: datetime
+    status: str  # DRAFT, PUBLISHED or CANCELLED (Events' lifecycle)
 
 
 def _get_json(kind: Kind, path: str, trace_id: str, *, missing_reason: str | None) -> dict | None:
@@ -70,11 +71,15 @@ class Directory:
             title = body["title"]
             if not isinstance(title, str) or not title.strip():
                 raise ValueError("invalid title")
+            status = body["status"]
+            if not isinstance(status, str) or not status.strip():
+                raise ValueError("invalid status")
             return Event(
                 id=uuid.UUID(str(body["event_id"])),
                 title=title,
                 starts_at=_aware(body["starts_at"]),
                 ends_at=_aware(body["ends_at"]),
+                status=status,
             )
         except (KeyError, ValueError):
             raise TransientError("events answered an invalid event") from None

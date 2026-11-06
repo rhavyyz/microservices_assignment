@@ -8,6 +8,7 @@ from sqlalchemy import pool
 from app.config import settings
 from app.database import Base
 from app.models.certificate import Certificate  # noqa: F401
+from app.models.pending_attendance import PendingAttendance  # noqa: F401
 
 config = context.config
 

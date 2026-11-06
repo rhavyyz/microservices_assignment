@@ -11,6 +11,7 @@ from uuid import uuid4
 from psycopg.types.json import Jsonb
 
 from .contracts import DomainError
+from .serialization import json_default
 
 ACTIVE = ("WAITLISTED", "OFFERED", "PENDING_PAYMENT", "CONFIRMED")
 HELD = ("OFFERED", "PENDING_PAYMENT")
@@ -18,7 +19,7 @@ HELD = ("OFFERED", "PENDING_PAYMENT")
 
 def serializable(value):
     """Converte UUIDs e datas para o contrato JSON."""
-    return json.loads(json.dumps(value, default=str))
+    return json.loads(json.dumps(value, default=json_default))
 
 
 class SubscriptionService:

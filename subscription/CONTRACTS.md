@@ -176,7 +176,8 @@ API após encerramento/cancelamento. Encerramento antecipado à data final não 
 
 Envelope: `message_id`, `schema_version=1`, `type`, `registration_id`, `activity_id`, `user_id`,
 `aggregate_version`, `occurred_at`, `status`, `trace_id` (opcional/nulo em trabalho de fundo; Pagamentos
-devolve o mesmo valor nos resultados; ausente das mensagens de Notificações). Tipos:
+devolve o mesmo valor nos resultados; ausente das mensagens de Notificações). `occurred_at` (e qualquer
+data/hora nos payloads) é ISO 8601 com offset, por exemplo `2026-11-04T12:00:00.123456+00:00`. Tipos:
 
 - `RegistrationWaitlisted`, `WaitlistOffered`;
 - `RegistrationPendingPayment` (a inscrição entrou em `PENDING_PAYMENT`: inscrição paga com vaga ou

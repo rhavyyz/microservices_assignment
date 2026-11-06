@@ -8,6 +8,7 @@ from confluent_kafka import Consumer, Producer
 from pydantic import ValidationError
 
 from .contracts import ActivityEvent, DomainError, EventsEnvelope, PaymentEvent
+from .serialization import json_default
 from .topics import ensure_topics
 
 log = logging.getLogger(__name__)
@@ -73,7 +74,7 @@ class Workers:
         producer.produce(
             topic,
             key=key,
-            value=json.dumps(payload, default=str).encode(),
+            value=json.dumps(payload, default=json_default).encode(),
             on_delivery=lambda error, message: result.append(error),
         )
         pending = producer.flush(6)
