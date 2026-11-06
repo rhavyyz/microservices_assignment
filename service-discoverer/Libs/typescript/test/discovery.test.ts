@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { hostname } from "node:os";
 import { test } from "node:test";
-import { Kind, consult, createClient, register, request } from "../src/index.ts";
+import { Kind, consult, createClient, register, request, selfHost } from "../src/index.ts";
 
 type Call = { url: string; method: string; headers: Record<string, string>; body?: string };
 type Handler = (call: Call) => Response | Promise<Response>;
@@ -406,5 +406,24 @@ test("integration: register, consult, request and rediscovery after the service 
     assert.deepEqual(await again.json(), { name: "second", body: { amount: 11 } });
   } finally {
     await Promise.all([discoverer, first, second].map((s) => s?.listening ? close(s) : undefined));
+  }
+});
+
+test("selfHost: SERVICE_HOST wins, else <hostname>:<PORT or 8080>", () => {
+  assert.equal(selfHost({ SERVICE_HOST: "events-1:9000", PORT: "1234" }), "events-1:9000");
+  assert.equal(selfHost({}), `${hostname()}:8080`);
+  assert.equal(selfHost({ SERVICE_HOST: "" }), `${hostname()}:8080`);
+  assert.equal(selfHost({ PORT: "3000" }), `${hostname()}:3000`);
+  assert.equal(selfHost({ PORT: "" }), `${hostname()}:8080`);
+});
+
+test("selfHost reads process.env by default", () => {
+  const old = process.env.SERVICE_HOST;
+  process.env.SERVICE_HOST = "from-env:1";
+  try {
+    assert.equal(selfHost(), "from-env:1");
+  } finally {
+    if (old === undefined) delete process.env.SERVICE_HOST;
+    else process.env.SERVICE_HOST = old;
   }
 });

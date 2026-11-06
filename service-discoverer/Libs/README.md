@@ -34,6 +34,8 @@ res = request("POST", Kind.PAYMENTS, "/charge", {"headers": {"X-Id": "1"}, "body
 print(res.status, res.json())
 ```
 
+`discovery.self_host()` returns this instance's own host exactly as `register` sends it (`SERVICE_HOST`, else `<hostname>:<PORT or 8080>`), e.g. to tag log lines with the instance.
+
 ### Go (`service-discoverer/Libs/go`, module `microservices/discovery`)
 ```go
 import "microservices/discovery"
@@ -46,6 +48,9 @@ resp, err := discovery.Request("POST", discovery.Payments, "/charge",
 // The cached host itself, for callers that cannot go through Request (e.g. a reverse proxy):
 host, err := discovery.Host(discovery.Payments)
 discovery.Forget(discovery.Payments, host) // drop it if unreachable and still the cached one
+
+// This instance's own host as registered (SERVICE_HOST, else "<hostname>:<PORT or 8080>"), usable as an instance id in logs:
+id := discovery.SelfHost()
 ```
 
 ### Java (`service-discoverer/Libs/java`, Java 17+, no dependencies)
@@ -53,6 +58,7 @@ discovery.Forget(discovery.Payments, host) // drop it if unreachable and still t
 import com.microservices.discovery.*;
 
 Discovery.register(Kind.USER);
+String me = Discovery.selfHost(); // the host register() sends: SERVICE_HOST, else "<hostname>:<PORT or 8080>"
 HttpResponse<String> res = Discovery.request("POST", Kind.PAYMENTS, "/charge",
     RequestOptions.of(Map.of("X-Id", "1"), Map.of("amount", 10)));
 ```
@@ -66,7 +72,7 @@ register(Kind.USER).catch((e) => console.error(e));
 const res = await request("POST", Kind.PAYMENTS, "/charge", { headers: { "X-Id": "1" }, body: { amount: 10 } });
 console.log(res.status, await res.json());
 ```
-`request` resolves to the platform `fetch` `Response` (`status`, `headers`, `text()`, `json()`). `createClient({ fetchFn, sleep, env, ttlSeconds, now })` builds an isolated client (own host cache), which is what the tests use. `ttlSeconds` overrides `DISCOVERY_CACHE_TTL_SECONDS` (an invalid value falls back to the env var, then 10) and `now` is an injectable monotonic clock in milliseconds (default `performance.now`), so tests can use a fake clock. The package ships its `.ts` sources (an `exports` map points at `src/index.ts`), so there is no build step for the lib itself.
+`request` resolves to the platform `fetch` `Response` (`status`, `headers`, `text()`, `json()`). `createClient({ fetchFn, sleep, env, ttlSeconds, now })` builds an isolated client (own host cache), which is what the tests use. `ttlSeconds` overrides `DISCOVERY_CACHE_TTL_SECONDS` (an invalid value falls back to the env var, then 10) and `now` is an injectable monotonic clock in milliseconds (default `performance.now`), so tests can use a fake clock. The package ships its `.ts` sources (an `exports` map points at `src/index.ts`), so there is no build step for the lib itself. `selfHost(env?)` returns this instance's host (`SERVICE_HOST`, else `<hostname>:<PORT or 8080>`), the same string `register` sends, so services can use it as the instance id in their logs.
 
 ### Using the Go lib in a service's Docker build
 A service's build context (e.g. `./notifications`) cannot see `service-discoverer/Libs/go`, so pass the lib as a named additional context and mirror the repo layout in the image (`/src` is the service folder, so `../service-discoverer/Libs/go` resolves the same on the host and in the image):

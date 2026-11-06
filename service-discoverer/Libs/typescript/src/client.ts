@@ -7,6 +7,12 @@ export const REGISTER_MAX_DELAY = 30000; // ms
 export const TIMEOUT = 5000; // ms, per call
 export const DEFAULT_CACHE_TTL_SECONDS = 10;
 
+// This instance's identity: the host it registers in the discoverer. SERVICE_HOST, else
+// "<container hostname>:<PORT or 8080>". The single place with this rule; also usable as a log instance id.
+export function selfHost(env: Record<string, string | undefined> = process.env): string {
+  return env.SERVICE_HOST || `${hostname()}:${env.PORT || "8080"}`;
+}
+
 export type RequestOptions = { headers?: Record<string, string>; body?: unknown };
 
 // Everything a test may replace. The defaults are the real fetch, setTimeout and process.env.
@@ -61,7 +67,7 @@ export function createClient(deps: ClientDeps = {}): Client {
   // in all). It is async, so it does not block the event loop, but do not await it before
   // listening: call `register(kind).catch(...)` and keep starting the service.
   async function register(kind: Kind): Promise<void> {
-    const host = env().SERVICE_HOST || `${hostname()}:${env().PORT || "8080"}`;
+    const host = selfHost(env());
     const payload = JSON.stringify({ kind, host });
     let last: unknown;
     let delay = REGISTER_INITIAL_DELAY;

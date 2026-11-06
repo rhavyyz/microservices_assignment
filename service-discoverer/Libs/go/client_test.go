@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -442,5 +443,42 @@ func TestForgetOnlyDropsSameHost(t *testing.T) {
 	Forget(Payments, "a:1")     // Host consults again
 	if h, _ := Host(Payments); h != "b:2" || *consults != 2 {
 		t.Fatalf("got %q after %d consults", h, *consults)
+	}
+}
+
+func TestSelfHost(t *testing.T) {
+	name, err := os.Hostname()
+	if err != nil {
+		t.Skip(err)
+	}
+	for _, tc := range []struct{ name, serviceHost, port, want string }{
+		{"SERVICE_HOST wins", "svc-1:9000", "7000", "svc-1:9000"},
+		{"default port", "", "", name + ":8080"},
+		{"PORT set", "", "7000", name + ":7000"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("SERVICE_HOST", tc.serviceHost)
+			t.Setenv("PORT", tc.port)
+			if got := SelfHost(); got != tc.want {
+				t.Errorf("SelfHost() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRegisterSendsSelfHost(t *testing.T) {
+	t.Setenv("SERVICE_HOST", "")
+	t.Setenv("PORT", "7001")
+	var got map[string]string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&got)
+	}))
+	defer s.Close()
+	t.Setenv("SERVICE_DISCOVERER_URL", s.URL)
+	if err := Register(Notifications); err != nil {
+		t.Fatal(err)
+	}
+	if got["host"] != SelfHost() {
+		t.Errorf("registered %q, SelfHost %q", got["host"], SelfHost())
 	}
 }

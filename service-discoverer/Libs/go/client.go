@@ -79,23 +79,45 @@ func discovererURL() string {
 	return "http://service-discoverer:8080"
 }
 
+// selfHost is the rule behind SelfHost, with the os.Hostname error.
+func selfHost() (string, error) {
+	if host := os.Getenv("SERVICE_HOST"); host != "" {
+		return host, nil
+	}
+	name, err := os.Hostname()
+	if err != nil {
+		return "", err
+	}
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	return name + ":" + port, nil
+}
+
+// SelfHost returns the host this instance registers with the discoverer, which doubles as its instance id in
+// logs: SERVICE_HOST, or "<hostname>:<PORT or 8080>" ("unknown:<port>" if the hostname cannot be read).
+func SelfHost() string {
+	host, err := selfHost()
+	if err != nil {
+		port := os.Getenv("PORT")
+		if port == "" {
+			port = "8080"
+		}
+		return "unknown:" + port
+	}
+	return host
+}
+
 // Register registers this instance with the service-discoverer. Call it once
 // at startup, passing only the instance's own kind. The host sent is
 // SERVICE_HOST, or "<hostname>:<PORT or 8080>". It retries up to 10 times with
 // a delay doubling from 1s up to 30s (about 2.5 minutes in all), so it blocks
 // meanwhile: call it from a goroutine if the service must not wait.
 func Register(kind Kind) error {
-	host := os.Getenv("SERVICE_HOST")
-	if host == "" {
-		name, err := os.Hostname()
-		if err != nil {
-			return err
-		}
-		port := os.Getenv("PORT")
-		if port == "" {
-			port = "8080"
-		}
-		host = name + ":" + port
+	host, err := selfHost()
+	if err != nil {
+		return err
 	}
 	payload, _ := json.Marshal(map[string]string{"kind": string(kind), "host": host})
 

@@ -194,3 +194,15 @@ func TestHandleStoreErrorLogsTraceID(t *testing.T) {
 		t.Fatalf("log: %q", buf.String())
 	}
 }
+
+func TestAccessLogInstanceOnce(t *testing.T) {
+	buf := captureLog(t)
+	log.SetPrefix("instance=notif-test:8080 ")
+	t.Cleanup(func() { log.SetPrefix("") })
+	serve(withTrace(newMux(&fakeStoreAPI{})), "GET", "/list", "my-trace.id_01", "u1")
+	line := strings.TrimSpace(buf.String())
+	t.Log(line)
+	if strings.Count(line, "instance=") != 1 || !strings.HasPrefix(line, "instance=notif-test:8080 ") {
+		t.Errorf("access log: %q", line)
+	}
+}
