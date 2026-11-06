@@ -2,6 +2,7 @@ package com.eventhub.users.web;
 
 import java.util.UUID;
 
+import com.eventhub.users.openapi.GatewaySettings;
 import com.eventhub.users.user.UserService;
 import com.eventhub.users.web.dto.UserPage;
 
@@ -26,6 +27,7 @@ public class UserSearchController {
         this.users = users;
     }
 
+    @GatewaySettings(isPublic = true, requireAuth = true)
     @GetMapping
     public UserPage search(
             @AuthenticationPrincipal Jwt jwt,

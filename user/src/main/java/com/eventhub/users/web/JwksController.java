@@ -1,5 +1,6 @@
 package com.eventhub.users.web;
 
+import com.eventhub.users.openapi.GatewaySettings;
 import com.nimbusds.jose.jwk.JWKSet;
 import com.nimbusds.jose.jwk.RSAKey;
 
@@ -18,6 +19,7 @@ public class JwksController {
         this.publicJwks = new JWKSet(signingKey.toPublicJWK()).toString();
     }
 
+    @GatewaySettings(isPublic = false, requireAuth = false)
     @GetMapping(value = "/.well-known/jwks.json", produces = MediaType.APPLICATION_JSON_VALUE)
     public String jwks() {
         return publicJwks;

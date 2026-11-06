@@ -103,7 +103,7 @@ test('unexpected failure: 500 INTERNAL_ERROR without internals', async () => {
   }, broken);
 });
 
-test('openapi: x-gateway on every business route, not on /healthcheck nor /openapi.json', async () => {
+test('openapi: every operation declares x-gateway (business routes public + auth, /healthcheck private); /openapi.json is hidden', async () => {
   await withApp(async (app) => {
     const res = await app.inject({ method: 'GET', url: '/openapi.json' });
     assert.equal(res.statusCode, 200);
@@ -119,11 +119,11 @@ test('openapi: x-gateway on every business route, not on /healthcheck nor /opena
     ]);
     for (const [path, item] of Object.entries(paths)) {
       const op = item.get;
-      if (path === '/healthcheck') {
-        assert.equal('x-gateway' in op, false);
-        continue;
-      }
-      assert.deepEqual(op['x-gateway'], { isPublic: true, requireAuth: true, rateLimitBy: 'user_or_ip', maxPerMin: 60 }, path);
+      const gw = op['x-gateway'] as Record<string, unknown>;
+      assert.equal(typeof gw?.isPublic, 'boolean', path);
+      assert.equal(typeof gw?.requireAuth, 'boolean', path);
+      const isHealth = path === '/healthcheck';
+      assert.deepEqual(gw, { isPublic: !isHealth, requireAuth: !isHealth }, path);
     }
   });
 });

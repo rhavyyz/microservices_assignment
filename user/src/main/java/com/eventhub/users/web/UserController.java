@@ -2,6 +2,7 @@ package com.eventhub.users.web;
 
 import java.util.UUID;
 
+import com.eventhub.users.openapi.GatewaySettings;
 import com.eventhub.users.user.UserService;
 import com.eventhub.users.web.dto.UpdateProfileRequest;
 import com.eventhub.users.web.dto.UserProfile;
@@ -30,11 +31,13 @@ public class UserController {
         this.users = users;
     }
 
+    @GatewaySettings(isPublic = true, requireAuth = true)
     @GetMapping
     public UserProfile me(@AuthenticationPrincipal Jwt jwt) {
         return UserProfile.from(users.getActive(subject(jwt)));
     }
 
+    @GatewaySettings(isPublic = true, requireAuth = true)
     @PatchMapping
     public UserProfile update(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody UpdateProfileRequest request) {
         return UserProfile.from(users.updateName(subject(jwt), request.name()));

@@ -5,7 +5,7 @@ It never reads another service's database: it builds its own read model (Postgre
 
 - Kind `reports`, registered in the service-discoverer with the shared TypeScript lib (`discovery`, `service-discoverer/Libs/typescript`, linked as a `file:` dependency).
 - `GET /healthcheck`: 503 until the first migration succeeded, and 503 whenever the Postgres ping fails; 200 otherwise. Body `{"status":"ok"|"unavailable"}`. Kafka being down does **not** fail it (RQ03).
-- `GET /openapi.json`: generated from the routes; the gateway reads it at startup. Private: neither it nor `/healthcheck` declares `x-gateway`.
+- `GET /openapi.json`: generated from the routes; the gateway reads it at startup. Private: `/healthcheck` declares `isPublic: false`.
 - Boots even if Postgres, Kafka or the discoverer are down; migration, consumer and registration retry in the background.
 
 ## Endpoints (through the gateway: `/reports/...`)
@@ -87,9 +87,10 @@ now `approved`/`declined` (`refunded_count` is new); the numeric `payments.reven
 Gateway: each business operation of `/openapi.json` declares its settings with the gateway's `x-gateway` extension, so no manual
 admin call is needed. The gateway applies it when it first creates the endpoint (insert-only; later changes go through its admin API):
 
-    "x-gateway": {"isPublic": true, "requireAuth": true, "rateLimitBy": "user_or_ip", "maxPerMin": 60}
+    "x-gateway": {"isPublic": true, "requireAuth": true}
 
-All six routes declare it. `/healthcheck` and `/openapi.json` do not, so they stay private (404 through the gateway). The OpenAPI also
+All six routes declare it (rate limits are left to the gateway's defaults). `/healthcheck` declares `{"isPublic": false, "requireAuth": false}`
+and `/openapi.json` is hidden from the spec, so both stay private (404 through the gateway). The OpenAPI also
 documents the `X-User-Id` header (security scheme `userId`) and the problem responses of each route.
 
 ## Event contract (what the other services publish)

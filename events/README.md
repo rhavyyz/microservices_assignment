@@ -47,7 +47,10 @@ The full HTTP and Kafka contracts, with field rules, error codes and examples, a
   `ActivityCreated|Updated|Deleted` keyed by `event_id`; `ActivityEnded` and `ActivityCancelled` keyed by `activity_id`.
 - **Consumes nothing.**
 
-Rollout: the gateway adds new endpoints as private. Open them once with `events/scripts/register-gateway-routes.sh`
+Rollout: every operation of `/openapi.json` declares its gateway settings with the `x-gateway` extension (public reads: `isPublic` without
+`requireAuth`, the token being optional; `/me/events` and the changes: `isPublic` + `requireAuth`; `permissions/me`: `isPublic: false`; `/healthcheck`
+stays hidden). A fresh gateway seeds them from the spec on first insert, so the script is redundant there. For a gateway that already has the
+endpoints, open them once with `events/scripts/register-gateway-routes.sh`
 (instructions in its header).
 
 ## Env

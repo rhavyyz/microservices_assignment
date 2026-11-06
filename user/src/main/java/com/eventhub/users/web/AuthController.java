@@ -2,6 +2,7 @@ package com.eventhub.users.web;
 
 import com.eventhub.users.security.TokenService;
 import com.eventhub.users.user.User;
+import com.eventhub.users.openapi.GatewaySettings;
 import com.eventhub.users.user.UserService;
 import com.eventhub.users.web.dto.LoginRequest;
 import com.eventhub.users.web.dto.LoginResponse;
@@ -31,12 +32,14 @@ public class AuthController {
         this.tokens = tokens;
     }
 
+    @GatewaySettings(isPublic = true, requireAuth = false)
     @PostMapping("/register")
     @ResponseStatus(HttpStatus.CREATED)
     public UserProfile register(@Valid @RequestBody RegisterRequest request) {
         return UserProfile.from(users.register(request.name(), request.email(), request.password()));
     }
 
+    @GatewaySettings(isPublic = true, requireAuth = false)
     @PostMapping("/login")
     public LoginResponse login(@Valid @RequestBody LoginRequest request) {
         User user = users.authenticate(request.email(), request.password());

@@ -22,6 +22,10 @@ from .workers import Workers
 
 log = logging.getLogger(__name__)
 
+# Gateway settings declared in the spec (`x-gateway`); they only seed the gateway when it first inserts the route.
+GATEWAY_PROTECTED = {"x-gateway": {"isPublic": True, "requireAuth": True}}
+GATEWAY_HIDDEN = {"x-gateway": {"isPublic": False, "requireAuth": False}}
+
 
 class CreateRegistration(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -114,7 +118,7 @@ def create_app(settings=None, database=None, services=None, authenticator=None):
             raise DomainError(403, "FORBIDDEN")
         external.authorize_organizer(activity_id, outbound(request, who))
 
-    @app.get("/healthcheck")
+    @app.get("/healthcheck", openapi_extra=GATEWAY_HIDDEN)
     def healthcheck():
         with db.transaction() as conn:
             conn.execute("SELECT 1")
@@ -131,7 +135,7 @@ def create_app(settings=None, database=None, services=None, authenticator=None):
             raise DomainError(404, "REGISTRATION_NOT_FOUND") from None
         return service.internal_registration(parsed)
 
-    @app.post("/api/v1/activities/{activity_id}/registrations", status_code=201)
+    @app.post("/api/v1/activities/{activity_id}/registrations", status_code=201, openapi_extra=GATEWAY_PROTECTED)
     def create(
         activity_id: UUID,
         body: CreateRegistration,
@@ -147,24 +151,24 @@ def create_app(settings=None, database=None, services=None, authenticator=None):
         activity = external.activity(activity_id, outbound(request, who))
         return service.create(who.user_id, activity, body.join_waitlist, request.state.trace_id)
 
-    @app.get("/api/v1/activities/{activity_id}/availability")
+    @app.get("/api/v1/activities/{activity_id}/availability", openapi_extra=GATEWAY_PROTECTED)
     def availability(activity_id: UUID, request: Request, who=Depends(principal)):
         return service.availability(external.activity(activity_id, outbound(request, who)))
 
     # Rotas literais precisam preceder o parâmetro {registration_id}.
-    @app.get("/api/v1/registrations/me")
+    @app.get("/api/v1/registrations/me", openapi_extra=GATEWAY_PROTECTED)
     def mine(limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0), who=Depends(principal)):
         return {"registrations": service.list(user_id=who.user_id, limit=limit, offset=offset)}
 
-    @app.get("/api/v1/registrations/{registration_id}")
+    @app.get("/api/v1/registrations/{registration_id}", openapi_extra=GATEWAY_PROTECTED)
     def get(registration_id: UUID, who=Depends(principal)):
         return service.get(registration_id, who.user_id)
 
-    @app.post("/api/v1/registrations/{registration_id}/cancel")
+    @app.post("/api/v1/registrations/{registration_id}/cancel", openapi_extra=GATEWAY_PROTECTED)
     def cancel(registration_id: UUID, request: Request, who=Depends(principal)):
         return service.cancel(registration_id, who.user_id, request.state.trace_id)
 
-    @app.post("/api/v1/registrations/{registration_id}/accept-offer")
+    @app.post("/api/v1/registrations/{registration_id}/accept-offer", openapi_extra=GATEWAY_PROTECTED)
     def accept(registration_id: UUID, request: Request, who=Depends(principal)):
         reg = service.get(registration_id, who.user_id)
         return service.accept(
@@ -174,7 +178,7 @@ def create_app(settings=None, database=None, services=None, authenticator=None):
             request.state.trace_id,
         )
 
-    @app.get("/api/v1/activities/{activity_id}/registrations")
+    @app.get("/api/v1/activities/{activity_id}/registrations", openapi_extra=GATEWAY_PROTECTED)
     def participants(
         activity_id: UUID,
         request: Request,
@@ -185,7 +189,7 @@ def create_app(settings=None, database=None, services=None, authenticator=None):
         organizer(activity_id, request, who)
         return {"registrations": service.list(activity_id=activity_id, limit=limit, offset=offset)}
 
-    @app.post("/api/v1/registrations/{registration_id}/check-in")
+    @app.post("/api/v1/registrations/{registration_id}/check-in", openapi_extra=GATEWAY_PROTECTED)
     def check_in(registration_id: UUID, request: Request, who=Depends(principal)):
         if "ORGANIZER" not in who.roles:
             raise DomainError(403, "FORBIDDEN")
