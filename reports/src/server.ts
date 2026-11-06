@@ -108,7 +108,7 @@ const validationResponse = { 400: problemResponse('VALIDATION_ERROR: invalid que
 
 // Every business route is public through the gateway, with a verified user (the gateway sets X-User-Id from the JWT).
 // Declared in the operation, read by the gateway's OpenAPI sync (insert-only: it applies when the endpoint is first created).
-const gatewaySettings = { isPublic: true, requireAuth: true, rateLimitBy: 'user_or_ip', maxPerMin: 60 } as const;
+const gatewaySettings = { isPublic: true, requireAuth: true } as const;
 const businessRoute = { 'x-gateway': gatewaySettings, security: [{ userId: [] }] } as const;
 
 // Helpers take an untyped reply: a route whose schema lists only some status codes rejects the others.
@@ -174,8 +174,8 @@ export async function buildServer(pool: Pool, migrated: () => boolean = () => tr
 
   app.setNotFoundHandler((_req, reply) => problem(reply, 404, 'NOT_FOUND', 'route not found'));
 
-  // Private routes (not declared in x-gateway): the discoverer polls the status code.
-  app.get('/healthcheck', { schema: { summary: 'Liveness + first migration + database ping' } }, async (_req, reply) => {
+  // Private through the gateway (x-gateway isPublic false): the discoverer polls the status code.
+  app.get('/healthcheck', { schema: { 'x-gateway': { isPublic: false, requireAuth: false }, summary: 'Liveness + first migration + database ping' } }, async (_req, reply) => {
     if (!migrated()) return reply.code(503).send({ status: 'unavailable' });
     try {
       await Promise.race([

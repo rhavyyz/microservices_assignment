@@ -151,3 +151,38 @@ test('OpenAPI: /api/v1 paths with event_id/activity_id, the end and permissions 
   assert.ok(activity.properties.amount_minor && activity.properties.lifecycle && activity.properties.registration_open);
   assert.equal(activity.properties.available, undefined);
 });
+
+test('openapi: every operation declares its x-gateway settings; /healthcheck stays hidden', async () => {
+  const { app } = await api();
+  await app.ready();
+  const pub = { isPublic: true, requireAuth: true };
+  const optional = { isPublic: true, requireAuth: false };
+  const internal = { isPublic: false, requireAuth: false };
+  const expected: Record<string, unknown> = {
+    'get /api/v1/events': optional,
+    'get /api/v1/events/{event_id}': optional,
+    'get /api/v1/events/{event_id}/activities': optional,
+    'get /api/v1/activities/{activity_id}': optional,
+    'get /api/v1/me/events': pub,
+    'post /api/v1/events': pub,
+    'patch /api/v1/events/{event_id}': pub,
+    'post /api/v1/events/{event_id}/publish': pub,
+    'post /api/v1/events/{event_id}/cancel': pub,
+    'post /api/v1/events/{event_id}/activities': pub,
+    'patch /api/v1/activities/{activity_id}': pub,
+    'post /api/v1/activities/{activity_id}/end': pub,
+    'delete /api/v1/activities/{activity_id}': pub,
+    'get /api/v1/activities/{activity_id}/permissions/me': internal,
+  };
+  const paths = app.swagger().paths as Record<string, Record<string, Record<string, unknown>>>;
+  const actual: Record<string, unknown> = {};
+  for (const [path, item] of Object.entries(paths)) {
+    for (const [method, op] of Object.entries(item)) {
+      const gw = op['x-gateway'] as Record<string, unknown>;
+      assert.equal(typeof gw?.isPublic, 'boolean', `${method} ${path}`);
+      assert.equal(typeof gw?.requireAuth, 'boolean', `${method} ${path}`);
+      actual[`${method} ${path}`] = gw;
+    }
+  }
+  assert.deepEqual(actual, expected);
+});

@@ -2,6 +2,7 @@ package com.eventhub.users.web;
 
 import java.util.UUID;
 
+import com.eventhub.users.openapi.GatewaySettings;
 import com.eventhub.users.user.UserService;
 import com.eventhub.users.web.dto.UserName;
 
@@ -25,6 +26,7 @@ public class InternalUserController {
         this.users = users;
     }
 
+    @GatewaySettings(isPublic = false, requireAuth = false)
     @GetMapping("/{id}")
     public UserName name(@PathVariable UUID id) {
         return UserName.from(users.getName(id));

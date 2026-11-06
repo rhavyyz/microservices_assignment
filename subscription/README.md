@@ -89,6 +89,10 @@ nunca do corpo. Sem `X-User-Id` válido a resposta é 401 `UNAUTHENTICATED`. Nas
 O Gateway é a única porta publicada; os serviços internos não têm porta no host e confiam nos cabeçalhos `X-User-Id`/`X-User-Roles` que somente o Gateway define (ele descarta os enviados pelo cliente). `/healthcheck` e `/openapi.json`
 não são publicados pelo script. A execução do script altera apenas os registros dessas rotas.
 
+O OpenAPI agora declara as configurações de cada operação na extensão `x-gateway` (`isPublic`/`requireAuth`):
+as rotas de negócio são públicas e exigem autenticação; `/healthcheck` é privada. Um gateway novo as cria a partir
+da especificação na primeira sincronização, então o script é redundante nesse caso (declarações só valem na primeira inserção).
+
 ## Desenvolvimento local
 
 ```sh

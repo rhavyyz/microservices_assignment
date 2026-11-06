@@ -32,6 +32,7 @@ paths:
     post:
       tags: [Autenticação]
       operationId: register
+      x-gateway: {isPublic: true, requireAuth: false}
       summary: Cadastra um participante
       description: Cria sempre um usuário com o papel `PARTICIPANT`. Papéis enviados pelo cliente são rejeitados.
       security: []
@@ -81,6 +82,7 @@ paths:
     post:
       tags: [Autenticação]
       operationId: login
+      x-gateway: {isPublic: true, requireAuth: false}
       summary: Valida credenciais e emite um Access Token
       description: |
         Qualquer falha de credencial (e-mail inexistente, senha incorreta ou conta inativa) retorna a mesma
@@ -134,6 +136,7 @@ paths:
     get:
       tags: [Perfil]
       operationId: getMe
+      x-gateway: {isPublic: true, requireAuth: true}
       summary: Consulta o perfil do usuário autenticado
       description: O usuário é identificado exclusivamente pelo claim `sub` do token.
       security:
@@ -165,6 +168,7 @@ paths:
     patch:
       tags: [Perfil]
       operationId: updateMe
+      x-gateway: {isPublic: true, requireAuth: true}
       summary: Atualiza campos permitidos do próprio perfil
       description: |
         Somente `name` pode ser alterado. `email`, `password`, `roles`, `id` ou qualquer outro campo
@@ -201,6 +205,7 @@ paths:
     get:
       tags: [Infraestrutura]
       operationId: jwks
+      x-gateway: {isPublic: false, requireAuth: false}
       summary: Chaves públicas para validação dos tokens (JWKS)
       description: |
         Somente material público (nunca `d`, `p`, `q`, `dp`, `dq`, `qi`). Consumido pelos demais serviços via
@@ -225,6 +230,7 @@ paths:
     get:
       tags: [Infraestrutura]
       operationId: healthcheck
+      x-gateway: {isPublic: false, requireAuth: false}
       summary: Health check usado pelo service-discoverer
       description: |
         Contrato do `service-discoverer` (2xx = saudável). Considera aplicação e banco de dados (se o banco cai,
@@ -257,6 +263,7 @@ paths:
     get:
       tags: [Perfil]
       operationId: searchUsers
+      x-gateway: {isPublic: true, requireAuth: true}
       summary: Busca usuários por id, e-mail e nome (somente ORGANIZER)
       description: |
         Expõe dados pessoais de terceiros, por isso:
@@ -332,6 +339,7 @@ paths:
     get:
       tags: [Interno]
       operationId: getUserName
+      x-gateway: {isPublic: false, requireAuth: false}
       summary: Consulta o nome de exibição de um usuário (uso interno)
       description: |
         **Interno — não é exposto pelo Gateway** (protegido por isolamento de rede, não por token). Permite que

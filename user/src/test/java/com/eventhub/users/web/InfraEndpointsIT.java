@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.Map;
 
+import com.eventhub.users.openapi.GatewayExtensionTest;
 import com.eventhub.users.support.PostgresIT;
 
 import org.junit.jupiter.api.Test;
@@ -31,6 +32,27 @@ class InfraEndpointsIT extends PostgresIT {
         assertThat(r.<Object>json("$.paths['/api/v1/users/me'].patch")).isNotNull();
         assertThat(r.<Object>json("$.paths['/api/v1/users'].get")).isNotNull();
         assertThat(r.<Object>json("$.paths['/internal/users/{id}'].get")).isNotNull();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void everyServedOperationDeclaresItsGatewaySettings() {
+        var r = http().get("/openapi.json", null);
+        Map<String, Map<String, Object>> paths = r.json("$.paths");
+        int seen = 0;
+        for (var path : paths.entrySet()) {
+            for (var op : path.getValue().entrySet()) {
+                String id = op.getKey() + " " + path.getKey();
+                var want = GatewayExtensionTest.EXPECTED.get(id);
+                assertThat(want).as("unexpected operation %s", id).isNotNull();
+                var ext = (Map<String, Object>) ((Map<String, Object>) op.getValue()).get("x-gateway");
+                assertThat(ext).as("x-gateway of %s", id).isNotNull();
+                assertThat(ext.get("isPublic")).as("isPublic of %s", id).isEqualTo(want[0]);
+                assertThat(ext.get("requireAuth")).as("requireAuth of %s", id).isEqualTo(want[1]);
+                seen++;
+            }
+        }
+        assertThat(seen).isPositive();
     }
 
     @Test

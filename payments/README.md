@@ -124,6 +124,9 @@ A background job (every `EXPIRY_INTERVAL_MS`, default 5s) expires `PENDING` paym
 receives `PaymentExpired`.
 
 ## Gateway rollout
+Every operation of `/openapi.json` declares its gateway settings with the `x-gateway` extension (`POST /payments`, `GET /payments`, `GET /payments/{paymentId}`
+and `POST /payments/{paymentId}/simulate`: `isPublic` + `requireAuth`; `/healthcheck`: `isPublic: false`). A fresh gateway seeds them from the spec
+(insert-only), so the script below is redundant there; it is kept for gateways that already have the endpoints.
 `POST /payments` is participant-facing now and must also be opened (public + `requireAuth`) by an admin script later; that is out of scope here.
 The three routes below are the ones the existing script publishes:
 

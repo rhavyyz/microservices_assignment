@@ -305,3 +305,27 @@ test('500 INTERNAL_ERROR never leaks internals', async () => {
   assert.ok(!JSON.stringify(b).includes('secret'));
   assert.equal(b.detail, undefined);
 });
+
+test('openapi: every operation declares its x-gateway settings', async () => {
+  const a = await app();
+  await a.ready();
+  const pub = { isPublic: true, requireAuth: true };
+  const expected: Record<string, unknown> = {
+    'get /healthcheck': { isPublic: false, requireAuth: false },
+    'post /payments': pub,
+    'get /payments/{paymentId}': pub,
+    'get /payments': pub,
+    'post /payments/{paymentId}/simulate': pub,
+  };
+  const paths = a.swagger().paths as Record<string, Record<string, Record<string, unknown>>>;
+  const actual: Record<string, unknown> = {};
+  for (const [path, item] of Object.entries(paths)) {
+    for (const [method, op] of Object.entries(item)) {
+      const gw = op['x-gateway'] as Record<string, unknown>;
+      assert.equal(typeof gw?.isPublic, 'boolean', `${method} ${path}`);
+      assert.equal(typeof gw?.requireAuth, 'boolean', `${method} ${path}`);
+      actual[`${method} ${path}`] = gw;
+    }
+  }
+  assert.deepEqual(actual, expected);
+});

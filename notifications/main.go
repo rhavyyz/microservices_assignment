@@ -60,13 +60,15 @@ var updateStateSchema = map[string]any{
 }
 
 // openAPI is the service's spec: the healthcheck, the notifications listing and the batch status update.
+// Each operation declares its gateway settings in `x-gateway` (isPublic, requireAuth); they only seed the gateway.
 var openAPI = map[string]any{
 	"openapi": "3.0.3",
 	"info":    map[string]any{"title": "notifications", "version": "1.0.0"},
 	"paths": map[string]any{
 		"/healthcheck": map[string]any{
 			"get": map[string]any{
-				"summary": "200 when MongoDB is reachable, 503 otherwise",
+				"x-gateway": map[string]any{"isPublic": false, "requireAuth": false},
+				"summary":   "200 when MongoDB is reachable, 503 otherwise",
 				"responses": map[string]any{
 					"200": map[string]any{"description": "Healthy"},
 					"503": map[string]any{"description": "MongoDB unreachable"},
@@ -75,7 +77,8 @@ var openAPI = map[string]any{
 		},
 		"/list": map[string]any{
 			"get": map[string]any{
-				"summary": "A user's notifications, newest first, cursor-paginated (read-only)",
+				"x-gateway": map[string]any{"isPublic": true, "requireAuth": true},
+				"summary":   "A user's notifications, newest first, cursor-paginated (read-only)",
 				"parameters": []any{
 					map[string]any{"name": "X-User-Id", "in": "header", "required": true, "schema": map[string]any{"type": "string"}},
 					map[string]any{
@@ -127,7 +130,8 @@ var openAPI = map[string]any{
 		},
 		"/update-state": map[string]any{
 			"put": map[string]any{
-				"summary": "Set the status of several of the user's notifications, applying the valid ones and skipping the others (any status to any status)",
+				"x-gateway": map[string]any{"isPublic": true, "requireAuth": true},
+				"summary":   "Set the status of several of the user's notifications, applying the valid ones and skipping the others (any status to any status)",
 				"parameters": []any{
 					map[string]any{"name": "X-User-Id", "in": "header", "required": true, "schema": map[string]any{"type": "string"}},
 				},

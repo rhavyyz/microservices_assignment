@@ -279,6 +279,8 @@ GATEWAY_ADMIN_URL=http://localhost:8080 sh certificates/scripts/register_gateway
 
 The script opens the two `GET` routes with `requireAuth` and per-user rate limits. The gateway admin API has no authentication; see the warning in the script.
 
+The OpenAPI spec now declares the gateway settings of every operation in the `x-gateway` extension (`isPublic`/`requireAuth`): the two business routes are public with authentication, `/healthcheck` is private. A fresh gateway seeds the routes from the spec on first sync, so the script is redundant there; it is kept only for its rate limits and for gateways that already hold the routes.
+
 ## Running the Service
 
 ### Local development

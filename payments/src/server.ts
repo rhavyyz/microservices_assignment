@@ -9,6 +9,10 @@ import type { Status } from './state.ts';
 import { fetchRegistration, type FetchRegistration } from './subscription.ts';
 
 const str = { type: 'string' } as const;
+
+// Gateway settings, declared on each operation (`x-gateway`); the gateway reads them from /openapi.json when it first creates the endpoint.
+const PUBLIC_AUTH = { 'x-gateway': { isPublic: true, requireAuth: true } } as const;
+const INTERNAL = { 'x-gateway': { isPublic: false, requireAuth: false } } as const;
 const paymentSchema = {
   type: 'object',
   properties: {
@@ -124,7 +128,7 @@ export async function buildServer(pool: Pool, lookup: FetchRegistration = fetchR
 
   app.setNotFoundHandler((_req, reply) => problem(reply, 404, 'NOT_FOUND', 'route not found'));
 
-  app.get('/healthcheck', { schema: { summary: 'Liveness + database ping' } }, async (_req, reply) => {
+  app.get('/healthcheck', { schema: { ...INTERNAL, summary: 'Liveness + database ping' } }, async (_req, reply) => {
     try {
       await Promise.race([
         pool.query('SELECT 1'),
@@ -141,6 +145,7 @@ export async function buildServer(pool: Pool, lookup: FetchRegistration = fetchR
   // Participant-facing creation. The facts (owner, status, amount, currency) come from Subscription, never from the client.
   app.post('/payments', {
     schema: {
+      ...PUBLIC_AUTH,
       summary: 'Start the payment of a registration (idempotent by registration_id)',
       body: {
         type: 'object',
@@ -210,6 +215,7 @@ export async function buildServer(pool: Pool, lookup: FetchRegistration = fetchR
 
   app.get('/payments/:paymentId', {
     schema: {
+      ...PUBLIC_AUTH,
       summary: 'Payment status',
       params: { type: 'object', properties: { paymentId: str }, required: ['paymentId'] },
       response: { 200: paymentSchema },
@@ -223,6 +229,7 @@ export async function buildServer(pool: Pool, lookup: FetchRegistration = fetchR
 
   app.get('/payments', {
     schema: {
+      ...PUBLIC_AUTH,
       summary: 'Payment of a registration',
       querystring: { type: 'object', properties: { registration_id: str }, required: ['registration_id'] },
       response: { 200: paymentSchema },
@@ -237,6 +244,7 @@ export async function buildServer(pool: Pool, lookup: FetchRegistration = fetchR
   // The simulated external provider: the payer "pays" (approve), is declined (decline) or lets it lapse (expire).
   app.post('/payments/:paymentId/simulate', {
     schema: {
+      ...PUBLIC_AUTH,
       summary: 'Simulated provider: approve, decline or expire a pending payment',
       params: { type: 'object', properties: { paymentId: str }, required: ['paymentId'] },
       body: {

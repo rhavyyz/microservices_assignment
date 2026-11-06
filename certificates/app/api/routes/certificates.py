@@ -16,9 +16,14 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Gateway settings declared in the spec (`x-gateway`); they only seed the gateway when it first inserts the route.
+GATEWAY_PROTECTED = {"x-gateway": {"isPublic": True, "requireAuth": True}}
+GATEWAY_HIDDEN = {"x-gateway": {"isPublic": False, "requireAuth": False}}
+
 
 @router.get(
     "/healthcheck",
+    openapi_extra=GATEWAY_HIDDEN,
     tags=["health"],
     summary="Database connectivity check",
     response_model=HealthStatus,
@@ -42,6 +47,7 @@ def get_service(
 
 @router.get(
     "/api/v1/certificates/me",
+    openapi_extra=GATEWAY_PROTECTED,
     tags=["certificates"],
     summary="List the caller's certificates, newest first",
     response_model=CertificateList,
@@ -59,6 +65,7 @@ def list_my_certificates(
 
 @router.get(
     "/api/v1/certificates/{certificate_id}",
+    openapi_extra=GATEWAY_PROTECTED,
     tags=["certificates"],
     summary="Download a certificate PDF (owner only)",
     response_class=Response,
