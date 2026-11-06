@@ -217,6 +217,8 @@ services:
       additional_contexts:
         discovery: ./service-discoverer/Libs/typescript
     networks: [backbone, reports-net]
+    environment:
+      DATABASE_URL: postgres://reports:${REPORTS_DB_PASSWORD:-reports}@reports-db:5432/reports
 
   # Identical replicas: just raise `deploy.replicas` on the service.
   # Only when an instance needs different config (env, ID...), copy its entry under a new name, e.g.:

@@ -1,8 +1,9 @@
 import { Kind, register } from 'discovery';
-import type { Consumer } from 'kafkajs';
+import type { Consumer, Producer } from 'kafkajs';
 import { config } from './config.ts';
 import { startConsumer } from './consumer.ts';
 import { createPool, migrate } from './db.ts';
+import { dlqPublisher, ensureTopics, kafka } from './kafka.ts';
 import { buildServer } from './server.ts';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -10,7 +11,10 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const pool = createPool();
 pool.on('error', (e) => console.error('postgres pool error:', e.message));
 
-const app = await buildServer(pool);
+// /healthcheck answers 503 until the first successful migration.
+let migrated = false;
+
+const app = await buildServer(pool, () => migrated);
 const log = app.log;
 
 async function retryForever(name: string, fn: () => Promise<void>): Promise<void> {
@@ -30,13 +34,43 @@ async function retryForever(name: string, fn: () => Promise<void>): Promise<void
 // everything else runs in the background.
 await app.listen({ host: '0.0.0.0', port: config.port });
 
+let producer: Producer | undefined;
 let consumer: Consumer | undefined;
+let stopping = false;
+
+const publishDlq = dlqPublisher(() => producer);
+
+/** Starts the consumer (retrying until it connects); restarts it after a delay if kafkajs gives up on it. */
+async function superviseConsumer(): Promise<void> {
+  await retryForever('kafka consumer', async () => {
+    consumer = await startConsumer(pool, log, {
+      publishDlq,
+      onCrash: (error) => {
+        if (stopping) return;
+        log.error({ err: error.message }, 'kafka consumer crashed; restarting in 5000ms');
+        const crashed = consumer;
+        consumer = undefined;
+        void (async () => {
+          await crashed?.disconnect().catch(() => {});
+          await sleep(5000);
+          if (!stopping) await superviseConsumer();
+        })();
+      },
+    });
+  });
+}
 
 void (async () => {
   await retryForever('migrate', () => migrate(pool));
-  await retryForever('kafka consumer', async () => {
-    consumer = await startConsumer(pool, log);
+  migrated = true;
+  await retryForever('kafka topics', ensureTopics);
+  // The DLQ producer connects in the background; until it is up, an invalid message fails transiently and is redelivered.
+  void retryForever('kafka producer', async () => {
+    const p = kafka.producer({ allowAutoTopicCreation: false });
+    await p.connect();
+    producer = p;
   });
+  await superviseConsumer();
 })();
 
 // Fire and forget, never awaited before listening.
@@ -45,8 +79,10 @@ register(Kind.REPORTS)
   .catch((e: Error) => log.warn({ err: e.message }, 'could not register in the service-discoverer'));
 
 async function shutdown(): Promise<void> {
+  stopping = true;
   await app.close().catch(() => {});
   await consumer?.disconnect().catch(() => {});
+  await producer?.disconnect().catch(() => {});
   await pool.end().catch(() => {});
   process.exit(0);
 }

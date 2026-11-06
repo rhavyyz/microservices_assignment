@@ -65,6 +65,13 @@ CREATE TABLE IF NOT EXISTS checkins (
 );
 CREATE INDEX IF NOT EXISTS checkins_event_idx ON checkins (event_id);
 CREATE INDEX IF NOT EXISTS checkins_activity_idx ON checkins (activity_id);
+
+-- Subscription's statuses and money as integer minor units. Idempotent; the old numeric column stays, unused.
+UPDATE registrations SET status = 'PENDING_PAYMENT' WHERE status = 'PENDING';
+UPDATE payments SET status = 'APPROVED' WHERE status = 'CONFIRMED';
+UPDATE payments SET status = 'DECLINED' WHERE status = 'REFUSED';
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS amount_minor bigint;
+UPDATE payments SET amount_minor = round(amount * 100)::bigint WHERE amount_minor IS NULL AND amount IS NOT NULL;
 `;
 
 /** Idempotent; the advisory lock makes replicas starting together safe. */

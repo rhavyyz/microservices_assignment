@@ -175,9 +175,12 @@ API após encerramento/cancelamento. Encerramento antecipado à data final não 
 ## Eventos de Inscrições
 
 Envelope: `message_id`, `schema_version=1`, `type`, `registration_id`, `activity_id`, `user_id`,
-`aggregate_version`, `occurred_at`, `status`, `trace_id` (opcional/nulo em trabalho de fundo; Pagamentos
+`aggregate_version`, `occurred_at`, `status`, `event_id`, `trace_id` (opcional/nulo em trabalho de fundo; Pagamentos
 devolve o mesmo valor nos resultados; ausente das mensagens de Notificações). `occurred_at` (e qualquer
-data/hora nos payloads) é ISO 8601 com offset, por exemplo `2026-11-04T12:00:00.123456+00:00`. Tipos:
+data/hora nos payloads) é ISO 8601 com offset, por exemplo `2026-11-04T12:00:00.123456+00:00`.
+`event_id` (uuid) é o id do evento no serviço de Eventos ao qual a atividade pertence; está presente em
+**todos** os tipos abaixo e é não nulo desde a migração 007 (que preenche inscrições antigas a partir de
+`activity_inventory`). Nunca é o `message_id`. Tipos:
 
 - `RegistrationWaitlisted`, `WaitlistOffered`;
 - `RegistrationPendingPayment` (a inscrição entrou em `PENDING_PAYMENT`: inscrição paga com vaga ou
@@ -196,8 +199,8 @@ abaixo do mínimo nada é publicado. Emitido no máximo uma vez por (pessoa, eve
 outra atividade do mesmo evento não gera segunda emissão (limitação conhecida). Atividades
 encerradas antes da migração 003 não são reavaliadas.
 
-Campos adicionais (somente neste tipo; mudança aditiva, `schema_version` continua 1):
-`event_id` (id do evento no serviço de Eventos, uuid), `attended_activities` (int),
+Campos adicionais (somente neste tipo; mudança aditiva, `schema_version` continua 1; o `event_id` já
+está no envelope de todos os tipos, com o mesmo valor): `attended_activities` (int),
 `total_activities` (int), `attendance_percentage` (número, até 2 casas). `message_id` continua sendo o
 uuid da mensagem, nunca o id do evento de Eventos. `registration_id`/`activity_id`/`aggregate_version`
 referem-se à inscrição da atividade cujo encerramento disparou a avaliação; a chave Kafka segue

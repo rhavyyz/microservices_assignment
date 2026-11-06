@@ -54,6 +54,7 @@ def reg(status="CONFIRMED"):
     return {
         "id": uuid4(),
         "activity_id": uuid4(),
+        "event_id": uuid4(),
         "user_id": uuid4(),
         "version": 2,
         "status": status,
@@ -76,6 +77,67 @@ def test_emit_without_trace_id_sends_null(svc):
     svc.emit(conn, reg(), "WaitlistOffered")
     payload = conn.topic(svc.settings.domain_topic)[0]
     assert "trace_id" in payload and payload["trace_id"] is None
+
+
+EMITTED_TYPES = [
+    "RegistrationWaitlisted",
+    "WaitlistOffered",
+    "RegistrationPendingPayment",
+    "RegistrationConfirmed",
+    "RegistrationCancelled",
+    "RegistrationExpired",
+    "RegistrationRejected",
+    "AttendanceRecorded",
+    "AttendanceEligible",
+]
+
+
+@pytest.mark.parametrize("event_type", EMITTED_TYPES)
+def test_every_domain_event_carries_event_id(svc, event_type):
+    conn, r = FakeConn(), reg()
+    svc.emit(conn, r, event_type)
+    assert conn.topic(svc.settings.domain_topic)[0]["event_id"] == str(r["event_id"])
+    for note in conn.topic(svc.settings.notifications_topic):
+        assert "event_id" not in note and "event_id" not in note["payload"]
+
+
+def test_attendance_eligible_keeps_extra_fields_and_same_event_id(svc):
+    conn, r = FakeConn(), reg()
+    extra = {
+        "event_id": r["event_id"],
+        "attended_activities": 3,
+        "total_activities": 4,
+        "attendance_percentage": 75.0,
+    }
+    svc.emit(conn, r, "AttendanceEligible", extra=extra)
+    payload = conn.topic(svc.settings.domain_topic)[0]
+    assert payload["event_id"] == str(r["event_id"])
+    assert {k: payload[k] for k in extra} == {k: str(v) if k == "event_id" else v for k, v in extra.items()}
+
+
+class InventoryConn(FakeConn):
+    def __init__(self, event_id):
+        super().__init__()
+        self.event_id = event_id
+
+    def execute(self, sql, params=None):
+        if "FROM activity_inventory" in sql:
+            return Result([{"event_id": self.event_id}] if self.event_id else [])
+        return super().execute(sql, params)
+
+
+def test_emit_falls_back_to_inventory_event_id_when_registration_has_none(svc):
+    inventory_event = uuid4()
+    conn = InventoryConn(inventory_event)
+    svc.emit(conn, {**reg(), "event_id": None}, "RegistrationConfirmed")
+    assert conn.topic(svc.settings.domain_topic)[0]["event_id"] == str(inventory_event)
+
+
+def test_emit_sends_null_event_id_when_nothing_is_known(svc):
+    conn = InventoryConn(None)
+    svc.emit(conn, {**reg(), "event_id": None}, "RegistrationConfirmed")
+    payload = conn.topic(svc.settings.domain_topic)[0]
+    assert "event_id" in payload and payload["event_id"] is None
 
 
 def payment_result(**extra):
