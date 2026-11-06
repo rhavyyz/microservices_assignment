@@ -37,8 +37,26 @@ export async function countOwnedEvents(pool: Pool, userId: string): Promise<numb
 }
 
 export async function countActivities(pool: Pool, eventId: string): Promise<number> {
-  const r = await pool.query<{ total: number }>('SELECT count(*)::int AS total FROM activities WHERE event_id = $1', [eventId]);
+  const r = await pool.query<{ total: number }>(`SELECT count(*)::int AS total FROM activities WHERE event_id = $1 AND lifecycle <> 'DELETED'`, [eventId]);
   return r.rows[0].total;
+}
+
+/** Activities that still count toward capacity: cancelled and deleted ones do not. */
+const COUNTS_CAPACITY = `lifecycle IN ('OPEN', 'ENDED')`;
+
+/** Check-ins that count: only those whose registration is currently CONFIRMED (a check-in outliving a cancellation does not). */
+const COUNTED_CHECKINS = `checkins c JOIN registrations cr ON cr.registration_id = c.registration_id AND cr.status = 'CONFIRMED'`;
+
+/** Activities of the event by lifecycle (deleted ones are not listed anywhere). */
+export async function activityLifecycleSection(pool: Pool, eventId: string) {
+  const r = await pool.query<{ open: number; ended: number; cancelled: number }>(
+    `SELECT count(*) FILTER (WHERE lifecycle = 'OPEN')::int      AS open,
+            count(*) FILTER (WHERE lifecycle = 'ENDED')::int     AS ended,
+            count(*) FILTER (WHERE lifecycle = 'CANCELLED')::int AS cancelled
+       FROM activities WHERE event_id = $1`,
+    [eventId],
+  );
+  return r.rows[0];
 }
 
 export type Money = { currency: string; amount_minor: number };
@@ -116,35 +134,54 @@ export async function paymentsSection(pool: Pool, eventId: string) {
   };
 }
 
-/** Occupied = seats held by PENDING_PAYMENT, OFFERED and CONFIRMED registrations (the waitlist holds none). */
+/**
+ * Occupied = seats held by PENDING_PAYMENT, OFFERED and CONFIRMED registrations (the waitlist holds none), except
+ * those of cancelled or deleted activities, whose capacity is not counted either (keeps the rate coherent).
+ */
 export async function occupancySection(pool: Pool, eventId: string) {
   const r = await pool.query<{ capacity: number; occupied: number }>(
-    `SELECT (SELECT COALESCE(sum(capacity), 0)::int FROM activities WHERE event_id = $1) AS capacity,
-            (SELECT count(*)::int FROM registrations
-              WHERE event_id = $1 AND status IN ${HELD})                                 AS occupied`,
+    `SELECT (SELECT COALESCE(sum(capacity), 0)::int FROM activities WHERE event_id = $1 AND ${COUNTS_CAPACITY}) AS capacity,
+            (SELECT count(*)::int FROM registrations r
+              WHERE r.event_id = $1 AND r.status IN ${HELD}
+                AND NOT EXISTS (SELECT 1 FROM activities a WHERE a.activity_id = r.activity_id
+                                   AND a.lifecycle IN ('CANCELLED', 'DELETED')))        AS occupied`,
     [eventId],
   );
   const { capacity, occupied } = r.rows[0];
   return { capacity, occupied, rate: ratio(occupied, capacity) };
 }
 
+/**
+ * Check-ins count only while their registration is CONFIRMED, so the rate cannot exceed 1. Eligible = people with an
+ * AttendanceEligible for the event; its rate is over the distinct people with a counted check-in.
+ */
 export async function attendanceSection(pool: Pool, eventId: string) {
-  const r = await pool.query<{ confirmed: number; checkins: number }>(
+  const r = await pool.query<{ confirmed: number; checkins: number; attendees: number; certificate_eligible: number }>(
     `SELECT (SELECT count(*)::int FROM registrations WHERE event_id = $1 AND status = 'CONFIRMED') AS confirmed,
-            (SELECT count(*)::int FROM checkins WHERE event_id = $1)                               AS checkins`,
+            (SELECT count(*)::int FROM ${COUNTED_CHECKINS} WHERE c.event_id = $1)                  AS checkins,
+            (SELECT count(DISTINCT COALESCE(cr.user_id, c.user_id, c.registration_id))::int
+               FROM ${COUNTED_CHECKINS} WHERE c.event_id = $1)                                     AS attendees,
+            (SELECT count(*)::int FROM attendance_eligibility WHERE event_id = $1)                 AS certificate_eligible`,
     [eventId],
   );
-  const { confirmed, checkins } = r.rows[0];
-  return { confirmed, checkins, rate: ratio(checkins, confirmed) };
+  const { confirmed, checkins, attendees, certificate_eligible } = r.rows[0];
+  return {
+    confirmed,
+    checkins,
+    rate: ratio(checkins, confirmed),
+    certificate_eligible,
+    certificate_eligible_rate: ratio(certificate_eligible, attendees),
+  };
 }
 
 export async function activitiesSection(pool: Pool, eventId: string, page?: Page) {
   const r = await pool.query<{
     activity_id: string; name: string | null; capacity: number | null; paid: boolean;
+    lifecycle: string; ended_at: Date | null;
     pending_payment: number; offered: number; confirmed: number; waitlisted: number; cancelled: number;
     expired: number; rejected: number; payments_approved: number; checkins: number;
   }>(
-    `SELECT a.activity_id, a.name, a.capacity, a.paid,
+    `SELECT a.activity_id, a.name, a.capacity, a.paid, a.lifecycle, a.ended_at,
             COALESCE(r.pending_payment, 0) AS pending_payment, COALESCE(r.offered, 0) AS offered,
             COALESCE(r.confirmed, 0) AS confirmed, COALESCE(r.waitlisted, 0) AS waitlisted,
             COALESCE(r.cancelled, 0) AS cancelled, COALESCE(r.expired, 0) AS expired,
@@ -164,9 +201,9 @@ export async function activitiesSection(pool: Pool, eventId: string, page?: Page
        LEFT JOIN (SELECT activity_id,
                          count(*) FILTER (WHERE status = 'APPROVED')::int AS payments_approved
                     FROM payments WHERE event_id = $1 GROUP BY activity_id) p USING (activity_id)
-       LEFT JOIN (SELECT activity_id, count(*)::int AS checkins
-                    FROM checkins WHERE event_id = $1 GROUP BY activity_id) c USING (activity_id)
-      WHERE a.event_id = $1
+       LEFT JOIN (SELECT c.activity_id, count(*)::int AS checkins
+                    FROM ${COUNTED_CHECKINS} WHERE c.event_id = $1 GROUP BY c.activity_id) c USING (activity_id)
+      WHERE a.event_id = $1 AND a.lifecycle <> 'DELETED'
       ORDER BY a.name NULLS LAST, a.activity_id
       LIMIT $2 OFFSET $3`,
     [eventId, page?.limit ?? null, page?.offset ?? 0], // LIMIT NULL = no limit
@@ -179,6 +216,8 @@ export async function activitiesSection(pool: Pool, eventId: string, page?: Page
       name: row.name,
       capacity: row.capacity,
       paid: row.paid,
+      lifecycle: row.lifecycle,
+      ended_at: row.ended_at,
       pending_payment: row.pending_payment,
       offered: row.offered,
       confirmed: row.confirmed,
@@ -190,7 +229,7 @@ export async function activitiesSection(pool: Pool, eventId: string, page?: Page
       revenue: moneyOf(money, 'APPROVED', row.activity_id),
       refunded: moneyOf(money, 'REFUNDED', row.activity_id),
       occupied,
-      occupancy_rate: ratio(occupied, row.capacity ?? 0),
+      occupancy_rate: row.lifecycle === 'CANCELLED' ? null : ratio(occupied, row.capacity ?? 0),
       checkins: row.checkins,
       attendance_rate: ratio(row.checkins, row.confirmed),
     };

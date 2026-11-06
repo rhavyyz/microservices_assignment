@@ -68,7 +68,7 @@ test('when the DLQ publish fails the handler throws (offset not committed) inste
 });
 
 test('unknown and ignored types are not dead-lettered', async () => {
-  for (const type of ['AttendanceEligible', 'ActivityDeleted', 'SomethingNew']) {
+  for (const type of ['CertificateIssued', 'SomethingNew']) {
     const { sent, pool, publish } = setup();
     const result = await handleMessage(pool, valid({ type }), where, log, publish);
     assert.equal(result, 'applied');

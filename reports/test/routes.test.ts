@@ -13,18 +13,19 @@ const eventRow = { event_id: EVENT, organizer_id: USER, name: 'Conf', status: 'P
 type Call = { sql: string; params?: unknown[] };
 
 function poolWith(
-  rows: { payments?: object; money?: object[]; activities?: object[]; registrations?: object; total?: number },
+  rows: { payments?: object; money?: object[]; activities?: object[]; registrations?: object; total?: number; lifecycle?: object; attendance?: object },
   calls: Call[] = [],
 ): Pool {
   const query = async (sql: string, params?: unknown[]) => {
     calls.push({ sql, params });
     if (sql.includes('count(*)::int AS total')) return { rows: [{ total: rows.total ?? 0 }] };
+    if (sql.includes("lifecycle = 'OPEN'")) return { rows: [rows.lifecycle ?? { open: 0, ended: 0, cancelled: 0 }] };
     if (sql.includes('FROM events WHERE organizer_id')) return { rows: [eventRow] };
     if (sql.includes('FROM events WHERE event_id')) return { rows: [eventRow] };
     if (sql.includes('FROM payments') && sql.includes('sum(amount_minor)')) return { rows: rows.money ?? [] };
-    if (sql.includes('FROM activities a')) return { rows: rows.activities ?? [] };
     if (sql.includes('AS occupied')) return { rows: [{ capacity: 10, occupied: 4 }] };
-    if (sql.includes('AS checkins') && sql.includes('AS confirmed')) return { rows: [{ confirmed: 2, checkins: 1 }] };
+    if (/FROM activities a\s/.test(sql)) return { rows: rows.activities ?? [] };
+    if (sql.includes('AS checkins') && sql.includes('AS confirmed')) return { rows: [rows.attendance ?? { confirmed: 2, checkins: 1, attendees: 1, certificate_eligible: 1 }] };
     if (sql.includes('FROM payments')) return { rows: [rows.payments] };
     if (sql.includes('FROM registrations')) return { rows: [rows.registrations] };
     throw new Error(`unexpected query: ${sql}`);
@@ -97,10 +98,11 @@ test('registrations: the new status counters, without the old pending', async ()
 test('activities: per-activity counters, money by currency and held-seat occupancy', async () => {
   const pool = poolWith({
     activities: [{
-      activity_id: 'a1', name: 'Workshop', capacity: 10, paid: true,
+      activity_id: 'a1', name: 'Workshop', capacity: 10, paid: true, lifecycle: 'ENDED', ended_at: new Date('2026-12-01T18:00:00.000Z'),
       pending_payment: 1, offered: 2, confirmed: 3, waitlisted: 4, cancelled: 5, expired: 6, rejected: 7,
       payments_approved: 2, checkins: 1,
     }],
+    lifecycle: { open: 3, ended: 1, cancelled: 2 },
     money: [
       { activity_id: 'a1', status: 'APPROVED', currency: 'BRL', amount_minor: '5000' },
       { activity_id: 'a1', status: 'REFUNDED', currency: 'UNKNOWN', amount_minor: '300' },
@@ -111,8 +113,9 @@ test('activities: per-activity counters, money by currency and held-seat occupan
   try {
     const res = await app.inject({ method: 'GET', url: `/events/${EVENT}/activities`, headers: OWNER });
     assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.json().activities, { open: 3, ended: 1, cancelled: 2 });
     assert.deepEqual(res.json().items, [{
-      activity_id: 'a1', name: 'Workshop', capacity: 10, paid: true,
+      activity_id: 'a1', name: 'Workshop', capacity: 10, paid: true, lifecycle: 'ENDED', ended_at: '2026-12-01T18:00:00.000Z',
       pending_payment: 1, offered: 2, confirmed: 3, waitlisted: 4, cancelled: 5, expired: 6, rejected: 7,
       payments_approved: 2,
       revenue: [{ currency: 'BRL', amount_minor: 5000 }],
@@ -129,6 +132,7 @@ test('summary: carries the new registrations and payments shapes', async () => {
     registrations: registrationCounts,
     payments: paymentCounts,
     money: [{ activity_id: null, status: 'APPROVED', currency: 'BRL', amount_minor: '2500' }],
+    lifecycle: { open: 2, ended: 1, cancelled: 1 },
   });
   const app = await buildServer(pool);
   try {
@@ -139,9 +143,28 @@ test('summary: carries the new registrations and payments shapes', async () => {
     assert.deepEqual(body.payments.revenue, [{ currency: 'BRL', amount_minor: 2500 }]);
     assert.deepEqual(body.payments.refunded, []);
     assert.deepEqual(body.occupancy, { capacity: 10, occupied: 4, rate: 0.4 });
-    assert.deepEqual(body.attendance, { confirmed: 2, checkins: 1, rate: 0.5 });
+    assert.deepEqual(body.attendance, { confirmed: 2, checkins: 1, rate: 0.5, certificate_eligible: 1, certificate_eligible_rate: 1 });
+    assert.deepEqual(body.activities, { open: 2, ended: 1, cancelled: 1 });
   } finally {
     await app.close();
+  }
+});
+
+test('attendance: certificate_eligible and its rate; null rate without attendees; rate computed from the counts', async () => {
+  const app = await buildServer(poolWith({ attendance: { confirmed: 4, checkins: 3, attendees: 3, certificate_eligible: 1 } }));
+  try {
+    const res = await app.inject({ method: 'GET', url: `/events/${EVENT}/attendance`, headers: OWNER });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.json(), { confirmed: 4, checkins: 3, rate: 0.75, certificate_eligible: 1, certificate_eligible_rate: 0.3333 });
+  } finally {
+    await app.close();
+  }
+  const empty = await buildServer(poolWith({ attendance: { confirmed: 0, checkins: 0, attendees: 0, certificate_eligible: 0 } }));
+  try {
+    const res = await empty.inject({ method: 'GET', url: `/events/${EVENT}/attendance`, headers: OWNER });
+    assert.deepEqual(res.json(), { confirmed: 0, checkins: 0, rate: null, certificate_eligible: 0, certificate_eligible_rate: null });
+  } finally {
+    await empty.close();
   }
 });
 

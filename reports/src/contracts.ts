@@ -11,10 +11,13 @@ export type Envelope = {
 export type Change =
   | { kind: 'event'; eventId: string; organizerId: string | null; name: string | null; status: string | null; startsAt: string | null; endsAt: string | null }
   | { kind: 'activity'; activityId: string; eventId: string; name: string | null; capacity: number | null; paid: boolean | null }
+  // Moves the activity's lifecycle forward (never back); carries no descriptive fields.
+  | { kind: 'activityLifecycle'; activityId: string; eventId: string; lifecycle: 'ENDED' | 'CANCELLED' | 'DELETED' }
   | { kind: 'registration'; registrationId: string; eventId: string; activityId: string; userId: string | null; status: string }
   // amountMinor is the producer's integer in minor units (cents), kept as is.
   | { kind: 'payment'; paymentId: string; registrationId: string | null; eventId: string; activityId: string | null; amountMinor: number | null; currency: string | null; status: string }
   | { kind: 'checkin'; registrationId: string; eventId: string; activityId: string; userId: string | null }
+  | { kind: 'eligibility'; eventId: string; userId: string; registrationId: string | null; attendedActivities: number; totalActivities: number; attendancePercentage: number }
   | { kind: 'ignored' };
 
 export type Parsed = { envelope: Envelope; change: Change };
@@ -68,6 +71,19 @@ function optMinor(d: Data, k: string): number | null {
   return v;
 }
 
+/** A non-negative safe integer count. */
+function reqCount(d: Data, k: string): number {
+  const v = d[k];
+  if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < 0) throw new Error(`${k} must be a non-negative integer`);
+  return v;
+}
+
+const ACTIVITY_LIFECYCLE: Record<string, 'ENDED' | 'CANCELLED' | 'DELETED'> = {
+  ActivityEnded: 'ENDED',
+  ActivityCancelled: 'CANCELLED',
+  ActivityDeleted: 'DELETED',
+};
+
 // A null status means "take it from status" (or keep the stored one).
 const EVENT_STATUS: Record<string, string | null> = {
   EventCreated: null,
@@ -115,6 +131,33 @@ function toChange(type: string, d: Data): Change {
       name: optStr(d, 'name'),
       capacity: optNum(d, 'capacity'),
       paid: optBool(d, 'paid'),
+    };
+  }
+  if (Object.hasOwn(ACTIVITY_LIFECYCLE, type)) {
+    return {
+      kind: 'activityLifecycle',
+      activityId: reqStr(d, 'activity_id'),
+      eventId: reqStr(d, 'event_id'),
+      lifecycle: ACTIVITY_LIFECYCLE[type],
+    };
+  }
+  if (type === 'AttendanceEligible') {
+    const attended = reqCount(d, 'attended_activities');
+    const total = reqCount(d, 'total_activities');
+    if (total < 1) throw new Error('total_activities must be at least 1');
+    if (attended > total) throw new Error('attended_activities must not exceed total_activities');
+    const pct = d.attendance_percentage;
+    if (typeof pct !== 'number' || !Number.isFinite(pct) || pct < 0 || pct > 100) {
+      throw new Error('attendance_percentage must be a number between 0 and 100');
+    }
+    return {
+      kind: 'eligibility',
+      eventId: reqStr(d, 'event_id'),
+      userId: reqStr(d, 'user_id'),
+      registrationId: optStr(d, 'registration_id'),
+      attendedActivities: attended,
+      totalActivities: total,
+      attendancePercentage: pct,
     };
   }
   if (Object.hasOwn(REGISTRATION_STATUS, type)) {

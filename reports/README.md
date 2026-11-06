@@ -40,15 +40,34 @@ Out-of-range or non-integer values are a 400 `VALIDATION_ERROR`.
 | Endpoint | Returns |
 |---|---|
 | `GET /events` | Events owned by the caller (paginated) |
-| `GET /events/{eventId}/summary` | Event + registrations + payments + occupancy + attendance |
-| `GET /events/{eventId}/activities` | Per-activity indicators (paginated) |
+| `GET /events/{eventId}/summary` | Event + registrations + payments + occupancy + attendance + `activities` (counts by lifecycle) |
+| `GET /events/{eventId}/activities` | Per-activity indicators (paginated) + `activities` (counts by lifecycle) |
 | `GET /events/{eventId}/registrations` | Counts by status (`pending_payment`, `offered`, `confirmed`, `waitlisted`, `cancelled`, `expired`, `rejected`, `total`) |
 | `GET /events/{eventId}/payments` | Counts by status + `revenue` and `refunded` lists by currency |
-| `GET /events/{eventId}/attendance` | `confirmed`, `checkins`, `rate` |
+| `GET /events/{eventId}/attendance` | `confirmed`, `checkins`, `rate`, `certificate_eligible`, `certificate_eligible_rate` |
 
 Definitions: **occupied** (held seats) = `PENDING_PAYMENT` + `OFFERED` + `CONFIRMED` registrations (a pending payment and an offered seat both hold a seat in Subscription; `WAITLISTED` holds none);
-**occupancy rate** = occupied / sum of activity capacities; **attendance rate** = check-ins / confirmed registrations.
+**occupancy rate** = occupied / sum of activity capacities; **attendance rate** = counted check-ins / confirmed registrations.
 Rates are `null` when the denominator is 0.
+
+**Capacity rule.** Activities whose lifecycle is `CANCELLED` or `DELETED` do not count toward the event's capacity or any capacity-based rate
+(the seats held by registrations of those activities are not counted as occupied either, so the rate stays coherent). A `CANCELLED` activity
+in the per-activity list keeps its `capacity` but has `occupancy_rate: null`.
+
+**Check-in rule.** A check-in counts only while its registration is currently `CONFIRMED` (joined at query time on `registration_id`), in the
+summary, the attendance route and the per-activity figures. A check-in whose registration was cancelled later stops counting; one whose
+registration is not known yet is not counted until it arrives as `CONFIRMED`. So `attendance_rate` never exceeds 1. The `checkins` table and its
+handler are unchanged (insert-only), which keeps the projection replay-safe and order-independent.
+
+**Activity lifecycle.** `activities.lifecycle` is `OPEN`, `ENDED`, `CANCELLED` or `DELETED`. The activity list carries `lifecycle` and `ended_at`
+(set from the `ActivityEnded` message's `occurred_at`, else `null`); `DELETED` activities appear in no list or total (`items`/`total` of `/activities`
+exclude them). `activities: {"open":N,"ended":N,"cancelled":N}` (deleted excluded) is returned by the summary and by `/activities`.
+
+**Certificate eligibility.** `certificate_eligible` = number of people with an `AttendanceEligible` for the event; `certificate_eligible_rate` =
+`certificate_eligible` / distinct people with at least one counted check-in (`null` when that is 0).
+
+    "attendance": {"confirmed":4,"checkins":3,"rate":0.75,"certificate_eligible":2,"certificate_eligible_rate":0.6667}
+    "activities": {"open":1,"ended":2,"cancelled":1}
 
 Money is integer minor units (cents) grouped by currency, never summed across currencies. `revenue` is the sum of `APPROVED`
 payments, `refunded` the sum of `REFUNDED` ones; payments without a currency are grouped as `"UNKNOWN"`; both are empty lists when there is nothing:
@@ -90,8 +109,11 @@ Flat envelope (JSON): the type's fields sit at the top level, next to the envelo
 | `EventCreated`, `EventUpdated` | events | `event_id` | `organizer_id`, `name`, `status`, `starts_at`, `ends_at` |
 | `EventPublished`, `EventCancelled` | events | `event_id` | same (status is forced to `PUBLISHED` / `CANCELLED`) |
 | `ActivityCreated`, `ActivityUpdated` | events | `activity_id`, `event_id` | `name`, `capacity`, `paid` |
+| `ActivityEnded`, `ActivityCancelled` | events | `activity_id`, `event_id` | `ends_at` (unused) |
+| `ActivityDeleted` | events | `activity_id`, `event_id` | the other activity fields (unused) |
 | `RegistrationWaitlisted`, `WaitlistOffered`, `RegistrationPendingPayment`, `RegistrationConfirmed`, `RegistrationCancelled`, `RegistrationExpired`, `RegistrationRejected` | subscription | `registration_id`, `event_id`, `activity_id` | `user_id` |
 | `AttendanceRecorded` (check-in) | subscription | `registration_id`, `event_id`, `activity_id` | `user_id` |
+| `AttendanceEligible` | subscription | `event_id`, `user_id`, `attended_activities`, `total_activities`, `attendance_percentage` | `registration_id`, `activity_id` |
 | `PaymentCreated`, `PaymentApproved`, `PaymentDeclined`, `PaymentExpired`, `PaymentCancelled`, `PaymentRefunded` | payments | `payment_id`, `event_id` | `registration_id`, `activity_id`, `amount_minor`, `currency` |
 
 Type to stored status (the read model keeps only the latest state of each registration and payment):
@@ -122,7 +144,30 @@ never the payload, and the offset advances; the record is keyed `<source_topic>:
 Unknown or ignored types are not dead-lettered. If the DLQ publish fails (the producer connects in the background, or Kafka is down), the
 handler throws, the offset is not committed and the message is redelivered, so no reference is lost.
 
-Ignored like any unknown type: `AttendanceEligible`, `ActivityDeleted`, `ActivityEnded`, `ActivityCancelled`.
+`AttendanceEligible` validation: `attended_activities` and `total_activities` are non-negative integers, `total_activities >= 1`,
+`attended_activities <= total_activities`, `attendance_percentage` a finite number in [0, 100]; otherwise the message is invalid (DLQ).
+One row per (`event_id`, `user_id`) in `attendance_eligibility`, kept with the same `last_event_at` guard as the other tables (an older message never
+overwrites a newer one; a missing `registration_id` keeps the stored one).
+
+Activity lifecycle messages (`ActivityEnded` -> `ENDED`, `ActivityCancelled` -> `CANCELLED`, `ActivityDeleted` -> `DELETED`) update only
+`lifecycle` (and `ended_at` for `ENDED`), never the descriptive fields or their `last_event_at`.
+- **Rank rule.** The lifecycle only moves forward: `OPEN` < `ENDED` < `CANCELLED` < `DELETED`. A message of lower or equal rank is a no-op, so a late
+  `ActivityEnded` after `ActivityCancelled` changes nothing and applying a message twice changes nothing. `ended_at` is the first `ENDED`'s `occurred_at`.
+- **Stub rows.** These messages are keyed differently from `ActivityCreated` (by `activity_id` vs `event_id`), so they can arrive first. An unknown
+  activity is then inserted as a stub (`event_id` from the message, `name`/`capacity` `NULL`, `paid` false, `last_event_at = 'epoch'`), and any later
+  `ActivityCreated`/`ActivityUpdated` fills the descriptive fields. That upsert never touches `lifecycle`, so the lifecycle is not reset either.
+  Until then the stub is listed (unless `DELETED`) with a `null` name and capacity.
+
+Migration SQL added (idempotent, appended to the existing statements):
+
+    ALTER TABLE activities ADD COLUMN IF NOT EXISTS lifecycle text NOT NULL DEFAULT 'OPEN';
+    ALTER TABLE activities ADD COLUMN IF NOT EXISTS ended_at timestamptz;
+    CREATE TABLE IF NOT EXISTS attendance_eligibility (event_id text NOT NULL, user_id text NOT NULL, registration_id text,
+      attended_activities integer NOT NULL, total_activities integer NOT NULL, attendance_percentage numeric(5,2) NOT NULL,
+      last_event_at timestamptz NOT NULL, PRIMARY KEY (event_id, user_id));
+    CREATE INDEX IF NOT EXISTS attendance_eligibility_event_idx ON attendance_eligibility (event_id);
+
+Existing activities become `OPEN`.
 
 Rules the producers must know:
 - `EventCreated` must carry `organizer_id`, otherwise nobody can see that event's reports.
@@ -132,8 +177,6 @@ Rules the producers must know:
 
 ## Known gaps
 Not done yet (design decisions pending):
-- `ActivityDeleted`, `ActivityEnded`, `ActivityCancelled` handling; `AttendanceEligible`.
-- Check-ins survive a later cancelled registration (the check-in count is not reduced).
 - `processed_messages` grows without retention.
 
 How duplicates and reordering are handled: `processed_messages` (unique `message_id`, written in the same transaction as the effect)
@@ -154,5 +197,5 @@ while `/healthcheck` is green.
     TEST_DATABASE_URL=postgres://user:pass@localhost:5432/reports_test npm run test:integration
 
 The integration test (`test/integration/`) needs a real, throwaway PostgreSQL: it drops and recreates the reports tables, checks that the
-migration converts old-format rows (and is idempotent), then projects a realistic message sequence and asserts every report. Without
+migration converts old-format rows and adds the lifecycle columns/eligibility table (idempotent), then projects a realistic message sequence and asserts every report, plus the lifecycle rank/stub rules, eligibility and the check-in counting rule. Without
 `TEST_DATABASE_URL` it is skipped, and `npm test` never runs it.
