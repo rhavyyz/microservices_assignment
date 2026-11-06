@@ -23,5 +23,6 @@ export const config = {
     str('SUBSCRIPTION_TOPIC', 'subscription.events'),
     str('PAYMENTS_TOPIC', 'payments.events'),
   ],
+  dlqTopic: str('REPORTS_DLQ_TOPIC', 'reports.dlq'),
   topicPartitions: int('REPORTS_TOPIC_PARTITIONS', 6),
 };

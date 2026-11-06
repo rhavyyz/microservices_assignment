@@ -10,6 +10,9 @@ import { processMessage } from '../../src/projection.ts';
 import {
   activitiesSection,
   attendanceSection,
+  countActivities,
+  countOwnedEvents,
+  listOwnedEvents,
   occupancySection,
   paymentsSection,
   registrationsSection,
@@ -204,4 +207,120 @@ test('a realistic sequence is projected and reported, and replays change nothing
   // Migrating again over live data changes nothing.
   await migrate(p);
   assert.deepEqual(await snapshot(), expected);
+});
+
+test('pagination: owned events and activities, against real SQL', { skip }, async () => {
+  const p = await fresh();
+  const OWNER = 'b0000000-0000-4000-8000-0000000000a1';
+  const OTHER = 'b0000000-0000-4000-8000-0000000000a2';
+  const ev = (n: number) => `e0000000-0000-4000-8000-0000000000${String(n).padStart(2, '0')}`;
+  let seq = 0;
+  const apply = async (type: string, fields: object) => {
+    seq += 1;
+    const raw = JSON.stringify({
+      ...fields,
+      message_id: `00000000-0000-4000-8000-${String(seq).padStart(12, '0')}`,
+      schema_version: 1,
+      type,
+      occurred_at: new Date(Date.parse('2026-11-01T12:00:00.000Z') + seq * 1000).toISOString(),
+      trace_id: null,
+    });
+    const parsed = parseMessage(raw);
+    assert.ok(parsed.ok, parsed.ok ? '' : parsed.error);
+    await processMessage(p, parsed.value);
+  };
+
+  // OWNER: e1..e4 dated (e3 and e4 share a start, tie broken by event_id), e5 has no date (sorts last).
+  // Created out of order so that insertion order cannot explain the result.
+  const day = (d: number) => `2026-12-0${d}T10:00:00.000Z`;
+  const ownerEvents: [number, string | null][] = [[4, day(3)], [5, null], [2, day(2)], [3, day(3)], [1, day(1)]];
+  for (const [n, starts_at] of ownerEvents) {
+    await apply('EventCreated', { event_id: ev(n), organizer_id: OWNER, name: `E${n}`, starts_at });
+  }
+  for (const n of [6, 7]) await apply('EventCreated', { event_id: ev(n), organizer_id: OTHER, name: `E${n}`, starts_at: day(1) });
+
+  const expectedOrder = [ev(1), ev(2), ev(3), ev(4), ev(5)];
+  const ids = (rows: { event_id: string }[]) => rows.map((r) => r.event_id);
+
+  // Counts are per owner.
+  assert.equal(await countOwnedEvents(p, OWNER), 5);
+  assert.equal(await countOwnedEvents(p, OTHER), 2);
+  assert.equal(await countOwnedEvents(p, 'nobody'), 0);
+
+  // First page: the first two in the list order (starts_at ascending, no date last, then event_id).
+  assert.deepEqual(ids(await listOwnedEvents(p, OWNER, { limit: 2, offset: 0 })), [ev(1), ev(2)]);
+  assert.deepEqual(ids(await listOwnedEvents(p, OTHER, { limit: 2, offset: 0 })), [ev(6), ev(7)]);
+
+  // Consecutive pages are disjoint and together are the whole list, in order.
+  const p1 = ids(await listOwnedEvents(p, OWNER, { limit: 2, offset: 0 }));
+  const p2 = ids(await listOwnedEvents(p, OWNER, { limit: 2, offset: 2 }));
+  const p3 = ids(await listOwnedEvents(p, OWNER, { limit: 2, offset: 4 }));
+  assert.deepEqual([p1.length, p2.length, p3.length], [2, 2, 1]);
+  assert.equal(new Set([...p1, ...p2, ...p3]).size, 5);
+  assert.deepEqual([...p1, ...p2, ...p3], expectedOrder);
+
+  // Beyond the end: empty list, the total is unaffected.
+  assert.deepEqual(await listOwnedEvents(p, OWNER, { limit: 2, offset: 5 }), []);
+  assert.deepEqual(await listOwnedEvents(p, OWNER, { limit: 20, offset: 100 }), []);
+  assert.equal(await countOwnedEvents(p, OWNER), 5);
+
+  // No page (null limit): everything, same order.
+  assert.deepEqual(ids(await listOwnedEvents(p, OWNER)), expectedOrder);
+  assert.equal((await listOwnedEvents(p, OTHER)).length, 2);
+
+  // Activities: one event with 5 (names out of order, two share a name), plus per-activity figures.
+  const E = ev(1);
+  const act = (n: number) => `a0000000-0000-4000-8000-0000000000${String(n).padStart(2, '0')}`;
+  const reg = (n: number) => `c0000000-0000-4000-8000-0000000000${String(n).padStart(2, '0')}`;
+  const pay = (n: number) => `d0000000-0000-4000-8000-0000000000${String(n).padStart(2, '0')}`;
+  const names: [number, string][] = [[3, 'Gamma'], [1, 'Alpha'], [5, 'Beta'], [4, 'Beta'], [2, 'Delta']];
+  for (const [n, name] of names) {
+    await apply('ActivityCreated', { activity_id: act(n), event_id: E, name, capacity: n, paid: true });
+  }
+  // An activity of another event must not leak in.
+  await apply('ActivityCreated', { activity_id: act(9), event_id: ev(2), name: 'Zeta', capacity: 1, paid: true });
+  // Alpha(1): 2 confirmed, 1 check-in, payments BRL+USD. Beta(4): 1 waitlisted. Beta(5): 1 pending payment, a refunded payment.
+  for (const n of [1, 2]) {
+    await apply('RegistrationConfirmed', { registration_id: reg(n), event_id: E, activity_id: act(1), user_id: `u${n}` });
+  }
+  await apply('RegistrationWaitlisted', { registration_id: reg(3), event_id: E, activity_id: act(4), user_id: 'u3' });
+  await apply('RegistrationPendingPayment', { registration_id: reg(4), event_id: E, activity_id: act(5), user_id: 'u4' });
+  await apply('AttendanceRecorded', { registration_id: reg(1), event_id: E, activity_id: act(1), user_id: 'u1' });
+  await apply('PaymentApproved', { payment_id: pay(1), registration_id: reg(1), event_id: E, activity_id: act(1), amount_minor: 2500, currency: 'BRL' });
+  await apply('PaymentApproved', { payment_id: pay(2), registration_id: reg(2), event_id: E, activity_id: act(1), amount_minor: 1000, currency: 'USD' });
+  await apply('PaymentApproved', { payment_id: pay(3), registration_id: reg(4), event_id: E, activity_id: act(5), amount_minor: 700, currency: 'BRL' });
+  await apply('PaymentRefunded', { payment_id: pay(3), registration_id: reg(4), event_id: E, activity_id: act(5), amount_minor: 700, currency: 'BRL' });
+
+  // Order: name, then activity_id: Alpha(1), Beta(4), Beta(5), Delta(2), Gamma(3).
+  const actOrder = [act(1), act(4), act(5), act(2), act(3)];
+  const aids = (rows: { activity_id: string }[]) => rows.map((r) => r.activity_id);
+  assert.equal(await countActivities(p, E), 5);
+  assert.equal(await countActivities(p, ev(2)), 1);
+  assert.equal(await countActivities(p, ev(3)), 0);
+
+  const all = await activitiesSection(p, E);
+  assert.deepEqual(aids(all), actOrder);
+
+  const a1 = await activitiesSection(p, E, { limit: 2, offset: 0 });
+  const a2 = await activitiesSection(p, E, { limit: 2, offset: 2 });
+  const a3 = await activitiesSection(p, E, { limit: 2, offset: 4 });
+  assert.deepEqual([a1.length, a2.length, a3.length], [2, 2, 1]);
+  assert.deepEqual(aids([...a1, ...a2, ...a3]), actOrder);
+  assert.deepEqual(await activitiesSection(p, E, { limit: 2, offset: 5 }), []);
+  assert.equal(await countActivities(p, E), 5);
+
+  // Figures inside a page equal those of the unpaginated list: a page changes which rows, not their values.
+  assert.deepEqual([...a1, ...a2, ...a3], all);
+  const alpha = a1[0];
+  assert.equal(alpha.name, 'Alpha');
+  assert.equal(alpha.confirmed, 2);
+  assert.equal(alpha.checkins, 1);
+  assert.equal(alpha.payments_approved, 2);
+  assert.deepEqual(alpha.revenue, [{ currency: 'BRL', amount_minor: 2500 }, { currency: 'USD', amount_minor: 1000 }]);
+  assert.deepEqual(alpha.refunded, []);
+  assert.equal(a1[1].waitlisted, 1); // Beta(4)
+  assert.equal(a2[0].activity_id, act(5));
+  assert.equal(a2[0].pending_payment, 1);
+  assert.deepEqual(a2[0].revenue, []);
+  assert.deepEqual(a2[0].refunded, [{ currency: 'BRL', amount_minor: 700 }]);
 });

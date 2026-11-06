@@ -4,19 +4,44 @@ Read-only indicators for organizers (RF11): registrations, payments, occupancy a
 It never reads another service's database: it builds its own read model (PostgreSQL `reports-db`) from Kafka events.
 
 - Kind `reports`, registered in the service-discoverer with the shared TypeScript lib (`discovery`, `service-discoverer/Libs/typescript`, linked as a `file:` dependency).
-- `GET /healthcheck`: 200 only when Postgres answers a ping, else 503. Kafka being down does **not** fail it (RQ03).
-- `GET /openapi.json`: generated from the routes; the gateway reads it at startup.
+- `GET /healthcheck`: 503 until the first migration succeeded, and 503 whenever the Postgres ping fails; 200 otherwise. Body `{"status":"ok"|"unavailable"}`. Kafka being down does **not** fail it (RQ03).
+- `GET /openapi.json`: generated from the routes; the gateway reads it at startup. Private: neither it nor `/healthcheck` declares `x-gateway`.
 - Boots even if Postgres, Kafka or the discoverer are down; migration, consumer and registration retry in the background.
 
 ## Endpoints (through the gateway: `/reports/...`)
 All need `X-User-Id`. The caller must be the `organizer_id` of the event (taken from the `Event*` messages);
 anything else is a 404, same as an unknown event (RN07).
 
+**Identity.** `X-User-Id` (set by the gateway from the verified JWT) must be a UUID; missing or malformed is a 401 `UNAUTHENTICATED`.
+`X-User-Roles` is not used: the only access rule is ownership of the event (no administrator profile). A path id (`eventId`) that is
+not a UUID gets the same 404 `EVENT_NOT_FOUND` as an unknown or someone else's event, without touching the database.
+
+**Trace id.** The inbound `X-Trace-Id` is kept only when it matches `^[A-Za-z0-9._-]{8,64}$`; otherwise a UUID is generated. It is the
+request id in the logs, the `traceId` of error bodies and the `X-Trace-Id` header of every response. `X-Request-Id` and `X-Correlation-Id` are ignored.
+
+**Errors.** Every error is `application/problem+json` with `{title, status, code, detail?, traceId}` (`traceId` = the request's trace id):
+
+| Status | `code` | When |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` | invalid query parameter (`limit`, `offset`) |
+| 401 | `UNAUTHENTICATED` | `X-User-Id` missing or not a UUID |
+| 404 | `EVENT_NOT_FOUND` | unknown event, not a UUID, or not owned by the caller (indistinguishable) |
+| 404 | `NOT_FOUND` | unknown route |
+| 500 | `INTERNAL_ERROR` | anything unexpected; no internals in the body (they stay in the log) |
+
+    {"title":"Not Found","status":404,"code":"EVENT_NOT_FOUND","detail":"event not found","traceId":"8c1f0f3e-5c1c-4d63-9a2e-2f5f4d2b7a10"}
+
+`/healthcheck` keeps its own body (`{"status":"ok"}` / `{"status":"unavailable"}`) because the discoverer polls the status code.
+
+**Pagination.** `GET /events` and `GET /events/{eventId}/activities` accept `limit` (1-100, default 20) and `offset` (>= 0, default 0) and
+return `{"items":[...],"total":N,"limit":20,"offset":0}`; `total` is the number of rows before paging. The item shapes are unchanged.
+Out-of-range or non-integer values are a 400 `VALIDATION_ERROR`.
+
 | Endpoint | Returns |
 |---|---|
-| `GET /events` | Events owned by the caller |
+| `GET /events` | Events owned by the caller (paginated) |
 | `GET /events/{eventId}/summary` | Event + registrations + payments + occupancy + attendance |
-| `GET /events/{eventId}/activities` | Per-activity indicators |
+| `GET /events/{eventId}/activities` | Per-activity indicators (paginated) |
 | `GET /events/{eventId}/registrations` | Counts by status (`pending_payment`, `offered`, `confirmed`, `waitlisted`, `cancelled`, `expired`, `rejected`, `total`) |
 | `GET /events/{eventId}/payments` | Counts by status + `revenue` and `refunded` lists by currency |
 | `GET /events/{eventId}/attendance` | `confirmed`, `checkins`, `rate` |
@@ -34,15 +59,19 @@ payments, `refunded` the sum of `REFUNDED` ones; payments without a currency are
 
 `GET /events/{eventId}/activities` items carry the same registration counters, `payments_approved`, `revenue` and `refunded`.
 
-API change (breaking): `registrations.pending` is now `pending_payment` (and `offered`, `rejected` are new); `payments.confirmed`/`refused` are
+API change (breaking): `GET /events` and `GET /events/{eventId}/activities` now return `{items,total,limit,offset}` instead of `{items}` and
+return only the first 20 items unless `limit`/`offset` say otherwise (page through with `offset`). Errors are now `application/problem+json` (they used to be `{"error": "..."}` or plain text).
+Also: `registrations.pending` is now `pending_payment` (and `offered`, `rejected` are new); `payments.confirmed`/`refused` are
 now `approved`/`declined` (`refunded_count` is new); the numeric `payments.revenue` is now the list above; per activity `pending` -> `pending_payment`,
 `payments_confirmed` -> `payments_approved`, and numeric `revenue` -> list.
 
-Rollout: the gateway adds new endpoints as private. Publish them once:
+Gateway: each business operation of `/openapi.json` declares its settings with the gateway's `x-gateway` extension, so no manual
+admin call is needed. The gateway applies it when it first creates the endpoint (insert-only; later changes go through its admin API):
 
-    for p in /events /events/{eventId}/summary /events/{eventId}/activities /events/{eventId}/registrations /events/{eventId}/payments /events/{eventId}/attendance; do
-      curl -X PUT localhost:8080/admin/endpoints -d "{\"kind\":\"reports\",\"method\":\"GET\",\"path\":\"$p\",\"isPublic\":true,\"requireAuth\":true}"
-    done
+    "x-gateway": {"isPublic": true, "requireAuth": true, "rateLimitBy": "user_or_ip", "maxPerMin": 60}
+
+All six routes declare it. `/healthcheck` and `/openapi.json` do not, so they stay private (404 through the gateway). The OpenAPI also
+documents the `X-User-Id` header (security scheme `userId`) and the problem responses of each route.
 
 ## Event contract (what the other services publish)
 Topics (one per producer, key set by the producer, e.g. `event_id`, `activity_id` or `registration_id`, so related messages stay ordered):
@@ -84,19 +113,28 @@ and `REFUSED` -> `DECLINED` for payments) and backfill `amount_minor` from `amou
 
 Registration and check-in messages must carry `event_id` (invalid otherwise: `event_id is required`).
 
+Dead-letter queue: `reports.dlq` (`REPORTS_DLQ_TOPIC`), created at startup like the input topics (create-if-absent, same partitions).
+An INVALID message (empty, unparsable JSON, contract violation, unsupported `schema_version`) is published there as a reference only,
+never the payload, and the offset advances; the record is keyed `<source_topic>:<partition>`:
+
+    {"source_topic":"payments.events","partition":3,"offset":42,"reason":"PaymentApproved: payment_id is required"}
+
+Unknown or ignored types are not dead-lettered. If the DLQ publish fails (the producer connects in the background, or Kafka is down), the
+handler throws, the offset is not committed and the message is redelivered, so no reference is lost.
+
 Ignored like any unknown type: `AttendanceEligible`, `ActivityDeleted`, `ActivityEnded`, `ActivityCancelled`.
 
 Rules the producers must know:
 - `EventCreated` must carry `organizer_id`, otherwise nobody can see that event's reports.
 - `message_id` must be unique per message and stable on resend: it is the idempotency key.
 - Every message carries the full identifiers (`event_id`, `activity_id`), because the service never queries others.
-- Unknown types are ignored; invalid messages are logged and skipped (they never block a partition).
+- Unknown types are ignored; invalid messages are sent to the DLQ as a reference and skipped (they never block a partition).
 
 ## Known gaps
 Not done yet (design decisions pending):
 - `ActivityDeleted`, `ActivityEnded`, `ActivityCancelled` handling; `AttendanceEligible`.
 - Check-ins survive a later cancelled registration (the check-in count is not reduced).
-- Monorepo conventions: problem+json errors, UUID identity, trace id rule, `x-gateway`, DLQ.
+- `processed_messages` grows without retention.
 
 How duplicates and reordering are handled: `processed_messages` (unique `message_id`, written in the same transaction as the effect)
 cuts duplicates; each row keeps the latest state and ignores messages older than `last_event_at`. Totals are computed from that
@@ -104,11 +142,15 @@ state at query time, never kept as counters, so replays cannot corrupt them.
 
 ## Env
 `PORT` (8080), `DATABASE_URL` (`postgres://reports:reports@reports-db:5432/reports`, dev default), `KAFKA_BROKERS` (`kafka:9092`),
-`REPORTS_CONSUMER_GROUP`, `REPORTS_TOPIC_PARTITIONS` (6), the three topic names above. The `discovery` lib reads `SERVICE_DISCOVERER_URL`
-(`http://service-discoverer:8080`) and `SERVICE_HOST` (`<hostname>:<PORT>`) itself. `REPORTS_DB_PASSWORD` (compose) sets the DB password; if you change it, also set `DATABASE_URL` on the `reports` service.
+`REPORTS_CONSUMER_GROUP`, `REPORTS_TOPIC_PARTITIONS` (6), the three topic names above, `REPORTS_DLQ_TOPIC` (`reports.dlq`). The `discovery` lib reads `SERVICE_DISCOVERER_URL`
+(`http://service-discoverer:8080`) and `SERVICE_HOST` (`<hostname>:<PORT>`) itself. `REPORTS_DB_PASSWORD` (compose) sets the DB password; the root `docker-compose.yml` builds the `reports` service's `DATABASE_URL` from it, so changing it needs no other edit.
+
+The kafkajs consumer uses `metadataMaxAge` 10 s (a topic created later is noticed quickly). If kafkajs gives up on the consumer (its `CRASH` event without
+its own restart), the service disconnects it and starts a new one after a 5 s delay (start failures back off up to 30 s) instead of staying dead
+while `/healthcheck` is green.
 
 ## Tests
-    npm test      # node:test, no dependencies (contract parsing, metrics, routes with a fake pool)
+    npm test      # node:test, no dependencies (contract parsing, metrics, routes with a fake pool, DLQ handling)
     TEST_DATABASE_URL=postgres://user:pass@localhost:5432/reports_test npm run test:integration
 
 The integration test (`test/integration/`) needs a real, throwaway PostgreSQL: it drops and recreates the reports tables, checks that the

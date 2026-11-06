@@ -18,13 +18,27 @@ export async function findEvent(pool: Pool, eventId: string): Promise<EventRow |
   return r.rows[0] ?? null;
 }
 
-export async function listOwnedEvents(pool: Pool, userId: string): Promise<EventRow[]> {
+/** A page of a list: `limit` rows after skipping `offset`. */
+export type Page = { limit: number; offset: number };
+
+export async function listOwnedEvents(pool: Pool, userId: string, page?: Page): Promise<EventRow[]> {
   const r = await pool.query<EventRow>(
     `SELECT event_id, organizer_id, name, status, starts_at, ends_at
-       FROM events WHERE organizer_id = $1 ORDER BY starts_at NULLS LAST, event_id`,
-    [userId],
+       FROM events WHERE organizer_id = $1 ORDER BY starts_at NULLS LAST, event_id
+       LIMIT $2 OFFSET $3`,
+    [userId, page?.limit ?? null, page?.offset ?? 0], // LIMIT NULL = no limit
   );
   return r.rows;
+}
+
+export async function countOwnedEvents(pool: Pool, userId: string): Promise<number> {
+  const r = await pool.query<{ total: number }>('SELECT count(*)::int AS total FROM events WHERE organizer_id = $1', [userId]);
+  return r.rows[0].total;
+}
+
+export async function countActivities(pool: Pool, eventId: string): Promise<number> {
+  const r = await pool.query<{ total: number }>('SELECT count(*)::int AS total FROM activities WHERE event_id = $1', [eventId]);
+  return r.rows[0].total;
 }
 
 export type Money = { currency: string; amount_minor: number };
@@ -124,7 +138,7 @@ export async function attendanceSection(pool: Pool, eventId: string) {
   return { confirmed, checkins, rate: ratio(checkins, confirmed) };
 }
 
-export async function activitiesSection(pool: Pool, eventId: string) {
+export async function activitiesSection(pool: Pool, eventId: string, page?: Page) {
   const r = await pool.query<{
     activity_id: string; name: string | null; capacity: number | null; paid: boolean;
     pending_payment: number; offered: number; confirmed: number; waitlisted: number; cancelled: number;
@@ -153,8 +167,9 @@ export async function activitiesSection(pool: Pool, eventId: string) {
        LEFT JOIN (SELECT activity_id, count(*)::int AS checkins
                     FROM checkins WHERE event_id = $1 GROUP BY activity_id) c USING (activity_id)
       WHERE a.event_id = $1
-      ORDER BY a.name NULLS LAST, a.activity_id`,
-    [eventId],
+      ORDER BY a.name NULLS LAST, a.activity_id
+      LIMIT $2 OFFSET $3`,
+    [eventId, page?.limit ?? null, page?.offset ?? 0], // LIMIT NULL = no limit
   );
   const money = await moneyRows(pool, eventId, true);
   return r.rows.map((row) => {
