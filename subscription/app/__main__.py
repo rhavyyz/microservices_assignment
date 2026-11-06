@@ -1,6 +1,5 @@
 """Entrada: python -m app. Migrações: python -m app migrate."""
 
-import logging
 import os
 import sys
 
@@ -8,8 +7,9 @@ import uvicorn
 
 from .config import Settings
 from .db import Database
+from .logging_config import configure_logging
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+configure_logging()
 if len(sys.argv) > 1 and sys.argv[1] == "migrate":
     db = Database(Settings.from_env().database_url)
     db.open()
@@ -18,4 +18,10 @@ if len(sys.argv) > 1 and sys.argv[1] == "migrate":
     finally:
         db.close()
 else:
-    uvicorn.run("app.api:create_app", factory=True, host="0.0.0.0", port=int(os.getenv("PORT", "8080")))
+    uvicorn.run(
+        "app.api:create_app",
+        factory=True,
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", "8080")),
+        access_log=False,
+    )

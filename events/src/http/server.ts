@@ -5,6 +5,7 @@ import type pg from 'pg';
 import { ping } from '../db/pool.ts';
 import { AppError } from '../errors.ts';
 import { traceIdFrom, toProblem } from './problems.ts';
+import { accessLogOptions, bindUserToLog } from './access-log.ts';
 
 export type ServerDeps = {
   pool: pg.Pool;
@@ -16,11 +17,10 @@ export type ServerDeps = {
 /** The app with its cross-cutting parts (ids, errors, health, OpenAPI); the API routes come from routes.ts. */
 export async function buildServer(deps: ServerDeps) {
   const app = Fastify({
-    logger: deps.logger ?? true,
+    ...accessLogOptions(deps.logger),
     // The gateway's X-Trace-Id becomes the trace id (req.id): it is on every log line, in error bodies and
     // in the trace_id of the messages this request produces (RQ06).
     requestIdHeader: false,
-    requestIdLogLabel: 'traceId',
     genReqId: (req) => traceIdFrom(req.headers['x-trace-id'], randomUUID),
     // Unknown fields are rejected (400), never silently dropped: e.g. `capacity` in a PATCH.
     ajv: { customOptions: { removeAdditional: false } },
@@ -37,6 +37,8 @@ export async function buildServer(deps: ServerDeps) {
       },
     },
   });
+
+  bindUserToLog(app);
 
   app.addHook('onRequest', async (req, reply) => {
     reply.header('x-trace-id', req.id);

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
+import Fastify, { type FastifyReply, type FastifyRequest, type FastifyServerOptions } from 'fastify';
 import swagger from '@fastify/swagger';
 import type { Pool } from 'pg';
 import { config } from './config.ts';
@@ -7,6 +7,7 @@ import { validateCreate } from './contracts.ts';
 import { createPayment, getById, getByRegistration, settleById, type PaymentRow } from './payments.ts';
 import type { Status } from './state.ts';
 import { fetchRegistration, type FetchRegistration } from './subscription.ts';
+import { accessLogOptions, bindUserToLog } from './access-log.ts';
 
 const str = { type: 'string' } as const;
 
@@ -100,16 +101,23 @@ const ACTIONS: Record<string, { target: Status; reason: string }> = {
   expire: { target: 'EXPIRED', reason: 'simulated_expiration' },
 };
 
-export async function buildServer(pool: Pool, lookup: FetchRegistration = fetchRegistration, now: () => Date = () => new Date()) {
+export async function buildServer(
+  pool: Pool,
+  lookup: FetchRegistration = fetchRegistration,
+  now: () => Date = () => new Date(),
+  logger?: FastifyServerOptions['logger'],
+) {
   // coerceTypes off: Fastify's default would turn "2500" into 2500 before validation; the contract says integer.
   const app = Fastify({
-    logger: true,
+    ...accessLogOptions(logger),
     requestIdHeader: false,
     genReqId: (req) => traceIdFrom(req.headers['x-trace-id']),
     ajv: { customOptions: { coerceTypes: false } },
   });
 
   await app.register(swagger, { openapi: { info: { title: 'Payments service', version: '1.0.0' } } });
+
+  bindUserToLog(app);
 
   app.addHook('onSend', async (req, reply) => {
     reply.header('x-trace-id', req.id);

@@ -45,7 +45,12 @@ Sources of truth, in order: the code, the service's own README/`CONTRACTS.md`, t
     log ids. Never put secrets in committed files.
 11. **Errors are `application/problem+json`** with at least `status`, `title`, `code`, `traceId` (where the service
     follows the Python/Java pattern). `X-Trace-Id` is accepted (8–64 chars of `[A-Za-z0-9._-]`), generated otherwise,
-    and always echoed.
+    and always echoed. **Every arriving call is logged once**, after the response, with the same fields in every
+    service: method, path (never the query string), status, duration, user (`X-User-Id` only when it is a UUID, else
+    `-`) and `trace_id` (`/healthcheck` is skipped). The Go and Python services and Users print it as one line
+    (`GET /x status=200 duration=14ms user=<uuid|-> trace_id=<id>`); the Fastify services write the equivalent
+    structured `request completed` record (`traceId`, `userId`, `req.method`, `req.url`, `res.statusCode`,
+    `responseTime`). Never log bodies, `Authorization` or other header values.
 12. **Small, boring, documented.** Match the surrounding code's style and comment density. Record decisions that took
     a debate as ADRs (`docs/decisions/ADR-00N-*.md`, Portuguese), keep each service's README current, and update
     `docs/integration/contracts-with-team.md` when a contract with another service changes.

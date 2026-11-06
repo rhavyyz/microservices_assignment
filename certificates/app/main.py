@@ -1,4 +1,4 @@
-import logging
+import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -6,9 +6,11 @@ from fastapi import FastAPI
 from app.api.routes.certificates import router
 from app.config import settings
 from app.errors import install_error_handling
+from app.logging_config import configure_logging
 from app.runtime import Runtime
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+if "pytest" not in sys.modules:  # the real server only; tests keep pytest's own log capture
+    configure_logging()
 
 
 @asynccontextmanager
