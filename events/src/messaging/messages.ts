@@ -1,17 +1,16 @@
-// Messages this service publishes on the events topic (default `events-events`). See README.md.
+// Messages this service publishes on the events topic (default `events.events`). See docs/contracts.md.
 // One mapper per entity, so created/updated/published/cancelled always carry the same fields.
 
 import { CURRENCY, type ActivityRow, type EventRow } from '../domain/model.ts';
-import type { SeatRejection } from '../domain/rules.ts';
 
-export type EventMessageType = 'event.created' | 'event.updated' | 'event.published' | 'event.cancelled';
-export type ActivityMessageType = 'activity.created' | 'activity.updated' | 'activity.deleted';
-export type SeatMessageType = 'seat.reserved' | 'seat.rejected' | 'seat.released';
+export type EventMessageType = 'EventCreated' | 'EventUpdated' | 'EventPublished' | 'EventCancelled';
+export type ActivityMessageType = 'ActivityCreated' | 'ActivityUpdated' | 'ActivityDeleted';
+export type ActivityLifecycleMessageType = 'ActivityEnded' | 'ActivityCancelled';
 
-/** A message before it gets its envelope: type, partition key and data. */
+/** A message before it gets its envelope: type, partition key and the fields that sit next to the envelope's. */
 export type Outgoing = { type: string; key: string; data: Record<string, unknown> };
 
-// `name` (not `title`) is the field the reports service reads.
+// `name` (not `title`) is the field the consumers read.
 export function eventMessage(type: EventMessageType, e: EventRow): Outgoing {
   return {
     type,
@@ -40,8 +39,7 @@ export function activityMessage(type: ActivityMessageType, a: ActivityRow): Outg
       starts_at: a.starts_at.toISOString(),
       ends_at: a.ends_at.toISOString(),
       capacity: a.capacity,
-      available: a.available,
-      price_cents: a.price_cents,
+      amount_minor: a.price_cents,
       currency: CURRENCY,
       paid: a.paid,
       waitlist_enabled: a.waitlist_enabled,
@@ -49,26 +47,11 @@ export function activityMessage(type: ActivityMessageType, a: ActivityRow): Outg
   };
 }
 
-export type SeatRef = { registration_id: string; event_id: string; activity_id: string; user_id: string | null };
-
-// Keyed by registration_id: the subscription service sees the answers about one registration in order.
-function seatMessage(type: SeatMessageType, ref: SeatRef, extra: Record<string, unknown>): Outgoing {
-  return { type, key: ref.registration_id, data: { ...ref, ...extra } };
-}
-
-/** The seat is held. Carries the price so the subscription service knows whether to start a payment (RN02). */
-export function seatReserved(ref: SeatRef, a: ActivityRow): Outgoing {
-  return seatMessage('seat.reserved', ref, {
-    price_cents: a.price_cents, currency: CURRENCY, paid: a.paid, available: a.available,
-  });
-}
-
-/** No seat. `waitlist_enabled` tells the subscription service whether to put the registration on the waitlist. */
-export function seatRejected(ref: SeatRef, reason: SeatRejection, a: ActivityRow | null): Outgoing {
-  return seatMessage('seat.rejected', ref, { reason, waitlist_enabled: a?.waitlist_enabled ?? false });
-}
-
-/** A seat was freed (RN03/RN04): the subscription service may offer it to the next one on the waitlist. */
-export function seatReleased(ref: SeatRef, a: ActivityRow): Outgoing {
-  return seatMessage('seat.released', ref, { available: a.available, waitlist_enabled: a.waitlist_enabled });
+// Keyed by activity_id: Subscription applies the end or cancellation of one activity in order.
+export function activityLifecycleMessage(type: ActivityLifecycleMessageType, a: ActivityRow): Outgoing {
+  return {
+    type,
+    key: a.id,
+    data: { activity_id: a.id, event_id: a.event_id, ends_at: a.ends_at.toISOString() },
+  };
 }

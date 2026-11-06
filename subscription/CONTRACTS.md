@@ -1,8 +1,7 @@
 # Contratos de integração de Inscrições — v1
 
-Estes contratos são implementados **no lado consumidor/produtor de Inscrições**. As APIs de
-Eventos abaixo são propostas para a equipe, não endpoints já existentes no
-monorepo. Pagamentos reage aos eventos de Inscrições e lê fatos pelo endpoint interno descrito adiante. Usuários, Gateway, Discoverer e o formato de Notificações seguem o código existente.
+Estes contratos são implementados **no lado consumidor/produtor de Inscrições**. As APIs e
+mensagens de Eventos abaixo são **implementadas por Eventos** (ver ADR-008). Pagamentos reage aos eventos de Inscrições e lê fatos pelo endpoint interno descrito adiante. Usuários, Gateway, Discoverer e o formato de Notificações seguem o código existente.
 
 ## Descoberta, identidade e HTTP
 
@@ -14,7 +13,7 @@ monorepo. Pagamentos reage aos eventos de Inscrições e lê fatos pelo endpoint
   (separados por vírgula; ausente sem papéis). Inscrições não valida JWT e só aceita a
   identidade desses cabeçalhos (401 `UNAUTHENTICATED` se `X-User-Id` faltar ou for inválido).
 - Chamadas a Eventos feitas em nome de um usuário enviam `X-User-Id`, `X-User-Roles` (somente
-  se houver papéis), `X-Trace-Id` e o `Authorization` do usuário (repassado sem verificação).
+  se houver papéis), `X-Trace-Id` e o `Authorization` do usuário (repassado sem verificação; Eventos o ignora e lê só `X-User-Id`/`X-User-Roles`).
   Chamadas de fundo (reação a `events.events` e a `payments.events`) não carregam identidade.
   Os endpoints `/internal/...` são protegidos por isolamento de rede, não por token; ficam fora do
   OpenAPI e do `scripts/register_gateway.py`, e não são destinados ao Gateway.
@@ -42,7 +41,9 @@ monorepo. Pagamentos reage aos eventos de Inscrições e lê fatos pelo endpoint
 
 `capacity` nunca muda. O serviço não recebe nem devolve contagem de ocupação para Eventos.
 Inscrições valida igualdade do ID retornado. Datas exigem fuso; valores monetários são
-inteiros não negativos (2500 = R$ 25,00 em BRL). Alteração de preço afeta apenas inscrições
+inteiros não negativos (2500 = R$ 25,00 em BRL). Eventos devolve também campos descritivos
+(`title`, `description`, `speaker`, `location`, `paid`, `lifecycle`, `ended_at`, `created_at`,
+`updated_at`); Inscrições os **ignora** e exige apenas os campos acima. Alteração de preço afeta apenas inscrições
 criadas posteriormente; inclusive a fila preserva o valor originalmente apresentado.
 
 `GET /api/v1/activities/{activity_id}/permissions/me`, com Bearer do organizador:
@@ -59,7 +60,7 @@ administrativa; o papel `ORGANIZER` sozinho não concede acesso a todos os event
 | Tópico padrão | Produtor | Consumidor | Chave |
 |---|---|---|---|
 | `payments.events` | Pagamentos | Inscrições | registration_id |
-| `events.events` | Eventos | Inscrições / outros | activity_id |
+| `events.events` | Eventos | Inscrições / outros | `activity_id` (`ActivityEnded`/`ActivityCancelled`); `event_id` (demais tipos) |
 | `subscription.events` | Inscrições | Pagamentos / Certificados / Relatórios | registration_id |
 | `notifications` | Inscrições / outros | Notificações | user_id |
 | `subscription.dlq` | Inscrições | Operação/manual | tópico:partição |
@@ -153,11 +154,21 @@ Eventos publica em `events.events`:
   "message_id": "88888888-8888-4888-8888-888888888888",
   "schema_version": 1,
   "type": "ActivityEnded",
-  "activity_id": "11111111-1111-4111-8111-111111111111"
+  "occurred_at": "2026-12-02T18:00:00Z",
+  "trace_id": "req-a1b2c3d4",
+  "activity_id": "11111111-1111-4111-8111-111111111111",
+  "event_id": "22222222-2222-4222-8222-222222222222",
+  "ends_at": "2026-12-01T18:00:00Z"
 }
 ```
 
-Tipos: `ActivityEnded` e `ActivityCancelled`. O recurso deve continuar consultável por sua
+Eventos publica um envelope plano (`message_id`, `schema_version` 1, `type`, `occurred_at`, `trace_id`, ...)
+com todos os seus tipos: `ActivityEnded`, `ActivityCancelled`, `EventCreated`, `EventUpdated`,
+`EventPublished`, `EventCancelled`, `ActivityCreated`, `ActivityUpdated` e `ActivityDeleted`. Inscrições
+trata só `ActivityEnded` e `ActivityCancelled` (obrigatório `activity_id`; demais campos ignorados) e
+**ignora os outros tipos**: a mensagem é confirmada sem DLQ. Vão para a DLQ (`INVALID_CONTRACT`) apenas
+mensagens inválidas: não JSON, `schema_version` diferente de 1, `message_id` ou `type` ausente/inválido, ou
+`activity_id` ausente/inválido num tipo tratado. Inscrições deduplica por `message_id`. O recurso deve continuar consultável por sua
 API após encerramento/cancelamento. Encerramento antecipado à data final não é aplicado;
 é repetido sem avançar o offset. Cancelamento é terminal e prevalece sobre encerramento.
 

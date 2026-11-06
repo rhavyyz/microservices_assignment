@@ -1,6 +1,6 @@
 // JSON schemas of the HTTP API. Fastify validates requests against them, serializes responses with them
 // (only the listed fields go out) and @fastify/swagger turns them into /openapi.json.
-import { EVENT_STATUSES } from '../domain/model.ts';
+import { ACTIVITY_LIFECYCLES, CURRENCY, EVENT_STATUSES } from '../domain/model.ts';
 
 const text = (maxLength: number) => ({ type: 'string', minLength: 1, maxLength, pattern: '\\S' }) as const;
 const optionalText = (maxLength: number) => ({ type: ['string', 'null'], maxLength }) as const;
@@ -30,20 +30,20 @@ const activityFields = {
   location: optionalText(300),
   starts_at: dateTime,
   ends_at: dateTime,
-  price_cents: { type: 'integer', minimum: 0, maximum: 100_000_000, description: 'Registration fee in cents of BRL; 0 = free' },
+  amount_minor: { type: 'integer', minimum: 0, maximum: 100_000_000, description: 'Registration fee in minor units (cents of BRL); 0 = free' },
   waitlist_enabled: { type: 'boolean', description: 'Whether refused registrations may wait for a seat (handled by subscription)' },
 };
 
 export const createEventBody = object(eventFields, { required: ['title', 'starts_at', 'ends_at'] });
 export const patchEventBody = object(eventFields, { minProperties: 1 });
 
-const capacity = { type: 'integer', minimum: 1, maximum: 100_000, description: 'Seats; immutable after creation' };
+const capacity = { type: 'integer', minimum: 1, maximum: 100_000, description: 'Maximum seats; immutable after creation. Subscription counts the seats taken' };
 export const createActivityBody = object({ ...activityFields, capacity }, { required: ['title', 'starts_at', 'ends_at', 'capacity'] });
 /** No `capacity`: sending it is a 400, since it never changes. */
 export const patchActivityBody = object(activityFields, { minProperties: 1 });
 
-export const eventParams = object({ eventId: uuid }, { required: ['eventId'] });
-export const activityParams = object({ activityId: uuid }, { required: ['activityId'] });
+export const eventParams = object({ event_id: uuid }, { required: ['event_id'] });
+export const activityParams = object({ activity_id: uuid }, { required: ['activity_id'] });
 
 export const listQuery = object({
   q: { type: 'string', maxLength: 200, description: 'Text searched in title, description, organization and location' },
@@ -60,7 +60,7 @@ const timestamps = { created_at: dateTime, updated_at: dateTime };
 export const eventSchema = {
   type: 'object',
   properties: {
-    id: uuid,
+    event_id: uuid,
     organizer_id: { type: 'string' },
     title: { type: 'string' },
     organization: nullable({ type: 'string' }),
@@ -77,7 +77,7 @@ export const eventSchema = {
 export const activitySchema = {
   type: 'object',
   properties: {
-    id: uuid,
+    activity_id: uuid,
     event_id: uuid,
     title: { type: 'string' },
     description: nullable({ type: 'string' }),
@@ -85,11 +85,14 @@ export const activitySchema = {
     location: nullable({ type: 'string' }),
     starts_at: dateTime,
     ends_at: dateTime,
-    capacity: { type: 'integer' },
-    available: { type: 'integer', description: 'Seats not held by any registration (RF04 "vagas")' },
-    price_cents: { type: 'integer' },
+    capacity: { type: 'integer', description: 'Maximum seats; the seats taken are counted by Subscription' },
+    amount_minor: { type: 'integer', description: 'Registration fee in minor units (cents of BRL)' },
+    currency: { type: 'string', enum: [CURRENCY] },
     paid: { type: 'boolean' },
     waitlist_enabled: { type: 'boolean' },
+    registration_open: { type: 'boolean', description: 'Event published, activity OPEN and not started yet' },
+    lifecycle: { type: 'string', enum: [...ACTIVITY_LIFECYCLES], description: 'CANCELLED if the event is cancelled, else ENDED once ended, else OPEN' },
+    ended_at: nullable(dateTime),
     ...timestamps,
   },
 } as const;
@@ -110,3 +113,5 @@ export const eventPageSchema = {
 } as const;
 
 export const activityListSchema = { type: 'object', properties: { items: { type: 'array', items: activitySchema } } } as const;
+
+export const permissionsSchema = { type: 'object', properties: { can_manage: { type: 'boolean' } } } as const;

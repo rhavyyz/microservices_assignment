@@ -1,5 +1,6 @@
-// Entities owned by the events service. Fields use the same snake_case names as the database columns,
-// the HTTP API and the Kafka messages, so rows travel through the layers without mapping code.
+// Entities owned by the events service, as stored (snake_case database columns). The HTTP API and the
+// Kafka messages use Subscription's names (event_id, activity_id, amount_minor): see services/views.ts
+// and messaging/messages.ts. The service only keeps the maximum capacity; Subscription counts the seats.
 
 export const EVENT_STATUSES = ['DRAFT', 'PUBLISHED', 'CANCELLED'] as const;
 export type EventStatus = (typeof EVENT_STATUSES)[number];
@@ -7,7 +8,7 @@ export type EventStatus = (typeof EVENT_STATUSES)[number];
 /** Statuses anyone may see; DRAFT events are visible to their organizer only. */
 export const PUBLIC_EVENT_STATUSES: readonly EventStatus[] = ['PUBLISHED', 'CANCELLED'];
 
-/** All registration fees are in this currency (prices are integers in cents). */
+/** All registration fees are in this currency (amounts are integers in minor units, cents). */
 export const CURRENCY = 'BRL';
 
 export type EventRow = {
@@ -37,27 +38,20 @@ export type ActivityRow = {
   ends_at: Date;
   /** Immutable after creation (design decision; enforced by a database trigger too). */
   capacity: number;
-  /** Seats held by registrations (pending payment or confirmed). Never above capacity (RN01). */
-  reserved: number;
-  /** Generated column: capacity - reserved. */
-  available: number;
+  /** Stored in cents of BRL; exposed as `amount_minor` by the API and the messages. */
   price_cents: number;
   /** Generated column: price_cents > 0. */
   paid: boolean;
   waitlist_enabled: boolean;
+  /** When the activity ended (manually after `ends_at`, or automatically); null while it has not. */
+  ended_at: Date | null;
   created_at: Date;
   updated_at: Date;
 };
 
-export type ReservationRow = {
-  registration_id: string;
-  activity_id: string;
-  event_id: string;
-  user_id: string | null;
-  status: 'HELD' | 'RELEASED';
-  created_at: Date;
-  updated_at: Date;
-};
+/** Derived from the event status and `ended_at`; never stored. */
+export const ACTIVITY_LIFECYCLES = ['OPEN', 'ENDED', 'CANCELLED'] as const;
+export type ActivityLifecycle = (typeof ACTIVITY_LIFECYCLES)[number];
 
 export type Period = { starts_at: Date; ends_at: Date };
 

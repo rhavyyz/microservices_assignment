@@ -12,8 +12,7 @@ export type AuditEntry = {
   trace_id?: string | null;
   event_id?: string;
   activity_id?: string;
-  registration_id?: string;
-  /** Error code of a refused operation, or the outcome detail of a seat operation. */
+  /** Error code of a refused operation. */
   code?: string;
 };
 

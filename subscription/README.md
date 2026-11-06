@@ -5,8 +5,8 @@ Eventos fornece apenas a capacidade máxima imutável e os dados da atividade. N
 incremento/decremento de participantes em Eventos e nenhum outro banco é acessado.
 
 Implementação: Python 3.13, FastAPI, psycopg/PostgreSQL e confluent-kafka. Comentários e
-docstrings explicam as decisões e invariantes. As integrações HTTP/Kafka propostas estão
-em [CONTRACTS.md](CONTRACTS.md); Eventos e Pagamentos ainda são placeholders no monorepo.
+docstrings explicam as decisões e invariantes. As integrações HTTP/Kafka estão
+em [CONTRACTS.md](CONTRACTS.md); Eventos implementa o contrato de atividades e do ciclo de vida (ADR-008).
 
 ## Organização
 
