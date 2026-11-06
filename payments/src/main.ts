@@ -11,10 +11,10 @@ import { buildServer } from './server.ts';
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 const pool = createPool();
-pool.on('error', (e) => console.error('postgres pool error:', e.message));
 
 const app = await buildServer(pool);
 const log = app.log;
+pool.on('error', (e) => log.error({ err: e.message }, 'postgres pool error'));
 
 async function retryForever(name: string, fn: () => Promise<void>): Promise<void> {
   for (let attempt = 0; ; attempt++) {

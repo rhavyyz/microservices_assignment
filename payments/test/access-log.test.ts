@@ -87,3 +87,27 @@ test('access log: a 404 and a 4xx are logged with their status; the user id is o
   assert.equal(b.res.statusCode, 401);
   await app.close();
 });
+
+test('access log: every record carries instance (SERVICE_HOST) next to pid, hostname, traceId and userId', async () => {
+  const old = process.env.SERVICE_HOST;
+  process.env.SERVICE_HOST = 'svc-test-1:9000';
+  try {
+    const { app, lines, completed } = await logged();
+    await app.inject({ method: 'GET', url: '/payments', headers: { 'x-trace-id': 'trace-inst', 'x-user-id': USER } });
+    const [rec] = completed();
+    assert.equal(rec.instance, 'svc-test-1:9000');
+    assert.equal(typeof rec.pid, 'number');
+    assert.equal(typeof rec.hostname, 'string');
+    assert.equal(rec.traceId, 'trace-inst');
+    assert.equal(rec.userId, USER);
+    assert.equal(rec.req.method, 'GET');
+    assert.equal(typeof rec.res.statusCode, 'number');
+    assert.equal(typeof rec.responseTime, 'number');
+    for (const l of lines()) assert.equal(l.instance, 'svc-test-1:9000');
+    console.log(JSON.stringify(rec));
+    await app.close();
+  } finally {
+    if (old === undefined) delete process.env.SERVICE_HOST;
+    else process.env.SERVICE_HOST = old;
+  }
+});

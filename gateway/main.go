@@ -37,6 +37,7 @@ func newMux(store Store, eps *Endpoints, hub *Hub, verifier *Verifier, docs *Doc
 }
 
 func main() {
+	log.SetPrefix("instance=" + discovery.SelfHost() + " ")
 	defaultMax, err := strconv.Atoi(env("DEFAULT_MAX_PER_MIN", "60"))
 	if err != nil || defaultMax < 0 {
 		log.Fatal("DEFAULT_MAX_PER_MIN must be an integer >= 0")

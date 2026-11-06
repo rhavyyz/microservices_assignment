@@ -9,13 +9,13 @@ import { buildServer } from './server.ts';
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 const pool = createPool();
-pool.on('error', (e) => console.error('postgres pool error:', e.message));
 
 // /healthcheck answers 503 until the first successful migration.
 let migrated = false;
 
 const app = await buildServer(pool, () => migrated);
 const log = app.log;
+pool.on('error', (e) => log.error({ err: e.message }, 'postgres pool error'));
 
 async function retryForever(name: string, fn: () => Promise<void>): Promise<void> {
   for (let attempt = 0; ; attempt++) {

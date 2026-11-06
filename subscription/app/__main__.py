@@ -7,7 +7,7 @@ import uvicorn
 
 from .config import Settings
 from .db import Database
-from .logging_config import configure_logging
+from .logging_config import configure_logging, uvicorn_log_config
 
 configure_logging()
 if len(sys.argv) > 1 and sys.argv[1] == "migrate":
@@ -24,4 +24,5 @@ else:
         host="0.0.0.0",
         port=int(os.getenv("PORT", "8080")),
         access_log=False,
+        log_config=uvicorn_log_config(),
     )

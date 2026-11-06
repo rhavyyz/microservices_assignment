@@ -60,15 +60,19 @@ def _send(method: str, url: str, headers: Dict[str, str], body: Optional[bytes])
         return Response(e.code, dict(e.headers), e.read())
 
 
+def self_host() -> str:
+    """This instance's host as registered in the discoverer: SERVICE_HOST, or "<hostname>:<PORT or 8080>"."""
+    return os.environ.get("SERVICE_HOST") or f"{socket.gethostname()}:{os.environ.get('PORT', '8080')}"
+
+
 def register(kind: Kind) -> None:
     """Registers this instance. Call once at startup, passing only its own kind.
 
-    The host sent is SERVICE_HOST, or "<container hostname>:<PORT or 8080>".
+    The host sent is `self_host()`: SERVICE_HOST, or "<container hostname>:<PORT or 8080>".
     Retries up to 10 times with a delay doubling from 1s up to 30s (about 2.5 minutes
     in all), so it blocks meanwhile: call it from a thread if the service must not wait.
     """
-    host = os.environ.get("SERVICE_HOST") or f"{socket.gethostname()}:{os.environ.get('PORT', '8080')}"
-    payload = _json.dumps({"kind": Kind(kind).value, "host": host}).encode()
+    payload = _json.dumps({"kind": Kind(kind).value, "host": self_host()}).encode()
     last: Optional[Exception] = None
     delay = REGISTER_INITIAL_DELAY
     for attempt in range(REGISTER_ATTEMPTS):

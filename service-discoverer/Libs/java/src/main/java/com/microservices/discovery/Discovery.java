@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.URI;
 import java.net.URLEncoder;
+import java.net.UnknownHostException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -82,6 +83,21 @@ public final class Discovery {
     }
 
     /**
+     * This instance's host as registered in the discoverer: SERVICE_HOST, or
+     * "&lt;hostname&gt;:&lt;PORT or 8080&gt;". Also usable as an instance id (e.g. in logs).
+     */
+    public static String selfHost() throws UnknownHostException {
+        return selfHost(System.getenv("SERVICE_HOST"), System.getenv("PORT"), null);
+    }
+
+    /** The rule behind {@link #selfHost()}; a null hostname is looked up only when needed. */
+    static String selfHost(String serviceHost, String port, String hostname) throws UnknownHostException {
+        if (serviceHost != null && !serviceHost.isEmpty()) return serviceHost;
+        if (hostname == null) hostname = InetAddress.getLocalHost().getHostName();
+        return hostname + ":" + (port == null || port.isEmpty() ? "8080" : port);
+    }
+
+    /**
      * Registers this instance. Call once at startup, passing only its own kind.
      * The host sent is SERVICE_HOST, or "&lt;hostname&gt;:&lt;PORT or 8080&gt;".
      * Retries up to 10 times with a delay doubling from 1s up to 30s (about 2.5
@@ -89,11 +105,7 @@ public final class Discovery {
      * service must not wait.
      */
     public static void register(Kind kind) throws IOException, InterruptedException {
-        String host = System.getenv("SERVICE_HOST");
-        if (host == null || host.isEmpty()) {
-            String port = System.getenv("PORT");
-            host = InetAddress.getLocalHost().getHostName() + ":" + (port == null || port.isEmpty() ? "8080" : port);
-        }
+        String host = selfHost();
         String payload = Json.write(Map.of("kind", kind.value(), "host", host));
         HttpRequest req = HttpRequest.newBuilder(URI.create(discovererUrl() + "/register"))
                 .timeout(Duration.ofSeconds(5))
