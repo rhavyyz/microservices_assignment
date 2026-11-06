@@ -17,13 +17,26 @@ anything else is a 404, same as an unknown event (RN07).
 | `GET /events` | Events owned by the caller |
 | `GET /events/{eventId}/summary` | Event + registrations + payments + occupancy + attendance |
 | `GET /events/{eventId}/activities` | Per-activity indicators |
-| `GET /events/{eventId}/registrations` | Counts by status (`pending`, `confirmed`, `waitlisted`, `cancelled`, `expired`, `total`) |
-| `GET /events/{eventId}/payments` | Counts by status + `revenue` (confirmed only) |
+| `GET /events/{eventId}/registrations` | Counts by status (`pending_payment`, `offered`, `confirmed`, `waitlisted`, `cancelled`, `expired`, `rejected`, `total`) |
+| `GET /events/{eventId}/payments` | Counts by status + `revenue` and `refunded` lists by currency |
 | `GET /events/{eventId}/attendance` | `confirmed`, `checkins`, `rate` |
 
-Definitions: **occupied** = `PENDING` + `CONFIRMED` registrations (a pending reservation holds a seat, RN02);
+Definitions: **occupied** (held seats) = `PENDING_PAYMENT` + `OFFERED` + `CONFIRMED` registrations (a pending payment and an offered seat both hold a seat in Subscription; `WAITLISTED` holds none);
 **occupancy rate** = occupied / sum of activity capacities; **attendance rate** = check-ins / confirmed registrations.
 Rates are `null` when the denominator is 0.
+
+Money is integer minor units (cents) grouped by currency, never summed across currencies. `revenue` is the sum of `APPROVED`
+payments, `refunded` the sum of `REFUNDED` ones; payments without a currency are grouped as `"UNKNOWN"`; both are empty lists when there is nothing:
+
+    "payments": {"pending":1,"approved":2,"declined":0,"expired":0,"cancelled":0,"refunded_count":1,
+                 "revenue":[{"currency":"BRL","amount_minor":2500},{"currency":"USD","amount_minor":1000}],
+                 "refunded":[{"currency":"BRL","amount_minor":700}]}
+
+`GET /events/{eventId}/activities` items carry the same registration counters, `payments_approved`, `revenue` and `refunded`.
+
+API change (breaking): `registrations.pending` is now `pending_payment` (and `offered`, `rejected` are new); `payments.confirmed`/`refused` are
+now `approved`/`declined` (`refunded_count` is new); the numeric `payments.revenue` is now the list above; per activity `pending` -> `pending_payment`,
+`payments_confirmed` -> `payments_approved`, and numeric `revenue` -> list.
 
 Rollout: the gateway adds new endpoints as private. Publish them once:
 
@@ -48,19 +61,30 @@ Flat envelope (JSON): the type's fields sit at the top level, next to the envelo
 | `EventCreated`, `EventUpdated` | events | `event_id` | `organizer_id`, `name`, `status`, `starts_at`, `ends_at` |
 | `EventPublished`, `EventCancelled` | events | `event_id` | same (status is forced to `PUBLISHED` / `CANCELLED`) |
 | `ActivityCreated`, `ActivityUpdated` | events | `activity_id`, `event_id` | `name`, `capacity`, `paid` |
-| `RegistrationPendingPayment` (stored as `PENDING`), `RegistrationConfirmed`, `RegistrationWaitlisted`, `RegistrationCancelled`, `RegistrationExpired` | subscription | `registration_id`, `event_id`, `activity_id` | `user_id` |
+| `RegistrationWaitlisted`, `WaitlistOffered`, `RegistrationPendingPayment`, `RegistrationConfirmed`, `RegistrationCancelled`, `RegistrationExpired`, `RegistrationRejected` | subscription | `registration_id`, `event_id`, `activity_id` | `user_id` |
 | `AttendanceRecorded` (check-in) | subscription | `registration_id`, `event_id`, `activity_id` | `user_id` |
-| `PaymentCreated` (`PENDING`), `PaymentApproved` (`CONFIRMED`), `PaymentDeclined` (`REFUSED`), `PaymentExpired`, `PaymentCancelled` | payments | `payment_id`, `event_id` | `registration_id`, `activity_id`, `amount_minor`, `currency` |
+| `PaymentCreated`, `PaymentApproved`, `PaymentDeclined`, `PaymentExpired`, `PaymentCancelled`, `PaymentRefunded` | payments | `payment_id`, `event_id` | `registration_id`, `activity_id`, `amount_minor`, `currency` |
 
-Money: payments send `amount_minor`, an integer in minor units (cents). Reports converts it exactly to the major unit
-(`2500` -> `25.00`, stored in `numeric(12,2)`); a negative, fractional, string or unsafe-integer value invalidates the message.
+Type to stored status (the read model keeps only the latest state of each registration and payment):
 
-Known gap: Subscription's registration and check-in messages do **not** carry `event_id` (only `AttendanceEligible` does), and Reports
-requires it, so those messages are currently rejected as invalid (`event_id is required (Subscription registration messages do not carry it yet)`).
-See "Known gaps" below.
+| Registration type | Status | Payment type | Status |
+|---|---|---|---|
+| `RegistrationWaitlisted` | `WAITLISTED` | `PaymentCreated` | `PENDING` |
+| `WaitlistOffered` | `OFFERED` | `PaymentApproved` | `APPROVED` |
+| `RegistrationPendingPayment` | `PENDING_PAYMENT` | `PaymentDeclined` | `DECLINED` |
+| `RegistrationConfirmed` | `CONFIRMED` | `PaymentExpired` | `EXPIRED` |
+| `RegistrationCancelled` | `CANCELLED` | `PaymentCancelled` | `CANCELLED` |
+| `RegistrationExpired` | `EXPIRED` | `PaymentRefunded` | `REFUNDED` (no longer `APPROVED`) |
+| `RegistrationRejected` | `REJECTED` | | |
 
-Everything else is ignored like any unknown type: `WaitlistOffered`, `RegistrationRejected`, `AttendanceEligible`, `PaymentRefunded`,
-`ActivityDeleted`, `ActivityEnded`, `ActivityCancelled`.
+Money: payments send `amount_minor`, an integer in minor units (cents). Reports stores it as is in `payments.amount_minor` (`bigint`);
+a negative, fractional, string or unsafe-integer value invalidates the message. The old decimal `payments.amount` column is kept but unused.
+Migrations (idempotent, run at startup) rename the stored statuses (`PENDING` -> `PENDING_PAYMENT` for registrations, `CONFIRMED` -> `APPROVED`
+and `REFUSED` -> `DECLINED` for payments) and backfill `amount_minor` from `amount`.
+
+Registration and check-in messages must carry `event_id` (invalid otherwise: `event_id is required`).
+
+Ignored like any unknown type: `AttendanceEligible`, `ActivityDeleted`, `ActivityEnded`, `ActivityCancelled`.
 
 Rules the producers must know:
 - `EventCreated` must carry `organizer_id`, otherwise nobody can see that event's reports.
@@ -70,10 +94,8 @@ Rules the producers must know:
 
 ## Known gaps
 Not done yet (design decisions pending):
-- `event_id` on registrations and check-ins (see above); until then registration and check-in data does not reach the read model.
-- New statuses: `OFFERED`, `PENDING_PAYMENT` (today `RegistrationPendingPayment` is stored as `PENDING`), `REJECTED`, `REFUNDED`.
-- Money as integer cents per currency (today converted to a decimal and summed across currencies).
 - `ActivityDeleted`, `ActivityEnded`, `ActivityCancelled` handling; `AttendanceEligible`.
+- Check-ins survive a later cancelled registration (the check-in count is not reduced).
 - Monorepo conventions: problem+json errors, UUID identity, trace id rule, `x-gateway`, DLQ.
 
 How duplicates and reordering are handled: `processed_messages` (unique `message_id`, written in the same transaction as the effect)
@@ -86,4 +108,9 @@ state at query time, never kept as counters, so replays cannot corrupt them.
 (`http://service-discoverer:8080`) and `SERVICE_HOST` (`<hostname>:<PORT>`) itself. `REPORTS_DB_PASSWORD` (compose) sets the DB password; if you change it, also set `DATABASE_URL` on the `reports` service.
 
 ## Tests
-    npm test      # node:test, no dependencies (contract parsing, metrics)
+    npm test      # node:test, no dependencies (contract parsing, metrics, routes with a fake pool)
+    TEST_DATABASE_URL=postgres://user:pass@localhost:5432/reports_test npm run test:integration
+
+The integration test (`test/integration/`) needs a real, throwaway PostgreSQL: it drops and recreates the reports tables, checks that the
+migration converts old-format rows (and is idempotent), then projects a realistic message sequence and asserts every report. Without
+`TEST_DATABASE_URL` it is skipped, and `npm test` never runs it.

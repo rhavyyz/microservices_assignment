@@ -45,10 +45,10 @@ Os totais são calculados na hora da consulta, a partir desses estados. Por isso
 
 Definições dos indicadores:
 
-- **Vagas ocupadas:** inscrições `PENDING` e `CONFIRMED` (uma reserva pendente já segura a vaga, RN02).
+- **Vagas ocupadas:** inscrições `PENDING_PAYMENT`, `OFFERED` e `CONFIRMED` (um pagamento pendente e uma vaga oferecida já seguram a vaga no serviço de inscrições, RN02); a lista de espera (`WAITLISTED`) não segura vaga.
 - **Taxa de ocupação:** vagas ocupadas dividido pela soma das capacidades das atividades.
 - **Comparecimento:** check-ins dividido pelas inscrições confirmadas.
-- **Receita:** soma dos pagamentos `CONFIRMED`.
+- **Receita:** soma dos pagamentos `APPROVED`, em centavos (`amount_minor`), agrupada por moeda: moedas diferentes nunca são somadas. Pagamentos sem moeda entram na moeda `UNKNOWN`. **Reembolsado:** soma dos pagamentos `REFUNDED`, também por moeda; um pagamento reembolsado deixa de ser `APPROVED` e sai da receita. Sem valores, a lista vem vazia.
 - Quando o denominador é zero (por exemplo, capacidade zero), a taxa aparece vazia (`null`), e não zero.
 
 ## 5. Interface: o que o serviço recebe
@@ -60,15 +60,17 @@ O serviço não recebe chamadas de outros serviços. Recebe eventos pelo Kafka, 
 | `events.events` | `EventCreated`, `EventUpdated` | `event_id` | `organizer_id`, `name`, `status`, `starts_at`, `ends_at` |
 | `events.events` | `EventPublished`, `EventCancelled` | `event_id` | os mesmos (o status é forçado para `PUBLISHED` ou `CANCELLED`) |
 | `events.events` | `ActivityCreated`, `ActivityUpdated` | `activity_id`, `event_id` | `name`, `capacity`, `paid` |
-| `subscription.events` | `RegistrationPendingPayment` (guardada como `PENDING`), `RegistrationConfirmed`, `RegistrationWaitlisted`, `RegistrationCancelled`, `RegistrationExpired` | `registration_id`, `event_id`, `activity_id` | `user_id` |
+| `subscription.events` | `RegistrationWaitlisted` (`WAITLISTED`), `WaitlistOffered` (`OFFERED`), `RegistrationPendingPayment` (`PENDING_PAYMENT`), `RegistrationConfirmed` (`CONFIRMED`), `RegistrationCancelled` (`CANCELLED`), `RegistrationExpired` (`EXPIRED`), `RegistrationRejected` (`REJECTED`) | `registration_id`, `event_id`, `activity_id` | `user_id` |
 | `subscription.events` | `AttendanceRecorded` (check-in) | `registration_id`, `event_id`, `activity_id` | `user_id` |
-| `payments.events` | `PaymentCreated` (`PENDING`), `PaymentApproved` (`CONFIRMED`), `PaymentDeclined` (`REFUSED`), `PaymentExpired`, `PaymentCancelled` | `payment_id`, `event_id` | `registration_id`, `activity_id`, `amount_minor`, `currency` |
+| `payments.events` | `PaymentCreated` (`PENDING`), `PaymentApproved` (`APPROVED`), `PaymentDeclined` (`DECLINED`), `PaymentExpired` (`EXPIRED`), `PaymentCancelled` (`CANCELLED`), `PaymentRefunded` (`REFUNDED`) | `payment_id`, `event_id` | `registration_id`, `activity_id`, `amount_minor`, `currency` |
 
-Valores: pagamentos trazem `amount_minor`, um inteiro em centavos. O serviço converte para a unidade principal sem aritmética de ponto flutuante (`2500` vira `25.00`, gravado em `numeric(12,2)`); valor negativo, fracionário ou em texto invalida a mensagem.
+O banco guarda só o último estado de cada inscrição e de cada pagamento.
 
-Ignorados como qualquer tipo desconhecido: `WaitlistOffered`, `RegistrationRejected`, `AttendanceEligible`, `PaymentRefunded`, `ActivityDeleted`, `ActivityEnded` e `ActivityCancelled`.
+Valores: pagamentos trazem `amount_minor`, um inteiro em centavos. O serviço o grava como está em `payments.amount_minor` (`bigint`), sem conversão decimal; valor negativo, fracionário, em texto ou fora da faixa de inteiros seguros invalida a mensagem. A coluna decimal antiga `amount` continua na tabela, sem uso. As migrações (idempotentes, executadas na inicialização) renomeiam os estados já gravados (`PENDING` para `PENDING_PAYMENT` nas inscrições; `CONFIRMED` para `APPROVED` e `REFUSED` para `DECLINED` nos pagamentos) e preenchem `amount_minor` a partir de `amount`.
 
-Lacuna conhecida: as mensagens de inscrição e de check-in do serviço de inscrições não trazem `event_id` (só `AttendanceEligible` traz) e o serviço de relatórios o exige, então hoje essas mensagens são rejeitadas como inválidas, com o motivo explícito no log.
+As mensagens de inscrição e de check-in devem trazer `event_id`; sem ele, são inválidas (`event_id is required`).
+
+Ignorados como qualquer tipo desconhecido: `AttendanceEligible`, `ActivityDeleted`, `ActivityEnded` e `ActivityCancelled`.
 
 Exigências para os produtores:
 
@@ -86,9 +88,13 @@ Todas as rotas exigem o cabeçalho `X-User-Id`. Pelo gateway, os endereços come
 | `GET /events` | Eventos do organizador que fez a chamada. |
 | `GET /events/{eventId}/summary` | Tudo junto: evento, inscrições, pagamentos, ocupação e comparecimento. |
 | `GET /events/{eventId}/activities` | Os mesmos indicadores, por atividade. |
-| `GET /events/{eventId}/registrations` | Inscrições por estado: pendentes, confirmadas, em espera, canceladas, expiradas e total. |
-| `GET /events/{eventId}/payments` | Pagamentos por estado e receita. |
+| `GET /events/{eventId}/registrations` | Inscrições por estado: `pending_payment`, `offered`, `confirmed`, `waitlisted`, `cancelled`, `expired`, `rejected` e `total`. |
+| `GET /events/{eventId}/payments` | Pagamentos por estado (`pending`, `approved`, `declined`, `expired`, `cancelled`, `refunded_count`) e as listas `revenue` e `refunded`, por moeda. |
 | `GET /events/{eventId}/attendance` | Inscritos confirmados, check-ins e taxa de comparecimento. |
+
+Dinheiro sai em centavos inteiros, por moeda: `"revenue": [{"currency": "BRL", "amount_minor": 2500}]` e `"refunded": [...]` no mesmo formato. Por atividade, a rota `/activities` traz os mesmos contadores de inscrição, `payments_approved`, `revenue` e `refunded`.
+
+Mudança de API (incompatível): `pending` de inscrições virou `pending_payment` (`offered` e `rejected` são novos); `confirmed` e `refused` de pagamentos viraram `approved` e `declined`; a `revenue` numérica virou a lista por moeda; por atividade, `pending` virou `pending_payment` e `payments_confirmed` virou `payments_approved`.
 
 Controle de acesso (RN07): o serviço compara o `X-User-Id` com o `organizer_id` guardado a partir do evento. Quem não é o dono recebe 404, igual a um evento inexistente, e quem não se identifica recebe 401.
 
@@ -140,13 +146,13 @@ O serviço também expõe `GET /healthcheck` (200 só se o banco responde, senã
 
 ## 10. Testes e validação
 
-Testes unitários (todos passando): leitura e validação das mensagens e cálculo das taxas.
+Testes unitários (todos passando): leitura e validação das mensagens, cálculo das taxas e rotas com um banco simulado. Há também um teste de integração com PostgreSQL real (`npm run test:integration`, só roda com `TEST_DATABASE_URL`): ele confere a migração de linhas no formato antigo (e sua idempotência), projeta uma sequência realista de mensagens e verifica ocupação, contadores, receita por moeda, reembolsos e reentrega.
 
 Validação com Postgres, Kafka e gateway reais, usando mensagens enviadas manualmente (evento `e1` do organizador `o1`, atividade com 2 vagas, 2 inscrições, 1 pagamento de 50 e 1 check-in):
 
 | Teste | Resultado |
 | --- | --- |
-| Resumo do evento | 1 inscrição pendente e 1 confirmada; 1 pagamento confirmado com receita 50; ocupação 2 de 2 (taxa 1); 1 check-in em 1 confirmado (taxa 1). |
+| Resumo do evento | 1 inscrição pendente e 1 confirmada; 1 pagamento confirmado com receita 50 (formatos anteriores à mudança de estados e de dinheiro); ocupação 2 de 2 (taxa 1); 1 check-in em 1 confirmado (taxa 1). |
 | Mensagem repetida | O reenvio foi registrado como `duplicate` e a receita continuou em 50. |
 | Mensagem fora de ordem | Um cancelamento mais antigo que a confirmação não alterou o estado. |
 | Autorização | Usuário que não é o organizador recebeu 404; sem `X-User-Id`, 401. |
@@ -158,21 +164,18 @@ Ainda falta registrar o teste de resiliência (consultar o relatório com o Kafk
 
 - Os três serviços já publicam nos tópicos `events.events`, `subscription.events` e `payments.events`; o serviço de relatórios foi adaptado a esses nomes e formatos, mas ainda não foi validado com Kafka e PostgreSQL reais depois da mudança (a validação da seção 10 usou o contrato antigo).
 - A tabela `processed_messages` cresce sem limpeza.
-- A receita soma valores de moedas diferentes sem separar por moeda.
 - Não há paginação nem filtro por período.
 - O gateway envia o papel em `X-User-Roles`, mas o serviço não o usa: a única regra de acesso é «dono do evento», sem perfil de administrador.
 - Tipos de evento sem tratamento: `ActivityDeleted`, `ActivityEnded` e `ActivityCancelled` (ver «Pendências conhecidas»).
 - Os tópicos são criados com fator de replicação 1 e o consumidor usa uma senha de desenvolvimento por padrão; ambos servem para o ambiente local, mas não para produção.
 - Exception tracking e audit log dependem de decisão do grupo.
-- Falta teste automatizado de integração com banco e broker.
+- O teste de integração cobre o banco, mas não o broker Kafka.
 
 ### Pendências conhecidas
 
 O que ainda NÃO foi feito (decisões de projeto a discutir):
 
-- `event_id` nas inscrições e nos check-ins: o serviço de inscrições não o envia e o relatório não o deduz; enquanto isso essas mensagens são rejeitadas e os indicadores de inscrição, ocupação e comparecimento não são alimentados.
-- Novos estados: `OFFERED`, `PENDING_PAYMENT` (hoje `RegistrationPendingPayment` vira `PENDING`), `REJECTED` e `REFUNDED`.
-- Dinheiro como inteiro em centavos por moeda (hoje é convertido para decimal e somado sem separar moedas).
+- Check-ins continuam contando mesmo se a inscrição for cancelada depois.
 - Tratamento de `ActivityDeleted`, `ActivityEnded` e `ActivityCancelled`.
 - `AttendanceEligible`.
 - Convenções do monorepo: erros `problem+json`, identidade por UUID, regra do trace id, `x-gateway` e DLQ.
@@ -180,8 +183,8 @@ O que ainda NÃO foi feito (decisões de projeto a discutir):
 ## 12. Dependências com os outros serviços
 
 1. O serviço de eventos publica `Event*` e `Activity*` em `events.events`, com `organizer_id` no evento criado e `capacity` nas atividades (atendido).
-2. O serviço de inscrições publica `Registration*` e `AttendanceRecorded` em `subscription.events`, mas sem `event_id`, que o relatório exige (pendente).
-3. O serviço de pagamentos publica `Payment*` em `payments.events` com `amount_minor` em centavos, que o relatório converte (atendido).
+2. O serviço de inscrições publica `Registration*`, `WaitlistOffered` e `AttendanceRecorded` em `subscription.events`, com `event_id`, que o relatório exige (em ajuste no serviço de inscrições).
+3. O serviço de pagamentos publica `Payment*` (inclusive `PaymentRefunded`) em `payments.events` com `amount_minor` em centavos, que o relatório guarda como inteiro (atendido).
 4. O administrador do gateway precisa liberar as seis rotas de consulta com autenticação exigida.
 
 ## 13. Como executar
@@ -191,4 +194,4 @@ docker compose -f gateway/docker-compose.yml up -d
 docker compose up --build kafka service-discoverer gateway reports reports-db
 ```
 
-Testes unitários: `npm install` e `npm test` dentro da pasta `reports/`. Variáveis de ambiente, o contrato completo de eventos e o script de liberação das rotas estão no `README.md` do serviço.
+Testes unitários: `npm install` e `npm test` dentro da pasta `reports/`. Teste de integração: `TEST_DATABASE_URL=postgres://... npm run test:integration` (use um banco descartável: as tabelas são recriadas). Variáveis de ambiente, o contrato completo de eventos e o script de liberação das rotas estão no `README.md` do serviço.

@@ -48,9 +48,10 @@ const activityFields = {
   paid: true,
   waitlist_enabled: true,
 };
-// Subscription service (subscription/app/service.py emit): no event_id.
+// Subscription service: registration and check-in messages carry event_id.
 const registrationFields = {
   registration_id: ids.registration,
+  event_id: ids.event,
   activity_id: ids.activity,
   user_id: ids.user,
   aggregate_version: 3,
@@ -130,15 +131,16 @@ test('ActivityCreated and ActivityUpdated read capacity and paid', () => {
 test('payment types map to their status', () => {
   const expected: Record<string, string> = {
     PaymentCreated: 'PENDING',
-    PaymentApproved: 'CONFIRMED',
-    PaymentDeclined: 'REFUSED',
+    PaymentApproved: 'APPROVED',
+    PaymentDeclined: 'DECLINED',
     PaymentExpired: 'EXPIRED',
     PaymentCancelled: 'CANCELLED',
+    PaymentRefunded: 'REFUNDED',
   };
   for (const [type, status] of Object.entries(expected)) {
     assert.deepEqual(change(msg(type, paymentFields)), {
       kind: 'payment', paymentId: ids.payment, registrationId: ids.registration, eventId: ids.event,
-      activityId: ids.activity, amount: '25.00', currency: 'BRL', status,
+      activityId: ids.activity, amountMinor: 2500, currency: 'BRL', status,
     });
   }
 });
@@ -149,18 +151,13 @@ test('payment without activity_id (nullable) is accepted', () => {
   assert.equal(c.activityId, null);
 });
 
-test('amount_minor cents become an exact decimal', () => {
+test('amount_minor is kept as an integer, with no decimal conversion', () => {
   const amount = (minor: number) => {
     const c = change(msg('PaymentApproved', { ...paymentFields, amount_minor: minor }));
     assert.ok(c.kind === 'payment');
-    return c.amount;
+    return c.amountMinor;
   };
-  assert.equal(amount(2500), '25.00');
-  assert.equal(amount(5), '0.05');
-  assert.equal(amount(0), '0.00');
-  assert.equal(amount(10), '0.10');
-  assert.equal(amount(123456789), '1234567.89');
-  assert.equal(amount(Number.MAX_SAFE_INTEGER), '90071992547409.91');
+  for (const minor of [2500, 5, 0, 10, 123456789, Number.MAX_SAFE_INTEGER]) assert.equal(amount(minor), minor);
 });
 
 test('amount_minor must be a non-negative safe integer', () => {
@@ -175,7 +172,7 @@ test('a missing or null amount_minor is stored as no amount (the row keeps its p
   for (const amount_minor of [null, undefined]) {
     const c = change(msg('PaymentApproved', { ...paymentFields, amount_minor }));
     assert.ok(c.kind === 'payment');
-    assert.equal(c.amount, null);
+    assert.equal(c.amountMinor, null);
   }
 });
 
@@ -185,44 +182,43 @@ test('payments without event_id are rejected', () => {
   assert.match(r.error, /event_id is required/);
 });
 
-test('registration and check-in messages from Subscription are rejected: they carry no event_id yet', () => {
+test('registration and check-in messages without event_id are rejected', () => {
   const types = [
-    'RegistrationPendingPayment', 'RegistrationConfirmed', 'RegistrationWaitlisted',
-    'RegistrationCancelled', 'RegistrationExpired', 'AttendanceRecorded',
+    'RegistrationPendingPayment', 'RegistrationConfirmed', 'RegistrationWaitlisted', 'WaitlistOffered',
+    'RegistrationCancelled', 'RegistrationExpired', 'RegistrationRejected', 'AttendanceRecorded',
   ];
+  const { event_id: _omitted, ...withoutEvent } = registrationFields;
   for (const type of types) {
-    const r = parseMessage(msg(type, registrationFields));
+    const r = parseMessage(msg(type, withoutEvent));
     assert.ok(!r.ok, `${type} should be rejected`);
-    assert.equal(r.error, `${type}: event_id is required (Subscription registration messages do not carry it yet)`);
+    assert.equal(r.error, `${type}: event_id is required`);
   }
 });
 
-test('registration and check-in messages map correctly once they carry event_id', () => {
-  const withEvent = { ...registrationFields, event_id: ids.event };
+test('registration types map to Subscription statuses', () => {
   const expected: Record<string, string> = {
-    RegistrationPendingPayment: 'PENDING',
-    RegistrationConfirmed: 'CONFIRMED',
     RegistrationWaitlisted: 'WAITLISTED',
+    WaitlistOffered: 'OFFERED',
+    RegistrationPendingPayment: 'PENDING_PAYMENT',
+    RegistrationConfirmed: 'CONFIRMED',
     RegistrationCancelled: 'CANCELLED',
     RegistrationExpired: 'EXPIRED',
+    RegistrationRejected: 'REJECTED',
   };
   for (const [type, status] of Object.entries(expected)) {
-    assert.deepEqual(change(msg(type, withEvent)), {
+    assert.deepEqual(change(msg(type, registrationFields)), {
       kind: 'registration', registrationId: ids.registration, eventId: ids.event, activityId: ids.activity,
       userId: ids.user, status,
     });
   }
-  assert.deepEqual(change(msg('AttendanceRecorded', withEvent)), {
+  assert.deepEqual(change(msg('AttendanceRecorded', registrationFields)), {
     kind: 'checkin', registrationId: ids.registration, eventId: ids.event, activityId: ids.activity, userId: ids.user,
   });
 });
 
-test('types Reports does not handle yet are ignored, not errors', () => {
+test('lifecycle and unknown types are ignored, not errors', () => {
   const ignored: [string, object][] = [
-    ['WaitlistOffered', registrationFields],
-    ['RegistrationRejected', registrationFields],
-    ['AttendanceEligible', { ...registrationFields, event_id: ids.event }],
-    ['PaymentRefunded', paymentFields],
+    ['AttendanceEligible', registrationFields],
     ['ActivityDeleted', activityFields],
     ['ActivityEnded', { activity_id: ids.activity, event_id: ids.event, ends_at: '2026-12-01T18:00:00.000Z' }],
     ['ActivityCancelled', { activity_id: ids.activity, event_id: ids.event, ends_at: '2026-12-01T18:00:00.000Z' }],

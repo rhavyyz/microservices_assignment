@@ -17,8 +17,19 @@ const int = { type: 'integer' } as const;
 const rate = { type: ['number', 'null'] } as const;
 const obj = (properties: Record<string, unknown>) => ({ type: 'object', properties }) as const;
 
-const registrationsSchema = obj({ pending: int, confirmed: int, waitlisted: int, cancelled: int, expired: int, total: int });
-const paymentsSchema = obj({ pending: int, confirmed: int, refused: int, expired: int, cancelled: int, revenue: { type: 'number' } });
+// Money is integer minor units (cents) grouped by currency; different currencies are never summed together.
+const moneySchema = {
+  type: 'array',
+  items: obj({ currency: { type: 'string' }, amount_minor: int }),
+} as const;
+
+const registrationsSchema = obj({
+  pending_payment: int, offered: int, confirmed: int, waitlisted: int, cancelled: int, expired: int, rejected: int, total: int,
+});
+const paymentsSchema = obj({
+  pending: int, approved: int, declined: int, expired: int, cancelled: int, refunded_count: int,
+  revenue: moneySchema, refunded: moneySchema,
+});
 const occupancySchema = obj({ capacity: int, occupied: int, rate });
 const attendanceSchema = obj({ confirmed: int, checkins: int, rate });
 const eventSchema = obj({
@@ -30,8 +41,9 @@ const eventSchema = obj({
 });
 const activitySchema = obj({
   activity_id: { type: 'string' }, name: { type: ['string', 'null'] }, capacity: { type: ['integer', 'null'] },
-  paid: { type: 'boolean' }, pending: int, confirmed: int, waitlisted: int, cancelled: int, expired: int,
-  payments_confirmed: int, revenue: { type: 'number' }, occupied: int, occupancy_rate: rate,
+  paid: { type: 'boolean' }, pending_payment: int, offered: int, confirmed: int, waitlisted: int, cancelled: int,
+  expired: int, rejected: int, payments_approved: int, revenue: moneySchema, refunded: moneySchema,
+  occupied: int, occupancy_rate: rate,
   checkins: int, attendance_rate: rate,
 });
 
@@ -160,7 +172,7 @@ export async function buildServer(pool: Pool) {
   });
 
   app.get('/events/:eventId/payments', {
-    schema: { summary: 'Payments by status and revenue', params, response: { 200: paymentsSchema } },
+    schema: { summary: 'Payments by status, revenue and refunds by currency (integer minor units)', params, response: { 200: paymentsSchema } },
   }, async (req, reply) => {
     const ev = await owned(req, reply);
     if (!ev) return reply;
