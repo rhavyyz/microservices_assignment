@@ -144,8 +144,10 @@ a failed refresh keeps the previous copy and the description names the kinds who
 the cooldown then yields 503s for up to 30 s.
 
 **Other behavior.** CORS is fully permissive for now (the gateway answers preflights, services must not set CORS
-headers). Client IP is the connection address unless inside `TRUSTED_PROXIES`. `X-Trace-Id` is generated if absent
-and echoed.
+headers). Client IP is the connection address unless inside `TRUSTED_PROXIES`. `X-Trace-Id` is validated with the same rule as the
+services (8–64 chars of `[A-Za-z0-9._-]`), invalid or missing values are replaced by a generated one, and the result is set on
+every response, including the gateway's own errors (404, 401, 403, 429, 503), and forwarded upstream. Kafka messages carry
+the originating request's `trace_id` in the envelope and consumers continue it when it is valid; background work uses null.
 
 **Admin API (no auth, no host port):** `GET /admin/endpoints[?kind=]`, `PUT /admin/endpoints` (partial update; `kind`,
 `method`, `path` identify the endpoint). `GET /healthcheck`.

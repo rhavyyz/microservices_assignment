@@ -196,13 +196,15 @@ func (c *Consumer) Run(ctx context.Context) error {
 func (c *Consumer) handle(ctx context.Context, r *kgo.Record) bool {
 	m, err := ParseMessage(r.Value)
 	if err != nil {
-		log.Printf("skipping invalid message %s/%d/%d: %v", r.Topic, r.Partition, r.Offset, err)
+		log.Printf("skipping invalid message %s/%d/%d: %v trace_id=%s", r.Topic, r.Partition, r.Offset, err, dash(parseTraceID(r.Value)))
 		return true
 	}
+	tid := dash(m.TraceID)
+	ctx = withTraceID(ctx, m.TraceID)
 	id := NotificationID(r.Topic, r.Partition, r.Offset)
 	var n Notification
 	var inserted bool
-	if !retry(ctx, "store "+id, func(ctx context.Context) error {
+	if !retry(ctx, "store "+id+" trace_id="+tid, func(ctx context.Context) error {
 		ictx, cancel := context.WithTimeout(ctx, mongoOpTimeout)
 		defer cancel()
 		var err error
@@ -216,7 +218,7 @@ func (c *Consumer) handle(ctx context.Context, r *kgo.Record) bool {
 		gctx, cancel := context.WithTimeout(ctx, mongoOpTimeout)
 		defer cancel()
 		if n, err = c.store.Get(gctx, id); err != nil {
-			log.Printf("push %s: reading the stored notification: %v", id, err)
+			log.Printf("push %s: reading the stored notification: %v trace_id=%s", id, err, tid)
 			return true
 		}
 	}

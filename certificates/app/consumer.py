@@ -11,6 +11,7 @@ and its offset is committed, so it never blocks the partition; app/pending.py is
 import json
 import logging
 import math
+import re
 import threading
 import uuid
 from collections.abc import Callable
@@ -38,6 +39,24 @@ CONSUMER_GROUP = "certificates-service"
 # The percentage is computed by Subscription over the event's activities and is re-checked here: it must be
 # consistent with the counts (within one hundredth, the rounding Subscription applies).
 PERCENTAGE_TOLERANCE = 0.01 + 1e-9
+
+
+TRACE_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]{8,64}")
+
+
+def valid_trace_id(value: object) -> str | None:
+    """The platform's trace id rule, applied to optional metadata: anything else is None, never an error."""
+    return value if isinstance(value, str) and TRACE_ID_PATTERN.fullmatch(value) else None
+
+
+def resolve_trace_id(payload: dict) -> str:
+    """The message's trace_id when it is valid, otherwise a new one (the message may come from background work)."""
+    return valid_trace_id(payload.get("trace_id")) or str(uuid.uuid4())
+
+
+def exc_trace_id(exc: BaseException) -> str:
+    """The trace id process() tagged on a failure, for log lines; "-" when the failure happened before one existed."""
+    return getattr(exc, "trace_id", None) or "-"
 
 
 def _uuid(payload: dict, field: str) -> uuid.UUID:
@@ -118,14 +137,29 @@ class AttendanceHandler:
             self.process(payload)
         except EventNotEnded as early:
             # Normal case: Subscription emits when the person's last activity ends, possibly days before the event.
-            self.park(payload, early.ends_at, source)
+            try:
+                self.park(payload, early.ends_at, source, exc_trace_id(early))
+            except Exception as exc:
+                exc.trace_id = exc_trace_id(early)
+                raise
 
-    def process(self, payload: dict) -> None:
+    def process(self, payload: dict) -> str:
         """Validate an `AttendanceEligible` payload and issue its certificate (shared by the consumer and the scheduler).
 
-        Returns on success (issued or already issued); raises PoisonMessage, or TransientError (EventNotEnded
-        when the event is still running).
+        Returns the trace id used, on success (issued or already issued); raises PoisonMessage, or TransientError
+        (EventNotEnded when the event is still running). The trace id is the payload's own when valid (so the
+        trace started by the request that caused the event continues here), a new one otherwise; a raised
+        error carries it as `trace_id`.
         """
+        trace_id = resolve_trace_id(payload)
+        try:
+            self._process(payload, trace_id)
+        except Exception as exc:
+            exc.trace_id = trace_id
+            raise
+        return trace_id
+
+    def _process(self, payload: dict, trace_id: str) -> None:
         if payload.get("schema_version") != SCHEMA_VERSION or isinstance(payload.get("schema_version"), bool):
             raise PoisonMessage("UNSUPPORTED_SCHEMA_VERSION")
         registration_id = _uuid(payload, "registration_id")
@@ -134,7 +168,6 @@ class AttendanceHandler:
         event_id = _uuid(payload, "event_id")
         _, _, attendance_percentage = _attendance(payload)
 
-        trace_id = str(uuid.uuid4())
         log.info("attendance_eligible_received registration_id=%s trace_id=%s", registration_id, trace_id)
 
         try:
@@ -142,7 +175,7 @@ class AttendanceHandler:
         except (PoisonMessage, TransientError):
             raise
         except CertificateAlreadyExistsError:
-            log.info("certificate_already_issued registration_id=%s", registration_id)
+            log.info("certificate_already_issued registration_id=%s trace_id=%s", registration_id, trace_id)
         except CertificateNotEligibleError:
             raise PoisonMessage("NOT_ELIGIBLE") from None
         except CertificateStorageError:
@@ -170,7 +203,7 @@ class AttendanceHandler:
                 service.repository.get_by_registration_id(registration_id) is not None
                 or service.repository.get_by_user_and_event(user_id, event_id) is not None
             ):
-                log.info("certificate_already_issued registration_id=%s", registration_id)
+                log.info("certificate_already_issued registration_id=%s trace_id=%s", registration_id, trace_id)
                 return
 
             event = self.directory.get_event(event_id, trace_id)
@@ -192,13 +225,20 @@ class AttendanceHandler:
                 event_ended=True,
                 attendance_percentage=attendance_percentage,
             )
-            log.info("certificate_issued registration_id=%s", registration_id)
+            log.info("certificate_issued registration_id=%s trace_id=%s", registration_id, trace_id)
         finally:
             session.close()
 
 
-    def park(self, payload: dict, ends_at: datetime, source: Source | None) -> None:
-        """Keep the message in the database until the event ends. Idempotent per registration."""
+    def park(self, payload: dict, ends_at: datetime, source: Source | None, trace_id: str | None = None) -> None:
+        """Keep the message in the database until the event ends. Idempotent per registration.
+
+        The payload is stored whole, so its trace_id comes back when the scheduler replays it; an invalid one is
+        dropped here (never stored, never logged).
+        """
+        payload = {key: value for key, value in payload.items() if key != "trace_id"}
+        if trace_id:
+            payload["trace_id"] = trace_id
         source = source or Source(settings.subscription_events_topic, -1, -1)
         registration_id = _uuid(payload, "registration_id")
         session = self.session_factory()
@@ -218,7 +258,7 @@ class AttendanceHandler:
                     session.commit()
                 except IntegrityError:
                     session.rollback()  # another replica parked it first
-            log.info("attendance_parked registration_id=%s", registration_id)
+            log.info("attendance_parked registration_id=%s trace_id=%s", registration_id, trace_id or "-")
         finally:
             session.close()
 
@@ -230,8 +270,8 @@ class DeadLetters:
         self.producer_factory = producer_factory or Producer
         self.producer = None
 
-    def publish(self, topic: str, partition: int, offset: int, reason: str) -> None:
-        # Reference only (no payload copy, no personal data) for manual recovery.
+    def publish(self, topic: str, partition: int, offset: int, reason: str, trace_id: str | None = None) -> None:
+        # Reference only (no payload copy, no personal data) for manual recovery; trace_id only when valid.
         if self.producer is None:
             self.producer = self.producer_factory({
                 "bootstrap.servers": settings.kafka_brokers,
@@ -248,6 +288,7 @@ class DeadLetters:
                 "partition": partition,
                 "offset": offset,
                 "reason": reason,
+                **({"trace_id": trace_id} if valid_trace_id(trace_id) else {}),
             }).encode(),
             on_delivery=lambda error, delivered: result.append(error),
         )
@@ -340,22 +381,22 @@ class AttendanceWorker:
             self.handler.handle(message.value(), Source(message.topic(), message.partition(), message.offset()))
         except PoisonMessage as exc:
             try:
-                self.quarantine(message, exc.reason)
+                self.quarantine(message, exc.reason, getattr(exc, "trace_id", None))
             except Exception:
-                log.warning("dlq_publish_failed topic=%s partition=%s offset=%s",
-                            message.topic(), message.partition(), message.offset())
+                log.warning("dlq_publish_failed topic=%s partition=%s offset=%s trace_id=%s",
+                            message.topic(), message.partition(), message.offset(), exc_trace_id(exc))
                 self.retry_later(consumer, message)
                 return
-            log.warning("poison_message topic=%s partition=%s offset=%s reason=%s",
-                        message.topic(), message.partition(), message.offset(), exc.reason)
+            log.warning("poison_message topic=%s partition=%s offset=%s reason=%s trace_id=%s",
+                        message.topic(), message.partition(), message.offset(), exc.reason, exc_trace_id(exc))
         except TransientError as exc:
-            log.warning("transient_failure topic=%s partition=%s offset=%s cause=%s",
-                        message.topic(), message.partition(), message.offset(), exc)
+            log.warning("transient_failure topic=%s partition=%s offset=%s cause=%s trace_id=%s",
+                        message.topic(), message.partition(), message.offset(), exc, exc_trace_id(exc))
             self.retry_later(consumer, message)
             return
         except Exception as exc:
-            log.warning("unexpected_failure topic=%s partition=%s offset=%s cause=%s",
-                        message.topic(), message.partition(), message.offset(), type(exc).__name__)
+            log.warning("unexpected_failure topic=%s partition=%s offset=%s cause=%s trace_id=%s",
+                        message.topic(), message.partition(), message.offset(), type(exc).__name__, exc_trace_id(exc))
             self.retry_later(consumer, message)
             return
 
@@ -368,5 +409,5 @@ class AttendanceWorker:
         self.stop.wait(self.delay)
         self.delay = min(self.delay * 2, 30.0)
 
-    def quarantine(self, message, reason: str) -> None:
-        self.dead_letters.publish(message.topic(), message.partition(), message.offset(), reason)
+    def quarantine(self, message, reason: str, trace_id: str | None = None) -> None:
+        self.dead_letters.publish(message.topic(), message.partition(), message.offset(), reason, trace_id)

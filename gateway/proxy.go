@@ -36,6 +36,8 @@ func NewProxy(disc *Discovery) http.Handler {
 					resp.Header.Del(k)
 				}
 			}
+			// TraceID already set it on the response and the service echoes the same id: avoid a duplicate.
+			resp.Header.Del("X-Trace-Id")
 			return nil
 		},
 		Transport: &retryTransport{disc: disc, base: http.DefaultTransport},

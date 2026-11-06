@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
-from app.consumer import AttendanceHandler, DeadLetters, EventNotEnded
+from app.consumer import AttendanceHandler, DeadLetters, EventNotEnded, exc_trace_id
 from app.database import get_session_factory
 from app.integrations.directory import PoisonMessage, TransientError
 from app.models.pending_attendance import PendingAttendance
@@ -101,28 +101,33 @@ class PendingScheduler:
     def handle_row(self, session, row: PendingAttendance, now: datetime) -> None:
         registration_id = row.registration_id
         try:
-            self.handler.process(row.payload)
+            trace_id = self.handler.process(row.payload)
         except EventNotEnded as early:
             # Clock skew, or Events moved the end later: look again when the event now ends (at least a minute away).
             row.not_before = max(early.ends_at.astimezone(timezone.utc), now + RESCHEDULE_AFTER_EARLY)
-            log.info("attendance_still_early registration_id=%s", registration_id)
+            log.info("attendance_still_early registration_id=%s trace_id=%s", registration_id, exc_trace_id(early))
         except PoisonMessage as exc:
             try:
-                self.dead_letters.publish(row.source_topic, row.source_partition, row.source_offset, exc.reason)
+                self.dead_letters.publish(
+                    row.source_topic, row.source_partition, row.source_offset, exc.reason, getattr(exc, "trace_id", None),
+                )
             except Exception:
-                log.warning("dlq_publish_failed registration_id=%s", registration_id)
+                log.warning("dlq_publish_failed registration_id=%s trace_id=%s", registration_id, exc_trace_id(exc))
                 self.keep(row, now)
                 return
-            log.warning("poison_parked_message registration_id=%s reason=%s", registration_id, exc.reason)
+            log.warning("poison_parked_message registration_id=%s reason=%s trace_id=%s",
+                        registration_id, exc.reason, exc_trace_id(exc))
             session.delete(row)
         except TransientError as exc:
-            log.warning("pending_transient_failure registration_id=%s cause=%s", registration_id, exc)
+            log.warning("pending_transient_failure registration_id=%s cause=%s trace_id=%s",
+                        registration_id, exc, exc_trace_id(exc))
             self.keep(row, now)
         except Exception as exc:
-            log.warning("pending_unexpected_failure registration_id=%s cause=%s", registration_id, type(exc).__name__)
+            log.warning("pending_unexpected_failure registration_id=%s cause=%s trace_id=%s",
+                        registration_id, type(exc).__name__, exc_trace_id(exc))
             self.keep(row, now)
         else:
-            log.info("attendance_unparked registration_id=%s", registration_id)
+            log.info("attendance_unparked registration_id=%s trace_id=%s", registration_id, trace_id)
             session.delete(row)
 
     @staticmethod

@@ -28,6 +28,7 @@ type Message struct {
 	RedirectURL *string
 	Payload     map[string]any
 	PayloadType *string
+	TraceID     string // optional trace_id of the originating request; "" when absent or invalid
 }
 
 // ParseMessage decodes and validates a Kafka record value.
@@ -39,11 +40,12 @@ func ParseMessage(value []byte) (Message, error) {
 		RedirectURL string          `json:"redirect_url"`
 		Payload     json.RawMessage `json:"payload"`
 		PayloadType string          `json:"payload_type"`
+		TraceID     any             `json:"trace_id"`
 	}
 	if err := json.Unmarshal(value, &raw); err != nil {
 		return Message{}, fmt.Errorf("bad JSON: %w", err)
 	}
-	var m Message
+	m := Message{TraceID: validTraceID(raw.TraceID)}
 	if m.UserID = strings.TrimSpace(raw.UserID); m.UserID == "" {
 		return Message{}, errors.New("user_id is required")
 	}

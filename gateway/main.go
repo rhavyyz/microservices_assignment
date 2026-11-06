@@ -19,7 +19,7 @@ func env(key, def string) string {
 }
 
 // newMux wires the admin API, the healthcheck, the websocket entry point and the middleware pipeline (everything
-// else), all wrapped in CORS so that error responses and preflights are covered too. /ws, /openapi.json and /docs
+// else), all wrapped in CORS and then TraceID so that error responses and preflights are covered too. /ws, /openapi.json and /docs
 // are not proxied kinds, so they skip the endpoint pipeline and are logged here.
 func newMux(store Store, eps *Endpoints, hub *Hub, verifier *Verifier, docs *Docs, pipeline http.Handler) http.Handler {
 	a := &admin{store: store, eps: eps}
@@ -33,7 +33,7 @@ func newMux(store Store, eps *Endpoints, hub *Hub, verifier *Verifier, docs *Doc
 	mux.Handle("GET /openapi.json", Chain(http.HandlerFunc(docs.ServeSpec), Logging()))
 	mux.Handle("GET /docs", Chain(http.HandlerFunc(serveSwaggerUI), Logging()))
 	mux.Handle("/", pipeline)
-	return Chain(mux, Cors())
+	return Chain(mux, Cors(), TraceID())
 }
 
 func main() {

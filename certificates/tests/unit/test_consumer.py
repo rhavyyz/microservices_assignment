@@ -524,3 +524,101 @@ def test_loop_survives_a_failing_consumer_and_stops_cleanly(monkeypatch):
     worker.run()
 
     assert len(created) == 2 and all(c.closed for c in created)
+
+
+# --- trace id propagation -------------------------------------------------------------------------------------
+
+VALID_TRACE_ID = "req-trace.id_01-ABCDEF"
+INVALID_TRACE_IDS = [
+    pytest.param(None, id="null"),
+    pytest.param(12345678, id="int"),
+    pytest.param(["abcdefgh"], id="list"),
+    pytest.param("short12", id="too-short"),
+    pytest.param("a" * 65, id="too-long"),
+    pytest.param("bad id with spaces!", id="bad-chars"),
+    pytest.param("SECRET-line\nbreak-123", id="newline"),
+    pytest.param("", id="empty"),
+]
+
+
+def test_valid_trace_id_from_the_message_is_used_on_calls_and_logs(env, caplog):
+    handler, directory, factory, *_ = env
+    caplog.set_level("INFO", logger="app.consumer")
+
+    handler.handle(event(trace_id=VALID_TRACE_ID))
+
+    assert len(certificates(factory)) == 1
+    assert directory.calls == ["event", "user"]
+    assert directory.trace_ids == [VALID_TRACE_ID, VALID_TRACE_ID]
+    for name in ("attendance_eligible_received", "certificate_issued"):
+        assert [r for r in caplog.messages if name in r and f"trace_id={VALID_TRACE_ID}" in r]
+
+
+@pytest.mark.parametrize("bad", INVALID_TRACE_IDS)
+def test_invalid_trace_id_is_replaced_and_never_logged(env, caplog, bad):
+    handler, directory, factory, *_ = env
+    caplog.set_level("INFO", logger="app.consumer")
+
+    handler.handle(event(trace_id=bad))
+
+    assert len(certificates(factory)) == 1
+    assert len(set(directory.trace_ids)) == 1
+    generated = directory.trace_ids[0]
+    uuid.UUID(generated)
+    assert f"trace_id={generated}" in caplog.text
+    if isinstance(bad, str) and bad:
+        assert bad not in caplog.text
+
+
+def test_missing_trace_id_generates_one(env):
+    handler, directory, *_ = env
+
+    handler.handle(event())
+
+    uuid.UUID(directory.trace_ids[0])
+
+
+def test_already_issued_log_carries_trace_id(env, caplog):
+    handler, *_ = env
+    handler.handle(event(trace_id=VALID_TRACE_ID))
+    caplog.set_level("INFO", logger="app.consumer")
+
+    handler.handle(event(trace_id=VALID_TRACE_ID))
+
+    assert [r for r in caplog.messages if "certificate_already_issued" in r and f"trace_id={VALID_TRACE_ID}" in r]
+
+
+def test_poison_and_transient_failures_log_and_dlq_the_trace_id(env, caplog):
+    handler, directory, *_ = env
+    caplog.set_level("INFO")
+    producer = FakeProducer()
+    consumer = FakeKafkaConsumer()
+    worker = AttendanceWorker(handler=handler, producer_factory=lambda config: producer)
+    worker.stop.wait = lambda delay: False
+
+    directory.errors["event"] = PoisonMessage("EVENT_NOT_FOUND")
+    worker.process(consumer, FakeMessage(event(trace_id=VALID_TRACE_ID, user_id="Alex secret")))
+    [(_, _, record)] = producer.produced
+    assert record == {
+        "source_topic": "subscription.events", "partition": 2, "offset": 7,
+        "reason": "INVALID_CONTRACT", "trace_id": VALID_TRACE_ID,
+    }
+    assert [r for r in caplog.messages if r.startswith("poison_message") and f"trace_id={VALID_TRACE_ID}" in r]
+
+    directory.errors["event"] = TransientError("events down")
+    worker.process(consumer, FakeMessage(event(trace_id=VALID_TRACE_ID)))
+    assert [r for r in caplog.messages if r.startswith("transient_failure") and f"trace_id={VALID_TRACE_ID}" in r]
+
+
+def test_dlq_record_has_no_trace_id_when_invalid_or_unknown(env):
+    handler, *_ = env
+    producer = FakeProducer()
+    worker = AttendanceWorker(handler=handler, producer_factory=lambda config: producer)
+
+    worker.process(FakeKafkaConsumer(), FakeMessage(event(trace_id="bad id!", schema_version=9)))
+    worker.process(FakeKafkaConsumer(), FakeMessage(b"not json"))
+
+    records = [record for _, _, record in producer.produced]
+    assert records[0]["reason"] == "UNSUPPORTED_SCHEMA_VERSION"
+    uuid.UUID(records[0]["trace_id"])  # the generated one used for this attempt, not the invalid value
+    assert "trace_id" not in records[1]

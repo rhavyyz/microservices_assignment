@@ -479,22 +479,19 @@ func TestDefaultHeaders(t *testing.T) {
 	r.Host = "gw.example"
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
-	id := got.Get("X-Trace-Id")
-	if len(id) != 32 || w.Header().Get("X-Trace-Id") != id {
-		t.Errorf("trace id %q, response %q", id, w.Header().Get("X-Trace-Id"))
+	if got.Get("X-Trace-Id") != "" || w.Header().Get("X-Trace-Id") != "" {
+		t.Errorf("DefaultHeaders must leave the trace id to TraceID: %q, %q", got.Get("X-Trace-Id"), w.Header().Get("X-Trace-Id"))
 	}
 	if got.Get("X-Forwarded-For") != "10.1.2.3" || got.Get("X-Forwarded-Host") != "gw.example" || got.Get("X-Gateway") != "gateway" {
 		t.Errorf("headers: %v", got)
 	}
 
 	r = httptest.NewRequest("GET", "/", nil)
-	r.Header.Set("X-Trace-Id", "abc")
 	r.Header.Set("X-Forwarded-For", "1.1.1.1")
 	r.Header.Set("X-Forwarded-Host", "ui.example")
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, r)
-	if got.Get("X-Trace-Id") != "abc" || w.Header().Get("X-Trace-Id") != "abc" ||
-		got.Get("X-Forwarded-For") != "1.1.1.1" || got.Get("X-Forwarded-Host") != "ui.example" {
+	if got.Get("X-Forwarded-For") != "1.1.1.1" || got.Get("X-Forwarded-Host") != "ui.example" {
 		t.Errorf("incoming values not kept: %v", got)
 	}
 }

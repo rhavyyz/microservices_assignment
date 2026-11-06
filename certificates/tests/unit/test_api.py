@@ -208,3 +208,24 @@ def test_legacy_x_request_id_is_ignored_and_not_echoed(env):
     assert response.headers["X-Trace-Id"] != "legacy-12345678"
     assert response.json()["traceId"] == response.headers["X-Trace-Id"]
     uuid.UUID(response.headers["X-Trace-Id"])
+
+
+def test_unhandled_exception_returns_500_with_trace_id_header(env):
+    client, _, _ = env
+
+    @app.get("/__boom")
+    async def boom():
+        raise RuntimeError("secret detail")
+
+    try:
+        from fastapi.testclient import TestClient
+
+        with TestClient(app, raise_server_exceptions=False) as quiet:
+            response = quiet.get("/__boom", headers={"X-Trace-Id": "trace-12345678"})
+    finally:
+        app.router.routes.pop()
+
+    assert response.status_code == 500
+    assert response.headers["X-Trace-Id"] == "trace-12345678"
+    assert response.json()["code"] == "INTERNAL_ERROR"
+    assert "secret" not in response.text

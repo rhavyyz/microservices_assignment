@@ -89,3 +89,13 @@ def install_error_handling(app: FastAPI) -> None:
     async def storage_error(request: Request, exc: CertificateStorageError):
         log.error("storage_operation_failed trace_id=%s", request.state.trace_id)
         return problem_response(request, 503, "STORAGE_UNAVAILABLE")
+
+    @app.exception_handler(Exception)
+    async def unhandled_error(request: Request, exc: Exception):
+        # Runs in Starlette's ServerErrorMiddleware, outside the trace middleware above, so the header is set here.
+        trace_id = getattr(request.state, "trace_id", None)
+        log.error("unhandled_error cause=%s trace_id=%s", type(exc).__name__, trace_id)
+        response = problem_response(request, 500, "INTERNAL_ERROR")
+        if trace_id:
+            response.headers["X-Trace-Id"] = trace_id
+        return response
