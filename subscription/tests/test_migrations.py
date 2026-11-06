@@ -1,6 +1,6 @@
 """A 002 remove a tabela de chaves de idempotência abandonada; a 003 cria a de emissões por evento;
 a 004 remove tentativas de pagamento e lembra o evento; a 005 renomeia inbox.event_id para message_id;
-a 006 renomeia registrations.parent_event_id para event_id."""
+a 006 renomeia registrations.parent_event_id para event_id; a 007 preenche registrations.event_id nulo."""
 
 import psycopg
 import pytest
@@ -31,6 +31,7 @@ def test_abandoned_tables_dropped_and_event_column_added(db):
         "004_declarative_payments.sql",
         "005_inbox_message_id.sql",
         "006_registration_event_id.sql",
+        "007_backfill_registration_event_id.sql",
     ]
 
 
@@ -91,6 +92,20 @@ def test_migration_006_is_idempotent(db):
     sql = (Path(app.db.__file__).parent / "migrations" / "006_registration_event_id.sql").read_text(encoding="utf-8")
     with db.transaction() as conn:
         conn.execute(sql)
+
+
+def test_migration_007_is_idempotent(db):
+    from pathlib import Path
+
+    import app.db
+
+    sql = (Path(app.db.__file__).parent / "migrations" / "007_backfill_registration_event_id.sql").read_text(
+        encoding="utf-8"
+    )
+    with db.transaction() as conn:
+        conn.execute(sql)
+        conn.execute(sql)
+        assert conn.execute("SELECT count(*) AS n FROM registrations WHERE event_id IS NULL").fetchone()["n"] == 0
 
 
 def test_event_attendance_emitted_table(db):

@@ -100,7 +100,15 @@ class SubscriptionService:
 
         trace_id só existe em ações originadas por HTTP; trabalho de fundo envia null.
         extra acrescenta campos próprios do tipo (ex.: AttendanceEligible).
+        event_id (evento de Eventos) vai em todo evento de domínio.
         """
+        event_id = reg.get("event_id")
+        if event_id is None:
+            # Linha anterior à migração 007; não deveria ocorrer. Nunca inventa um valor.
+            row = conn.execute(
+                "SELECT event_id FROM activity_inventory WHERE activity_id=%s", (reg["activity_id"],)
+            ).fetchone()
+            event_id = row["event_id"] if row else None
         payload = {
             "message_id": str(uuid4()),
             "schema_version": 1,
@@ -113,6 +121,7 @@ class SubscriptionService:
             "status": reg["status"],
             "trace_id": trace_id,
             **(extra or {}),
+            "event_id": event_id,  # depois de extra: o valor do envelope não muda
         }
         self.enqueue(conn, self.settings.domain_topic, reg["id"], payload)
         messages = {
