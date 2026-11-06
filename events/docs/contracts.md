@@ -174,6 +174,9 @@ Content-Type: application/json
 
 Regras: atividade dentro do período do evento (422 `ACTIVITY_OUTSIDE_EVENT`); evento cancelado não muda (409
 `EVENT_CANCELLED`); mudar `amount_minor` ou apagar a atividade só com o evento em `DRAFT` (409 `EVENT_NOT_DRAFT`).
+Atividade já encerrada (`ended_at` preenchido) é somente leitura: qualquer `PATCH` dá 409 `ACTIVITY_ENDED` (checado depois de
+`EVENT_CANCELLED` e antes das demais regras), pois mover `ends_at` para o futuro depois do `ActivityEnded` faria Inscrições
+recusar a mensagem e travar o consumidor. Apagar já exige `DRAFT`, então uma atividade encerrada também não é apagada.
 
 ### 3.5 Encerrar atividade — `POST /api/v1/activities/{activity_id}/end`
 
@@ -214,7 +217,7 @@ Corpo `application/problem+json` (mesmo formato do serviço de Usuários):
 | 401 | `UNAUTHENTICATED` | Operação que exige identidade sem `X-User-Id`, ou `X-User-Id` que não é UUID (também nas leituras públicas). |
 | 403 | `FORBIDDEN` | Criar evento sem o papel `ORGANIZER`. |
 | 404 | `NOT_FOUND` | Inexistente, de outro organizador, rascunho alheio ou rota desconhecida. |
-| 409 | `INVALID_STATUS`, `EVENT_CANCELLED`, `EVENT_NOT_DRAFT`, `EVENT_WITHOUT_ACTIVITIES`, `EVENT_ENDED`, `EVENT_NOT_OPEN`, `ACTIVITY_NOT_ENDED` | Transição ou mudança proibida no estado atual. |
+| 409 | `INVALID_STATUS`, `EVENT_CANCELLED`, `EVENT_NOT_DRAFT`, `EVENT_WITHOUT_ACTIVITIES`, `EVENT_ENDED`, `EVENT_NOT_OPEN`, `ACTIVITY_NOT_ENDED`, `ACTIVITY_ENDED` | Transição ou mudança proibida no estado atual. |
 | 422 | `INVALID_PERIOD`, `ACTIVITY_OUTSIDE_EVENT` | Período inválido ou atividade fora do evento. |
 | 500 | `INTERNAL_ERROR` | Erro inesperado; o detalhe fica só no log, encontrado pelo `traceId`. |
 

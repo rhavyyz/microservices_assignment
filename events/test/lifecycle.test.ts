@@ -193,3 +193,34 @@ test('creating and editing activities uses amount_minor and publishes PascalCase
   assert.equal('available' in out[1], false);
   assert.equal(out[2].amount_minor, 1000);
 });
+
+test('an ended activity is read-only: any patch, even a future ends_at, is a 409 ACTIVITY_ENDED and publishes nothing more', async () => {
+  const s = fakeService();
+  s.db.seedEvent();
+  s.db.seedActivity();
+  await s.events.endActivity(organizer, 'a1');
+  assert.equal(s.db.outbox().length, 1);
+  for (const patch of [{ ends_at: d('2030-05-02T10:00:00Z') }, { starts_at: d('2030-05-01T08:30:00Z') }, { speaker: 'Ana' }, { amount_minor: 5000 }]) {
+    await refused(s.events.updateActivity(organizer, 'a1', patch), 409, 'ACTIVITY_ENDED');
+  }
+  assert.equal(s.db.outbox().length, 1);
+  assert.equal(s.db.activity('a1').ends_at.toISOString(), '2030-05-01T10:00:00.000Z');
+  assert.equal(s.audits.at(-1)?.code, 'ACTIVITY_ENDED');
+});
+
+test('an activity that has not ended can still be edited', async () => {
+  const s = fakeService();
+  s.db.seedEvent();
+  s.db.seedActivity();
+  const updated = await s.events.updateActivity(organizer, 'a1', { ends_at: d('2030-05-01T11:00:00Z'), speaker: 'Ana' });
+  assert.equal(updated.speaker, 'Ana');
+  assert.deepEqual(s.db.outbox().map((m) => m.type), ['ActivityUpdated']);
+});
+
+test('the activity of a cancelled event still gives EVENT_CANCELLED, checked before ACTIVITY_ENDED', async () => {
+  const s = fakeService();
+  s.db.seedEvent({ status: 'CANCELLED' });
+  s.db.seedActivity({ ended_at: d('2030-05-01T10:00:00Z') });
+  await refused(s.events.updateActivity(organizer, 'a1', { speaker: 'Ana' }), 409, 'EVENT_CANCELLED');
+  assert.equal(s.db.outbox().length, 0);
+});

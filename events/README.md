@@ -23,6 +23,7 @@ The migration is non-destructive: the legacy `reserved` and `available` columns 
 **Activity lifecycle**, derived and never stored: `CANCELLED` if its event is cancelled, else `ENDED` if `ended_at` is set,
 else `OPEN`. An activity is ended by its organizer (`POST /api/v1/activities/{activity_id}/end`, only after its scheduled
 `ends_at`) or automatically `ACTIVITY_AUTO_END_AFTER_SECONDS` after `ends_at`; either way `ActivityEnded` is published.
+An ended activity is read-only: `PATCH /api/v1/activities/{activity_id}` on it is a 409 `ACTIVITY_ENDED`.
 Cancelling the event publishes `ActivityCancelled` for each activity that had not ended. Ended and cancelled activities stay
 consultable.
 

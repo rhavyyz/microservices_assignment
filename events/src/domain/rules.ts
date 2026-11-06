@@ -40,6 +40,11 @@ export function assertNotCancelled(event: EventRow): void {
   if (event.status === 'CANCELLED') throw conflict('EVENT_CANCELLED', 'the event is cancelled');
 }
 
+/** An ended activity is read-only: moving its dates after `ActivityEnded` was published would contradict that message. */
+export function assertNotEnded(activity: Pick<ActivityRow, 'ended_at'>): void {
+  if (activity.ended_at) throw conflict('ACTIVITY_ENDED', 'the activity has ended and can no longer be edited');
+}
+
 /**
  * Changes that would invalidate existing registrations or pending payments (removing an activity,
  * changing its price) are allowed only before the event is published, when no registration can exist yet.

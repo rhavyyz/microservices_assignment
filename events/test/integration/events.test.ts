@@ -161,6 +161,20 @@ describe('events and schedule (RF02, RF03, RF04, RN07)', { skip }, () => {
     assert.equal((await env.events.getActivity(null, a.activity_id)).lifecycle, 'ENDED');
   });
 
+  test('an ended activity can no longer be edited (409 ACTIVITY_ENDED) and nothing more is published', async () => {
+    const e = await env.events.createEvent(organizer, eventInput());
+    const a = await env.events.addActivity(organizer, e.event_id, activityInput(e));
+    await env.events.publishEvent(organizer, e.event_id);
+    await moveToPast(env.pool, a.activity_id, 1);
+    await env.events.endActivity(organizer, a.activity_id);
+    const before = (await outbox(env.pool)).length;
+
+    await refused(env.events.updateActivity(organizer, a.activity_id, { speaker: 'Ana' }), 409, 'ACTIVITY_ENDED');
+    await refused(env.events.updateActivity(organizer, a.activity_id, { ends_at: new Date(Date.now() + 3_600_000) }), 409, 'ACTIVITY_ENDED');
+    assert.equal((await outbox(env.pool)).length, before);
+    assert.equal((await env.events.getActivity(null, a.activity_id)).lifecycle, 'ENDED');
+  });
+
   test('cancelling the event cancels the activities that have not ended and leaves the ended ones alone', async () => {
     const e = await env.events.createEvent(organizer, eventInput());
     const a1 = await env.events.addActivity(organizer, e.event_id, activityInput(e));

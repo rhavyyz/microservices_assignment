@@ -3,7 +3,7 @@ import type { Queryable } from '../db/pool.ts';
 import { notFound } from '../errors.ts';
 import { EVENT_STATUSES, type Actor, type ActivityRow, type EventRow } from '../domain/model.ts';
 import {
-  assertCanEnd, assertCanPublish, assertDraft, assertNotCancelled, assertOrganizer, assertOwner, assertValidPeriod,
+  assertCanEnd, assertCanPublish, assertDraft, assertNotCancelled, assertNotEnded, assertOrganizer, assertOwner, assertValidPeriod,
   assertWithinEvent, canView,
 } from '../domain/rules.ts';
 import { activityLifecycleMessage, activityMessage, eventMessage } from '../messaging/messages.ts';
@@ -225,6 +225,7 @@ export function createEventService(deps: ServiceDeps) {
         const { event, activity } = await lockOwnedActivity(w.tx, ctx.actor, activityId);
         w.target.event_id = event.id;
         assertNotCancelled(event);
+        assertNotEnded(activity);
         if (patch.amount_minor !== undefined && patch.amount_minor !== activity.price_cents) {
           assertDraft(event, 'changing the price');
         }
