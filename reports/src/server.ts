@@ -4,6 +4,7 @@ import swagger from '@fastify/swagger';
 import type { Pool } from 'pg';
 import {
   activitiesSection,
+  activityLifecycleSection,
   attendanceSection,
   countActivities,
   countOwnedEvents,
@@ -34,7 +35,10 @@ const paymentsSchema = obj({
   revenue: moneySchema, refunded: moneySchema,
 });
 const occupancySchema = obj({ capacity: int, occupied: int, rate });
-const attendanceSchema = obj({ confirmed: int, checkins: int, rate });
+const attendanceSchema = obj({
+  confirmed: int, checkins: int, rate, certificate_eligible: int, certificate_eligible_rate: rate,
+});
+const lifecycleCountsSchema = obj({ open: int, ended: int, cancelled: int });
 const eventSchema = obj({
   event_id: { type: 'string' },
   name: { type: ['string', 'null'] },
@@ -44,7 +48,8 @@ const eventSchema = obj({
 });
 const activitySchema = obj({
   activity_id: { type: 'string' }, name: { type: ['string', 'null'] }, capacity: { type: ['integer', 'null'] },
-  paid: { type: 'boolean' }, pending_payment: int, offered: int, confirmed: int, waitlisted: int, cancelled: int,
+  paid: { type: 'boolean' }, lifecycle: str, ended_at: { type: ['string', 'null'], format: 'date-time' },
+  pending_payment: int, offered: int, confirmed: int, waitlisted: int, cancelled: int,
   expired: int, rejected: int, payments_approved: int, revenue: moneySchema, refunded: moneySchema,
   occupied: int, occupancy_rate: rate,
   checkins: int, attendance_rate: rate,
@@ -124,7 +129,8 @@ const pageQuery = {
   },
 } as const;
 
-const paged = (item: unknown) => obj({ items: { type: 'array', items: item }, total: int, limit: int, offset: int });
+const paged = (item: unknown, extra: Record<string, unknown> = {}) =>
+  obj({ items: { type: 'array', items: item }, total: int, limit: int, offset: int, ...extra });
 
 /** `migrated` tells whether the first migration succeeded: /healthcheck is 503 until then. */
 export async function buildServer(pool: Pool, migrated: () => boolean = () => true) {
@@ -231,6 +237,7 @@ export async function buildServer(pool: Pool, migrated: () => boolean = () => tr
           payments: paymentsSchema,
           occupancy: occupancySchema,
           attendance: attendanceSchema,
+          activities: lifecycleCountsSchema,
         }),
         ...errorResponses,
       },
@@ -238,13 +245,14 @@ export async function buildServer(pool: Pool, migrated: () => boolean = () => tr
   }, async (req, reply) => {
     const ev = await owned(req, reply);
     if (!ev) return reply;
-    const [registrations, payments, occupancy, attendance] = await Promise.all([
+    const [registrations, payments, occupancy, attendance, activities] = await Promise.all([
       registrationsSection(pool, ev.event_id),
       paymentsSection(pool, ev.event_id),
       occupancySection(pool, ev.event_id),
       attendanceSection(pool, ev.event_id),
+      activityLifecycleSection(pool, ev.event_id),
     ]);
-    return { event: ev, registrations, payments, occupancy, attendance };
+    return { event: ev, registrations, payments, occupancy, attendance, activities };
   });
 
   app.get('/events/:eventId/activities', {
@@ -253,17 +261,18 @@ export async function buildServer(pool: Pool, migrated: () => boolean = () => tr
       summary: 'Indicators per activity (paginated)',
       params,
       querystring: pageQuery,
-      response: { 200: paged(activitySchema), ...validationResponse, ...errorResponses },
+      response: { 200: paged(activitySchema, { activities: lifecycleCountsSchema }), ...validationResponse, ...errorResponses },
     },
   }, async (req, reply) => {
     const ev = await owned(req, reply);
     if (!ev) return reply;
     const { limit, offset } = req.query as { limit: number; offset: number };
-    const [items, total] = await Promise.all([
+    const [items, total, activities] = await Promise.all([
       activitiesSection(pool, ev.event_id, { limit, offset }),
       countActivities(pool, ev.event_id),
+      activityLifecycleSection(pool, ev.event_id),
     ]);
-    return { items, total, limit, offset };
+    return { items, total, limit, offset, activities };
   });
 
   app.get('/events/:eventId/registrations', {

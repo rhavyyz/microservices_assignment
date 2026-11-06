@@ -72,6 +72,22 @@ UPDATE payments SET status = 'APPROVED' WHERE status = 'CONFIRMED';
 UPDATE payments SET status = 'DECLINED' WHERE status = 'REFUSED';
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS amount_minor bigint;
 UPDATE payments SET amount_minor = round(amount * 100)::bigint WHERE amount_minor IS NULL AND amount IS NOT NULL;
+
+-- Activity lifecycle (OPEN < ENDED < CANCELLED < DELETED; only moves forward) and attendance eligibility.
+ALTER TABLE activities ADD COLUMN IF NOT EXISTS lifecycle text NOT NULL DEFAULT 'OPEN';
+ALTER TABLE activities ADD COLUMN IF NOT EXISTS ended_at timestamptz;
+
+CREATE TABLE IF NOT EXISTS attendance_eligibility (
+  event_id               text NOT NULL,
+  user_id                text NOT NULL,
+  registration_id        text,
+  attended_activities    integer NOT NULL,
+  total_activities       integer NOT NULL,
+  attendance_percentage  numeric(5,2) NOT NULL,
+  last_event_at          timestamptz NOT NULL,
+  PRIMARY KEY (event_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS attendance_eligibility_event_idx ON attendance_eligibility (event_id);
 `;
 
 /** Idempotent; the advisory lock makes replicas starting together safe. */

@@ -35,10 +35,11 @@ O banco é um modelo de leitura, montado só a partir dos eventos. Cada tabela g
 | Tabela | Guarda |
 | --- | --- |
 | `events` | Evento, organizador (`organizer_id`), nome e status. |
-| `activities` | Atividade, evento, capacidade e se é paga. |
+| `activities` | Atividade, evento, capacidade, se é paga, ciclo de vida (`lifecycle`: `OPEN`, `ENDED`, `CANCELLED` ou `DELETED`) e `ended_at`. |
 | `registrations` | Último estado de cada inscrição. |
 | `payments` | Último estado de cada pagamento, valor e moeda. |
-| `checkins` | Um registro por inscrição com presença. |
+| `checkins` | Um registro por inscrição com presença (só inserção; a contagem confere o estado atual da inscrição). |
+| `attendance_eligibility` | Uma linha por pessoa e evento com `AttendanceEligible` (presenças, total de atividades e percentual). |
 | `processed_messages` | `message_id` de cada mensagem já tratada (idempotência). |
 
 Os totais são calculados na hora da consulta, a partir desses estados. Por isso reentrega e mensagens fora de ordem não corrompem nenhum total.
@@ -46,8 +47,10 @@ Os totais são calculados na hora da consulta, a partir desses estados. Por isso
 Definições dos indicadores:
 
 - **Vagas ocupadas:** inscrições `PENDING_PAYMENT`, `OFFERED` e `CONFIRMED` (um pagamento pendente e uma vaga oferecida já seguram a vaga no serviço de inscrições, RN02); a lista de espera (`WAITLISTED`) não segura vaga.
-- **Taxa de ocupação:** vagas ocupadas dividido pela soma das capacidades das atividades.
-- **Comparecimento:** check-ins dividido pelas inscrições confirmadas.
+- **Taxa de ocupação:** vagas ocupadas dividido pela soma das capacidades das atividades. Atividades `CANCELLED` ou `DELETED` não entram na capacidade nem em taxa baseada em capacidade (as inscrições delas também não contam como vagas ocupadas); numa atividade cancelada listada, `occupancy_rate` é `null`.
+- **Comparecimento:** check-ins contados dividido pelas inscrições confirmadas. Um check-in só conta enquanto a inscrição dele está `CONFIRMED` (conferido na consulta, por `registration_id`): se a inscrição for cancelada depois, o check-in deixa de contar; se a inscrição ainda não é conhecida, ele só passa a contar quando ela chegar como `CONFIRMED`. Assim a taxa nunca passa de 1. Vale no resumo, na rota de comparecimento e nos números por atividade.
+- **Aptos ao certificado:** `certificate_eligible` é o número de pessoas com `AttendanceEligible` no evento; `certificate_eligible_rate` é esse número dividido pelas pessoas distintas com ao menos um check-in contado (`null` se for 0).
+- **Atividades por ciclo de vida:** `activities: {open, ended, cancelled}` (as excluídas, `DELETED`, não entram). Atividades `DELETED` não aparecem em nenhuma lista nem no `total`; `ENDED` e `CANCELLED` aparecem na lista por atividade com `lifecycle` (e `ended_at` nas encerradas).
 - **Receita:** soma dos pagamentos `APPROVED`, em centavos (`amount_minor`), agrupada por moeda: moedas diferentes nunca são somadas. Pagamentos sem moeda entram na moeda `UNKNOWN`. **Reembolsado:** soma dos pagamentos `REFUNDED`, também por moeda; um pagamento reembolsado deixa de ser `APPROVED` e sai da receita. Sem valores, a lista vem vazia.
 - Quando o denominador é zero (por exemplo, capacidade zero), a taxa aparece vazia (`null`), e não zero.
 
@@ -60,8 +63,11 @@ O serviço não recebe chamadas de outros serviços. Recebe eventos pelo Kafka, 
 | `events.events` | `EventCreated`, `EventUpdated` | `event_id` | `organizer_id`, `name`, `status`, `starts_at`, `ends_at` |
 | `events.events` | `EventPublished`, `EventCancelled` | `event_id` | os mesmos (o status é forçado para `PUBLISHED` ou `CANCELLED`) |
 | `events.events` | `ActivityCreated`, `ActivityUpdated` | `activity_id`, `event_id` | `name`, `capacity`, `paid` |
+| `events.events` | `ActivityEnded` (`ENDED`), `ActivityCancelled` (`CANCELLED`) | `activity_id`, `event_id` | `ends_at` (não usado) |
+| `events.events` | `ActivityDeleted` (`DELETED`) | `activity_id`, `event_id` | demais campos da atividade (não usados) |
 | `subscription.events` | `RegistrationWaitlisted` (`WAITLISTED`), `WaitlistOffered` (`OFFERED`), `RegistrationPendingPayment` (`PENDING_PAYMENT`), `RegistrationConfirmed` (`CONFIRMED`), `RegistrationCancelled` (`CANCELLED`), `RegistrationExpired` (`EXPIRED`), `RegistrationRejected` (`REJECTED`) | `registration_id`, `event_id`, `activity_id` | `user_id` |
 | `subscription.events` | `AttendanceRecorded` (check-in) | `registration_id`, `event_id`, `activity_id` | `user_id` |
+| `subscription.events` | `AttendanceEligible` | `event_id`, `user_id`, `attended_activities`, `total_activities`, `attendance_percentage` | `registration_id`, `activity_id` |
 | `payments.events` | `PaymentCreated` (`PENDING`), `PaymentApproved` (`APPROVED`), `PaymentDeclined` (`DECLINED`), `PaymentExpired` (`EXPIRED`), `PaymentCancelled` (`CANCELLED`), `PaymentRefunded` (`REFUNDED`) | `payment_id`, `event_id` | `registration_id`, `activity_id`, `amount_minor`, `currency` |
 
 O banco guarda só o último estado de cada inscrição e de cada pagamento.
@@ -70,7 +76,14 @@ Valores: pagamentos trazem `amount_minor`, um inteiro em centavos. O serviço o 
 
 As mensagens de inscrição e de check-in devem trazer `event_id`; sem ele, são inválidas (`event_id is required`).
 
-Ignorados como qualquer tipo desconhecido: `AttendanceEligible`, `ActivityDeleted`, `ActivityEnded` e `ActivityCancelled`.
+`AttendanceEligible`: as contagens são inteiros não negativos, `total_activities >= 1`, `attended_activities <= total_activities` e `attendance_percentage` é um número finito entre 0 e 100; fora disso a mensagem é inválida (DLQ). Fica uma linha por (`event_id`, `user_id`), com a mesma proteção por `last_event_at` das outras tabelas (mensagem mais antiga não sobrescreve a mais nova).
+
+Ciclo de vida da atividade: `ActivityEnded` leva a `ENDED` (com `ended_at` igual ao `occurred_at` da mensagem), `ActivityCancelled` a `CANCELLED` e `ActivityDeleted` a `DELETED`; só `lifecycle` e `ended_at` mudam, nunca os campos descritivos nem o `last_event_at` deles.
+
+- **Regra de ordem (rank):** `OPEN` < `ENDED` < `CANCELLED` < `DELETED`. O estado só avança; mensagem de rank menor ou igual não faz nada (um `ActivityEnded` atrasado depois de `ActivityCancelled` não muda nada, e aplicar a mesma mensagem duas vezes também não).
+- **Linha provisória (stub):** essas mensagens têm chave Kafka diferente da de `ActivityCreated`, então podem chegar antes dela. Nesse caso a atividade é criada como stub (`event_id` da mensagem, `name` e `capacity` nulos, `last_event_at` = epoch), e qualquer `ActivityCreated`/`ActivityUpdated` posterior preenche os campos descritivos, sem nunca zerar o ciclo de vida.
+
+Migração (idempotente): `ALTER TABLE activities ADD COLUMN IF NOT EXISTS lifecycle text NOT NULL DEFAULT 'OPEN'`, `ADD COLUMN IF NOT EXISTS ended_at timestamptz`, `CREATE TABLE IF NOT EXISTS attendance_eligibility (...)` e seu índice por `event_id`. As atividades já gravadas ficam `OPEN`.
 
 Exigências para os produtores:
 
@@ -86,11 +99,11 @@ Todas as rotas exigem o cabeçalho `X-User-Id`, que deve ser um UUID. Pelo gatew
 | Endpoint | Retorna |
 | --- | --- |
 | `GET /events` | Eventos do organizador que fez a chamada (paginado). |
-| `GET /events/{eventId}/summary` | Tudo junto: evento, inscrições, pagamentos, ocupação e comparecimento. |
-| `GET /events/{eventId}/activities` | Os mesmos indicadores, por atividade (paginado). |
+| `GET /events/{eventId}/summary` | Tudo junto: evento, inscrições, pagamentos, ocupação, comparecimento e `activities` (contagem por ciclo de vida). |
+| `GET /events/{eventId}/activities` | Os mesmos indicadores, por atividade, com `lifecycle` e `ended_at`, mais `activities` (paginado). |
 | `GET /events/{eventId}/registrations` | Inscrições por estado: `pending_payment`, `offered`, `confirmed`, `waitlisted`, `cancelled`, `expired`, `rejected` e `total`. |
 | `GET /events/{eventId}/payments` | Pagamentos por estado (`pending`, `approved`, `declined`, `expired`, `cancelled`, `refunded_count`) e as listas `revenue` e `refunded`, por moeda. |
-| `GET /events/{eventId}/attendance` | Inscritos confirmados, check-ins e taxa de comparecimento. |
+| `GET /events/{eventId}/attendance` | Inscritos confirmados, check-ins, taxa de comparecimento, `certificate_eligible` e `certificate_eligible_rate`. |
 
 Dinheiro sai em centavos inteiros, por moeda: `"revenue": [{"currency": "BRL", "amount_minor": 2500}]` e `"refunded": [...]` no mesmo formato. Por atividade, a rota `/activities` traz os mesmos contadores de inscrição, `payments_approved`, `revenue` e `refunded`.
 
@@ -156,7 +169,7 @@ O serviço também expõe `GET /healthcheck` (503 até a primeira migração ter
 
 ## 10. Testes e validação
 
-Testes unitários (todos passando): leitura e validação das mensagens, DLQ, cálculo das taxas, rotas (erros, identidade, trace id, paginação, `x-gateway`) com um banco simulado. Há também um teste de integração com PostgreSQL real (`npm run test:integration`, só roda com `TEST_DATABASE_URL`): ele confere a migração de linhas no formato antigo (e sua idempotência), projeta uma sequência realista de mensagens e verifica ocupação, contadores, receita por moeda, reembolsos e reentrega.
+Testes unitários (todos passando): leitura e validação das mensagens, DLQ, cálculo das taxas, rotas (erros, identidade, trace id, paginação, `x-gateway`) com um banco simulado. Há também um teste de integração com PostgreSQL real (`npm run test:integration`, só roda com `TEST_DATABASE_URL`): ele confere a migração de linhas no formato antigo e a das colunas de ciclo de vida e da tabela de aptos (e sua idempotência), o ciclo de vida (stub, rank), `AttendanceEligible` e a regra de contagem de check-ins, projeta uma sequência realista de mensagens e verifica ocupação, contadores, receita por moeda, reembolsos e reentrega.
 
 Validação com Postgres, Kafka e gateway reais, usando mensagens enviadas manualmente (evento `e1` do organizador `o1`, atividade com 2 vagas, 2 inscrições, 1 pagamento de 50 e 1 check-in):
 
@@ -176,7 +189,6 @@ Ainda falta registrar o teste de resiliência (consultar o relatório com o Kafk
 - A tabela `processed_messages` cresce sem limpeza.
 - Não há filtro por período; a paginação existe só nas duas listas (`/events` e `/activities`).
 - O gateway envia o papel em `X-User-Roles`, mas o serviço não o usa: a única regra de acesso é «dono do evento», sem perfil de administrador.
-- Tipos de evento sem tratamento: `ActivityDeleted`, `ActivityEnded` e `ActivityCancelled` (ver «Pendências conhecidas»).
 - Os tópicos são criados com fator de replicação 1 e a `DATABASE_URL` tem uma senha de desenvolvimento por padrão (o compose a monta a partir de `REPORTS_DB_PASSWORD`); ambos servem para o ambiente local, mas não para produção.
 - Ferramenta externa de exception tracking e audit log dependem de decisão do grupo.
 - O teste de integração cobre o banco, mas não o broker Kafka.
@@ -185,9 +197,6 @@ Ainda falta registrar o teste de resiliência (consultar o relatório com o Kafk
 
 O que ainda NÃO foi feito (decisões de projeto a discutir):
 
-- Check-ins continuam contando mesmo se a inscrição for cancelada depois.
-- Tratamento de `ActivityDeleted`, `ActivityEnded` e `ActivityCancelled`.
-- `AttendanceEligible`.
 - A tabela `processed_messages` não tem retenção.
 
 ## 12. Dependências com os outros serviços

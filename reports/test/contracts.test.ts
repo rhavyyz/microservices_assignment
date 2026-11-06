@@ -216,15 +216,88 @@ test('registration types map to Subscription statuses', () => {
   });
 });
 
-test('lifecycle and unknown types are ignored, not errors', () => {
-  const ignored: [string, object][] = [
-    ['AttendanceEligible', registrationFields],
-    ['ActivityDeleted', activityFields],
-    ['ActivityEnded', { activity_id: ids.activity, event_id: ids.event, ends_at: '2026-12-01T18:00:00.000Z' }],
-    ['ActivityCancelled', { activity_id: ids.activity, event_id: ids.event, ends_at: '2026-12-01T18:00:00.000Z' }],
-    ['CertificateIssued', { anything: 1 }],
+test('unknown types are ignored, not errors', () => {
+  assert.equal(change(msg('CertificateIssued', { anything: 1 })).kind, 'ignored');
+});
+
+// events/src/messaging/messages.ts activityLifecycleMessage: only activity_id, event_id, ends_at.
+const lifecycleFields = { activity_id: ids.activity, event_id: ids.event, ends_at: '2026-12-01T18:00:00.000Z' };
+
+test('ActivityEnded, ActivityCancelled and ActivityDeleted map to a lifecycle change', () => {
+  for (const [type, lifecycle] of [['ActivityEnded', 'ENDED'], ['ActivityCancelled', 'CANCELLED']] as const) {
+    assert.deepEqual(change(msg(type, lifecycleFields)), {
+      kind: 'activityLifecycle', activityId: ids.activity, eventId: ids.event, lifecycle,
+    });
+  }
+  // ActivityDeleted carries the full activity fields, but only the ids are needed.
+  assert.deepEqual(change(msg('ActivityDeleted', activityFields)), {
+    kind: 'activityLifecycle', activityId: ids.activity, eventId: ids.event, lifecycle: 'DELETED',
+  });
+  assert.equal(
+    change(msg('ActivityDeleted', { activity_id: ids.activity, event_id: ids.event })).kind, 'activityLifecycle',
+  );
+});
+
+test('lifecycle messages require activity_id and event_id', () => {
+  for (const type of ['ActivityEnded', 'ActivityCancelled', 'ActivityDeleted']) {
+    for (const missing of ['activity_id', 'event_id']) {
+      const fields: Record<string, unknown> = { ...lifecycleFields };
+      delete fields[missing];
+      const r = parseMessage(msg(type, fields));
+      assert.equal(r.ok, false, `${type} without ${missing}`);
+      if (!r.ok) assert.match(r.error, new RegExp(`${type}: ${missing} is required`));
+    }
+  }
+});
+
+// subscription/app/service.py evaluate_event_attendance: envelope fields plus the registration that triggered it.
+const eligibleFields = {
+  registration_id: ids.registration,
+  event_id: ids.event,
+  activity_id: ids.activity,
+  user_id: ids.user,
+  aggregate_version: 4,
+  status: 'CONFIRMED',
+  attended_activities: 3,
+  total_activities: 4,
+  attendance_percentage: 75,
+};
+
+test('AttendanceEligible keeps the counts and percentage; registration_id and activity_id are optional', () => {
+  assert.deepEqual(change(msg('AttendanceEligible', eligibleFields)), {
+    kind: 'eligibility', eventId: ids.event, userId: ids.user, registrationId: ids.registration,
+    attendedActivities: 3, totalActivities: 4, attendancePercentage: 75,
+  });
+  const { registration_id, activity_id, ...minimal } = eligibleFields;
+  assert.deepEqual(change(msg('AttendanceEligible', { ...minimal, attendance_percentage: 66.67 })), {
+    kind: 'eligibility', eventId: ids.event, userId: ids.user, registrationId: null,
+    attendedActivities: 3, totalActivities: 4, attendancePercentage: 66.67,
+  });
+});
+
+test('AttendanceEligible rejects missing or invalid fields', () => {
+  const bad: [string, object][] = [
+    ['event_id is required', { event_id: undefined }],
+    ['user_id is required', { user_id: undefined }],
+    ['attended_activities must be a non-negative integer', { attended_activities: undefined }],
+    ['attended_activities must be a non-negative integer', { attended_activities: 1.5 }],
+    ['attended_activities must be a non-negative integer', { attended_activities: -1 }],
+    ['attended_activities must be a non-negative integer', { attended_activities: '3' }],
+    ['total_activities must be a non-negative integer', { total_activities: 2.5 }],
+    ['total_activities must be at least 1', { total_activities: 0, attended_activities: 0 }],
+    ['attended_activities must not exceed total_activities', { attended_activities: 5 }],
+    ['attendance_percentage must be a number between 0 and 100', { attendance_percentage: undefined }],
+    ['attendance_percentage must be a number between 0 and 100', { attendance_percentage: '75' }],
+    ['attendance_percentage must be a number between 0 and 100', { attendance_percentage: null }],
+    ['attendance_percentage must be a number between 0 and 100', { attendance_percentage: -1 }],
+    ['attendance_percentage must be a number between 0 and 100', { attendance_percentage: 100.01 }],
   ];
-  for (const [type, fields] of ignored) assert.equal(change(msg(type, fields)).kind, 'ignored', type);
+  for (const [reason, override] of bad) {
+    const r = parseMessage(msg('AttendanceEligible', { ...eligibleFields, ...override }));
+    assert.equal(r.ok, false, JSON.stringify(override));
+    if (!r.ok) assert.equal(r.error, `AttendanceEligible: ${reason}`);
+  }
+  // JSON cannot carry NaN/Infinity: they arrive as null, which is rejected too (covered above).
 });
 
 test('the old dotted type names are no longer recognised', () => {
