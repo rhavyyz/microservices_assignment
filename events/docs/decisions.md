@@ -1,8 +1,8 @@
-# Serviço de Eventos — decisões de arquitetura
+# Serviço de Eventos — decisões de implementação (DE-1 a DE-7)
 
 As decisões principais já estavam tomadas no design da equipe (padrões marcados em verde no diagrama). Este
 documento mostra como cada uma foi aplicada no serviço de Eventos e registra as decisões **adicionais** que a
-implementação exigiu (ADR-E1 a ADR-E7). O ADR-E7 atualiza os contratos vivos: onde ele substitui uma decisão anterior, a
+implementação exigiu (DE-1 a DE-7). O DE-7 atualiza os contratos vivos: onde ele substitui uma decisão anterior, a
 decisão antiga mantém o texto original e ganha uma "Nota (substituída)".
 
 ## Escopo herdado do design
@@ -20,9 +20,9 @@ início, fim e descrição.
 | Database per Service | PostgreSQL próprio (`events-db`), só na rede `events-net`; nenhum outro serviço lê suas tabelas. |
 | API Gateway | Rotas de negócio em `/api/v1/...`, expostas como `/events/api/v1/...` pelo Gateway; `GET /openapi.json` alimenta a tabela de endpoints; script abre as rotas. |
 | Server-side discovery | Registro como `events` no service-discoverer (registro único ao iniciar, pela biblioteca compartilhada); Inscrições resolve `events` por ele. |
-| Access Token | O Gateway verifica o JWT e envia `X-User-Id` / `X-User-Roles`; Eventos confia nesses cabeçalhos (ADR-E7; a validação local do ADR-E4 foi substituída). |
-| Messaging (Kafka) | Só publica, em `events.events`: `Event*`, `Activity*` (ADR-E7). Não consome nada. |
-| Saga / consistência de dados | Eventos guarda só a capacidade máxima; a saga de reserva de vaga (ADR-E2) saiu e Inscrições conta as vagas (ADR-E7). |
+| Access Token | O Gateway verifica o JWT e envia `X-User-Id` / `X-User-Roles`; Eventos confia nesses cabeçalhos (DE-7; a validação local do DE-4 foi substituída). |
+| Messaging (Kafka) | Só publica, em `events.events`: `Event*`, `Activity*` (DE-7). Não consome nada. |
+| Saga / consistência de dados | Eventos guarda só a capacidade máxima; a saga de reserva de vaga (DE-2) saiu e Inscrições conta as vagas (DE-7). |
 | Idempotent Consumer | Não se aplica mais a Eventos (não consome). A tabela `processed_messages` ficou no banco, sem uso. |
 | Health check API | `GET /healthcheck`: 200 só com schema migrado e banco respondendo. |
 | Audit logging | Uma linha estruturada (`audit: true`) por operação de escrita, inclusive recusas, e por atividade encerrada automaticamente (sem usuário). |
@@ -31,7 +31,7 @@ início, fim e descrição.
 
 ---
 
-## ADR-E1 — Capacidade e preço por atividade; capacidade imutável
+## DE-1 — Capacidade e preço por atividade; capacidade imutável
 
 - **Estado:** Proposto (diverge do esboço de dados do design; ver justificativa)
 - **Contexto:** o esboço de dados do design põe `Capacidade` e `valor de inscrição` no **evento**. A especificação diz que
@@ -53,11 +53,11 @@ início, fim e descrição.
 - **Consequências:** Inscrições referencia `activity_id` (além de `event_id`), o que deve ser refletido no modelo de
   inscrição do design. Mudar a capacidade exige criar outra atividade.
 - **Nota (nomes):** hoje o preço se chama `amount_minor` na API e nas mensagens (a coluna do banco continua `price_cents`) e
-  as mensagens seguem o formato de Inscrições (ADR-E7). O resto da decisão vale.
+  as mensagens seguem o formato de Inscrições (DE-7). O resto da decisão vale.
 
-## ADR-E2 — Reserva de vaga por coreografia assíncrona com UPDATE condicional atômico
+## DE-2 — Reserva de vaga por coreografia assíncrona com UPDATE condicional atômico
 
-- **Nota (substituída):** esta decisão foi substituída pelo ADR-E7. Eventos não conta mais vagas: a saga
+- **Nota (substituída):** esta decisão foi substituída pelo DE-7. Eventos não conta mais vagas: a saga
   (`registration.*` → `seat.*`), o consumidor Kafka, `reserved`/`available`, `seat_reservations` e `processed_messages` não são
   mais usados (as colunas e tabelas ficam no banco, sem uso). Inscrições conta as vagas contra a `capacity` que Eventos
   informa. O texto abaixo é o histórico da decisão original.
@@ -88,7 +88,7 @@ início, fim e descrição.
   próximo — RN04) e `event.cancelled`. Uma reserva pendente de pagamento ocupa vaga até Inscrições/Pagamentos publicar
   `registration.expired` (RN02/RN03): o prazo de expiração pertence a eles.
 
-## ADR-E3 — Transactional Outbox para publicar mensagens
+## DE-3 — Transactional Outbox para publicar mensagens
 
 - **Estado:** Proposto (padrão listado no design como sugestão, não marcado em verde)
 - **Contexto:** toda mudança relevante precisa virar mensagem: Relatórios constrói sua projeção a partir delas e
@@ -107,13 +107,13 @@ início, fim e descrição.
   mensagens: a API continua aceitando escritas.
 - **Consequências:** entrega *at-least-once*: consumidores precisam deduplicar por `message_id` (Relatórios já faz; o
   próprio Eventos fazia com `processed_messages`). Latência extra de até `OUTBOX_INTERVAL_MS` (500 ms). Uma tabela a mais.
-- **Nota:** o outbox continua valendo; o encerramento automático (ADR-E7) também grava nele, na mesma transação da mudança.
+- **Nota:** o outbox continua valendo; o encerramento automático (DE-7) também grava nele, na mesma transação da mudança.
   Eventos não consome mais mensagens, então a parte de consumidor idempotente deixou de existir.
 
-## ADR-E4 — Access Token validado localmente; RN07 como 404
+## DE-4 — Access Token validado localmente; RN07 como 404
 
 - **Nota (substituída):** a validação do JWT no próprio serviço (JWKS, verificador de token, `JWT_*`, `AUTH_UNAVAILABLE`)
-  foi substituída pelo ADR-E7: a identidade vem só dos cabeçalhos `X-User-Id` / `X-User-Roles` do Gateway. Seguem valendo o
+  foi substituída pelo DE-7: a identidade vem só dos cabeçalhos `X-User-Id` / `X-User-Roles` do Gateway. Seguem valendo o
   papel `ORGANIZER` para criar evento, a posse do evento para alterar e o **404** para recursos alheios (RN07). O texto
   abaixo é o histórico da decisão original.
 - **Estado:** Proposto (alinha com a pendência P3 do serviço de Usuários)
@@ -140,7 +140,7 @@ início, fim e descrição.
   mudança estiver no ar, as rotas de escrita podem ir para `requireAuth=true` e `rateLimitBy=user_or_ip` (ver
   `scripts/register-gateway-routes.sh`); antes disso, `requireAuth=true` recusaria clientes que só enviam o Bearer.
 
-## ADR-E5 — TypeScript, Fastify, PostgreSQL e kafkajs
+## DE-5 — TypeScript, Fastify, PostgreSQL e kafkajs
 
 - **Estado:** Aceito
 - **Contexto:** a especificação pede ao menos duas tecnologias entre os serviços; já existem Go (Gateway, Notificações,
@@ -148,7 +148,7 @@ início, fim e descrição.
 - **Alternativas:** Java/Spring como Usuários; Go como Notificações; TypeScript com a mesma pilha de Relatórios.
 - **Decisão:** TypeScript (Node 22) com Fastify, `@fastify/swagger`, `pg` e `kafkajs` — exatamente as dependências e o
   Dockerfile de Relatórios. PostgreSQL pelo suporte a transações, travas de linha, `CHECK`, gatilhos e colunas geradas,
-  que sustentam ADR-E2 e ADR-E3.
+  que sustentam DE-2 e DE-3.
 - **Justificativa:** reaproveita o que a equipe já conhece e mantém (build, testes com `node:test`, formato de mensagens,
   migração com trava consultiva). Os schemas JSON do Fastify validam entrada, filtram a saída e geram o `openapi.json`
   que o Gateway consome, de uma só fonte.
@@ -156,7 +156,7 @@ início, fim e descrição.
   código de registro poderia virar `service-discoverer/Libs/typescript` e ser compartilhado pelos dois serviços.
   *Atualização:* essa biblioteca passou a existir e Eventos a usa (pacote `discovery`); o cliente próprio foi removido. Eventos agora usa a biblioteca TypeScript compartilhada e se registra uma única vez ao iniciar, com as tentativas padrão da biblioteca; não se registra mais periodicamente.
 
-## ADR-E6 — Contrato de erros e de correlação
+## DE-6 — Contrato de erros e de correlação
 
 - **Estado:** Aceito
 - **Contexto:** RQ06 pede rastrear uma inscrição entre componentes e diagnosticar falhas. O Gateway gera/propaga
@@ -171,11 +171,11 @@ início, fim e descrição.
   "trace id" (`traceId`); `X-Request-Id` recebido é ignorado e não é devolvido. O texto acima é mantido como foi decidido.
   Do mesmo modo, o `correlation_id` das mensagens Kafka (e o cabeçalho `correlation-id`) passou a se chamar `trace_id`
   (cabeçalho `trace-id`); uma mensagem consumida que só traz `correlation_id` é aceita, mas o campo é ignorado (`trace_id` fica `null`).
-- **Nota (substituída em parte):** Eventos não consome mais mensagens (ADR-E7), então a propagação do identificador de uma
+- **Nota (substituída em parte):** Eventos não consome mais mensagens (DE-7), então a propagação do identificador de uma
   mensagem consumida deixou de existir; o `trace_id` das mensagens publicadas é o `X-Trace-Id` da requisição, ou `null` no
   encerramento automático. O envelope agora é plano, com `schema_version` no lugar de `version`.
 
-## ADR-E7 — Eventos guarda só a capacidade; ciclo de vida da atividade; identidade pelo cabeçalho; nomes de Inscrições
+## DE-7 — Eventos guarda só a capacidade; ciclo de vida da atividade; identidade pelo cabeçalho; nomes de Inscrições
 
 - **Estado:** Aceito
 - **Contexto:** Inscrições já implementa o contrato de integração (`subscription/CONTRACTS.md`): conta ela mesma as vagas
@@ -224,11 +224,11 @@ início, fim e descrição.
 
 | Serviço | O que precisa saber |
 |---|---|
-| Inscrições | Conta as vagas contra a `capacity`; lê `GET /api/v1/activities/{activity_id}` e `.../permissions/me`; consome `events.events` (`EventCancelled`, `Activity*`) (ADR-E7). |
-| Relatórios | Ainda lê o formato antigo (`event.*`, `data` aninhado, `events-events`) e deixa de projetar até ser adaptado (aceito; ADR-E7). |
+| Inscrições | Conta as vagas contra a `capacity`; lê `GET /api/v1/activities/{activity_id}` e `.../permissions/me`; consome `events.events` (`EventCancelled`, `Activity*`) (DE-7). |
+| Relatórios | Ainda lê o formato antigo (`event.*`, `data` aninhado, `events-events`) e deixa de projetar até ser adaptado (aceito; DE-7). |
 | Notificações | Eventos não conhece os inscritos; avisar participantes sobre `EventUpdated`/`EventCancelled` (RF08) cabe a Inscrições, que traduz para o tópico `notifications`. |
 | Gateway | Rodar `events/scripts/register-gateway-routes.sh` após o primeiro sync; o Gateway verifica o JWT e envia `X-User-Id` / `X-User-Roles`. |
-| Usuários | Nenhuma chamada: Eventos recebe só o `sub` e os papéis pelos cabeçalhos do Gateway (ADR-E7). |
+| Usuários | Nenhuma chamada: Eventos recebe só o `sub` e os papéis pelos cabeçalhos do Gateway (DE-7). |
 
 ## Limitações conhecidas
 - `reserved`, `available`, `seat_reservations` e `processed_messages` ficam no banco sem uso (a migração é não destrutiva); removê-las é uma migração futura.

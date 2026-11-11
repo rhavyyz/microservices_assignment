@@ -2,7 +2,7 @@
 
 The Certificates microservice is responsible for generating, storing, and retrieving certificates for participants in events. It uses FastAPI, SQLAlchemy, Alembic, and ReportLab.
 
-Certificates are created **only** by consuming Subscription's `AttendanceEligible` events from Kafka (see [ADR-006](../docs/decisions/ADR-006-certificates-issued-from-attendance-events.md)); there is no endpoint to create one. The HTTP API, behind the gateway, lets a participant list and download their own certificates.
+Certificates are created **only** by consuming Subscription's `AttendanceEligible` events from Kafka (see [DT-06](../docs/architecture/technical-decisions.md)); there is no endpoint to create one. The HTTP API, behind the gateway, lets a participant list and download their own certificates.
 
 ## Features
 
@@ -76,7 +76,7 @@ The attendance rule (RN06) is about an **event**, not an activity: the percentag
 The consumer is the only way a certificate is created. It runs in a daemon thread started by the application lifespan and stopped on shutdown; the service boots and serves `/healthcheck` even if Kafka is down.
 
 - **Topic:** `subscription.events` (group `certificates-service`, manual offset commit **after** processing, `topic.metadata.refresh.interval.ms=10000`).
-- **Topic provisioning (ADR-005):** before consuming, the service creates `subscription.events` and `certificates.dlq` if absent (replication 1, `CERTIFICATES_TOPIC_PARTITIONS` partitions, existing topics are never altered), retrying with backoff in the background until Kafka is up.
+- **Topic provisioning (DT-05):** before consuming, the service creates `subscription.events` and `certificates.dlq` if absent (replication 1, `CERTIFICATES_TOPIC_PARTITIONS` partitions, existing topics are never altered), retrying with backoff in the background until Kafka is up.
 - **Envelope (JSON):** `message_id`, `schema_version` (must be `1`), `type`, `registration_id`, `activity_id`, `user_id`, `aggregate_version`, `occurred_at`, `status`, `trace_id`, plus the event-level fields `event_id` (UUID of the Events event), `attended_activities` and `total_activities` (integers, `total >= 1`, `0 <= attended <= total`) and `attendance_percentage` (finite number, `attended * 100 / total` rounded to 2 decimals). `registration_id` and `activity_id` are those of the triggering registration (the last one to end).
 - **Only `type == "AttendanceEligible"` is acted on.** Every other type, including unknown ones, is acknowledged and ignored.
 

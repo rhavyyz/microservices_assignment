@@ -8,7 +8,7 @@ const MAX_TIMER_MS = 2_147_483_647; // limite do setTimeout
 
 /**
  * Estado de autenticação. O Access Token fica somente em memória (no SessionBridge): uma atualização completa da
- * página exige novo login. Nada é gravado em localStorage, sessionStorage ou cookies (ADR-006).
+ * página exige novo login. Nada é gravado em localStorage, sessionStorage ou cookies (DT-07).
  */
 export function AuthProvider({ children }: { children: ReactNode }) {
   const { usersApi, session: bridge } = useServices();

@@ -24,7 +24,7 @@ SPA em React + TypeScript (Vite). Fala **somente com o API Gateway**, pela URL e
 | `/usuarios` | `ORGANIZER` (UX) | busca de usuários | Usuários |
 | `*` | todos | 404 |  |
 
-Quem já tem sessão não vê `/entrar` nem `/cadastro`. Quem não tem o papel vê "Acesso negado" em `/usuarios`; mesmo contornando a interface, o servidor responde `403`. Próximas fases: ADR-007.
+Quem já tem sessão não vê `/entrar` nem `/cadastro`. Quem não tem o papel vê "Acesso negado" em `/usuarios`; mesmo contornando a interface, o servidor responde `403`. Próximas fases: DT-08.
 
 ## Estrutura
 `src/config.ts` (URL e caminhos) · `src/api/` (cliente HTTP, erros, schemas Zod e funções tipadas: `usersApi`, `eventsApi`, `subscriptionApi`) · `src/services/` (composição e contexto) · `src/auth/` (sessão em memória) · `src/components/` (layout, guardas, campos, alertas) · `src/pages/` · `src/schemas/forms.ts` (validação de formulários) · `src/test/` (apoio aos testes).

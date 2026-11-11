@@ -3,18 +3,18 @@
 > Estado: **backend de Usuários implementado (Fases 0–5)**; frontend na próxima etapa.
 > Legenda: **Aprovado** (existe no código do repositório) · **Proposto** (sugestão desta entrega, aguardando confirmação) · **Pendente** (sem contrato; não foi inventado).
 > Revisado sobre o `main` em `b0753be` (Gateway e Notificações já mesclados).
-> **Atualização 2026-11-03:** a autenticação de JWT no Gateway (incluindo `/ws`) está **mesclada no `main`** (PR #7). Inscrições passa a confiar em `X-User-Id`/`X-User-Roles` do Gateway em vez de validar o JWT; isso está **implementado na branch `feat/subscription-gateway-identity`, ainda não mesclado** (itens marcados com "(branch)"). Decisão em ADR-003.
+> **Atualização 2026-11-03:** a autenticação de JWT no Gateway (incluindo `/ws`) está **mesclada no `main`** (PR #7). Inscrições passa a confiar em `X-User-Id`/`X-User-Roles` do Gateway em vez de validar o JWT; isso está **implementado na branch `feat/subscription-gateway-identity`, ainda não mesclado** (itens marcados com "(branch)"). Decisão em DT-03.
 
 ## 1. Inventário do repositório
 
 | Item | Estado encontrado | Consequência |
 |---|---|---|
-| `service-discoverer/` (Go) + libs Python/Go/**Java** | Implementado. Registro **em memória**; exige `GET /healthcheck` 2xx; remove hosts sem saúde após ~1 min. | Usuários usa a lib Java e **re-registra periodicamente** (ADR-003). |
+| `service-discoverer/` (Go) + libs Python/Go/**Java** | Implementado. Registro **em memória**; exige `GET /healthcheck` 2xx; remove hosts sem saúde após ~1 min. | Usuários usa a lib Java e **re-registra periodicamente** (DT-03). |
 | `gateway/` (Go) | **Implementado**: rota `/{kind}/...`, tabela de endpoints no MongoDB, CORS, rate limit, `/admin/endpoints`, WebSocket `/ws`. | Contrato lido do código (seção 2). Substitui as suposições anteriores P1–P4. |
 | `notifications/` (Go) | Implementado (Kafka → MongoDB, API de listagem). | Não consome Usuários; usa `X-User-Id` (ver P13). |
 | `user/` | **Serviço implementado** (Spring Boot 4.1, Java 21, PostgreSQL). | Esta entrega. |
-| `events/` | Implementado conforme o contrato de Inscrições (seção 4b.1, ADR-008). | Inscrições consegue consumir a API real. |
-| `subscription/`, `payments/`, `reports/`, `certificates/` | Ver seções 4b/4c e ADR-006/007 (a ressalva antiga de que Relatórios lia o formato antigo de Eventos **não se confirmou** no teste de ponta a ponta de 2026-11-11: nome, status e atividades chegaram corretos). | — |
+| `events/` | Implementado conforme o contrato de Inscrições (seção 4b.1, DT-10). | Inscrições consegue consumir a API real. |
+| `subscription/`, `payments/`, `reports/`, `certificates/` | Ver seções 4b/4c e DT-06/DT-09 (a ressalva antiga de que Relatórios lia o formato antigo de Eventos **não se confirmou** no teste de ponta a ponta de 2026-11-11: nome, status e atividades chegaram corretos). | — |
 | `docker-compose.yml` raiz | Kafka KRaft; o **Gateway publica `8080:8080`** (única porta do host). Entrada `user:` editada por Usuários. | URL de desenvolvimento: `http://localhost:8080` (P1 resolvida). |
 
 ## 2. Contrato do Gateway (Aprovado — lido do código)
@@ -27,7 +27,7 @@
 | `requireAuth` | O Gateway verifica o JWT (RS256, `iss`, `exp`, chave do JWKS de Usuários): sem token ou token inválido → `401`; sem chave disponível → `503`. | Mantido `false` em Usuários; o serviço valida o JWT. Ver P3. |
 | Identidade injetada | Em toda rota o Gateway apaga `X-User-Id`/`X-User-Roles` do cliente; com token válido define `X-User-Id` = `sub` e `X-User-Roles` = `roles` (separadas por vírgula). Em rota sem `requireAuth`, token ausente ou inválido segue **anônimo**. `Authorization` é repassado sem alteração. | Usuários continua ignorando esses cabeçalhos e valida o próprio JWT (é quem emite o token). Inscrições **(branch)** confia nos cabeçalhos. |
 | WebSocket `/ws` | Token em `Authorization: Bearer` ou `?access_token=` (cabeçalho vence). `X-User-Id` e `?user_id=` **não são mais aceitos**. Falha → `401`/`503` antes do upgrade. A conexão aberta sobrevive ao `exp`. | Nenhum em Usuários. Mudança incompatível, aceita: o `/ws` ainda não tem consumidores. |
-| CORS | Gateway responde preflight e define cabeçalhos; **reflete qualquer `Origin` com credenciais**; remove `Access-Control-*` do serviço. | Usuários **não** configura CORS (ADR-003). |
+| CORS | Gateway responde preflight e define cabeçalhos; **reflete qualquer `Origin` com credenciais**; remove `Access-Control-*` do serviço. | Usuários **não** configura CORS (DT-03). |
 | Correlação | Usa **`X-Trace-Id`** (gera se ausente; ecoa na resposta). | Usuários adota `X-Trace-Id` em vez de `X-Correlation-Id` do prompt. `X-Request-Id` (nome antigo) é ignorado, sem fallback. Em Kafka, o mesmo valor segue no campo `trace_id` (snake_case, string ou null) dos eventos de Inscrições e Pagamentos; é nulo em trabalho de fundo e Pagamentos o devolve nos resultados. |
 | Rate limit | Por endpoint; `user_or_ip` usa `X-User-Id`. valor verificado (`sub`); um cabeçalho forjado não escolhe o balde. | Script usa `rateLimitBy=ip`. |
 | Admin API | **Sem autenticação**, sem porta no host. | Não expor publicamente. |
@@ -41,10 +41,10 @@
 | GET | `/user/api/v1/users/me` | `/api/v1/users/me` | sim | 120/min por usuário (IP se anônimo) |
 | PATCH | `/user/api/v1/users/me` | `/api/v1/users/me` | sim | 30/min por usuário (IP se anônimo) |
 | GET | `/user/api/v1/users?id=&email=&name=&page=&size=` | `/api/v1/users` | sim | 60/min por usuário (IP se anônimo); somente `ORGANIZER` |
-| GET | `/user/api/v1/admin/users?q=&organizerRequest=&page=&size=` | `/api/v1/admin/users` | sim | 60/min por usuário; somente `ADMIN` (ADR-009) |
+| GET | `/user/api/v1/admin/users?q=&organizerRequest=&page=&size=` | `/api/v1/admin/users` | sim | 60/min por usuário; somente `ADMIN` (DT-11) |
 | PUT | `/user/api/v1/admin/users/{id}/organizer` | `/api/v1/admin/users/{id}/organizer` | sim | 30/min por usuário; somente `ADMIN`; corpo `{"approved":bool}` |
 
-O cadastro aceita `requestedRole` (`PARTICIPANT`/`ORGANIZER`, opcional). `ORGANIZER` só abre um pedido `PENDING`; o papel é concedido por um `ADMIN` (ADR-009). Os limites 10/min por IP (login e cadastro) agora saem do `x-gateway` do serviço, mas só valem em banco do Gateway novo (P33).
+O cadastro aceita `requestedRole` (`PARTICIPANT`/`ORGANIZER`, opcional). `ORGANIZER` só abre um pedido `PENDING`; o papel é concedido por um `ADMIN` (DT-11). Os limites 10/min por IP (login e cadastro) agora saem do `x-gateway` do serviço, mas só valem em banco do Gateway novo (P33).
 | GET | `/.well-known/jwks.json` | — | **não** (servido direto via discoverer) | — |
 | GET | `/healthcheck`, `/openapi.json` | — | **não** (internos) | — |
 
@@ -57,12 +57,12 @@ O cadastro aceita `requestedRole` (`PARTICIPANT`/`ORGANIZER`, opcional). `ORGANI
 | # | Pergunta concreta | Proposta provisória | Quem confirma | Efeito |
 |---|---|---|---|---|
 | P1 | URL pública do Gateway em dev. | **Resolvida:** o compose publica `8080:8080`; o frontend usa `VITE_API_BASE_URL=http://localhost:8080` (sem valor fixo no código). | Gateway | Nenhum. |
-| P3 | **Quem valida o JWT e define `X-User-Id`?** **Resolvido: o Gateway (ADR-003, mesclado no `main`, PR #7).** Antes, ninguém: o Gateway só conferia a presença do cabeçalho e Notificações confiava nele (e no `user_id` da URL do `/ws`). | **O Gateway** valida o JWT (JWKS de Usuários), **remove** o `X-User-Id`/`X-User-Roles` recebidos e injeta `sub`/`roles`; o `/ws` segue a mesma regra. Restam em aberto: (a) `requireAuth=true` em `/users/me` (hoje `false`; o script de rotas de Usuários não foi alterado); (b) **os serviços só podem confiar em `X-User-Id` se forem alcançáveis apenas pelo Gateway**: o modelo adotado é de rede fechada, em que o Gateway é a única porta publicada no host e os serviços internos são confiáveis entre si (um contêiner dentro da rede pode forjar o cabeçalho; ver ADR-003); (c) Usuários continua **sem** confiar em `X-User-Id` e valida o próprio JWT. | Gateway + Notificações | Nenhuma em Usuários. Futuros clientes do `/ws` devem enviar o JWT (ver seção 2). |
+| P3 | **Quem valida o JWT e define `X-User-Id`?** **Resolvido: o Gateway (DT-03, mesclado no `main`, PR #7).** Antes, ninguém: o Gateway só conferia a presença do cabeçalho e Notificações confiava nele (e no `user_id` da URL do `/ws`). | **O Gateway** valida o JWT (JWKS de Usuários), **remove** o `X-User-Id`/`X-User-Roles` recebidos e injeta `sub`/`roles`; o `/ws` segue a mesma regra. Restam em aberto: (a) `requireAuth=true` em `/users/me` (hoje `false`; o script de rotas de Usuários não foi alterado); (b) **os serviços só podem confiar em `X-User-Id` se forem alcançáveis apenas pelo Gateway**: o modelo adotado é de rede fechada, em que o Gateway é a única porta publicada no host e os serviços internos são confiáveis entre si (um contêiner dentro da rede pode forjar o cabeçalho; ver DT-03); (c) Usuários continua **sem** confiar em `X-User-Id` e valida o próprio JWT. | Gateway + Notificações | Nenhuma em Usuários. Futuros clientes do `/ws` devem enviar o JWT (ver seção 2). |
 | P5 | Como os serviços obtêm a chave pública? | `GET /.well-known/jwks.json` via `GET /consult?kind=user`. O Gateway faz isso com cache em memória, atualização a cada 10 min e nova busca (no máximo 1 por 30 s) quando chega um `kid` desconhecido. | Todos | Endpoint já existe. |
 | P6 | `iss` e `aud`. | `iss=eventhub-users` (configurável; o Gateway lê `JWT_ISSUER`), sem `aud`. | Todos | Validação nos consumidores. |
-| P7 | Fluxo aprovado para criar `ORGANIZER` em produção. | **Resolvido no código (ADR-009):** cadastro com pedido de organizador + aprovação por um `ADMIN` (`/api/v1/admin/users`). Falta validar de ponta a ponta e a equipe confirmar o fluxo. | Equipe/docente | Baixa. O papel só vale após novo login (token de 30 min). |
+| P7 | Fluxo aprovado para criar `ORGANIZER` em produção. | **Resolvido no código (DT-11):** cadastro com pedido de organizador + aprovação por um `ADMIN` (`/api/v1/admin/users`). Falta validar de ponta a ponta e a equipe confirmar o fluxo. | Equipe/docente | Baixa. O papel só vale após novo login (token de 30 min). |
 | P8 | Usuários publica evento Kafka? | **Não.** Nenhum tópico criado. | Notificações | Sem Kafka no serviço. |
-| P9 | Certificados: nome do participante por snapshot em Inscrições ou endpoint interno? **Resolvido (ADR-006):** endpoint interno de Usuários `GET /internal/users/{id}`, sem autenticação, devolvendo **somente `id` e `name`**, protegido pelo isolamento de rede e nunca registrado no Gateway. Certificados só emite ao consumir `AttendanceEligible`. | Ver ADR-006. | Certificados + Usuários | Usuários expõe o endpoint interno; Certificados o consome. |
+| P9 | Certificados: nome do participante por snapshot em Inscrições ou endpoint interno? **Resolvido (DT-06):** endpoint interno de Usuários `GET /internal/users/{id}`, sem autenticação, devolvendo **somente `id` e `name`**, protegido pelo isolamento de rede e nunca registrado no Gateway. Certificados só emite ao consumir `AttendanceEligible`. | Ver DT-06. | Certificados + Usuários | Usuários expõe o endpoint interno; Certificados o consome. |
 | P10 | Onde o frontend é servido? | Pasta `frontend/` com build estático; compose raiz não alterado. | Equipe | Próxima etapa. |
 | P12 | Força bruta no login. | Limite por IP no Gateway (script). Usuários não limita. IPs compartilhados (campus/NAT) podem ser bloqueados juntos. | Gateway | Limitação conhecida. |
 | P13 | O cadastro retorna `409` para e-mail existente (exigido), o que permite enumerar e-mails. | Mitigar com o rate limit do Gateway. | Equipe | Aceito conscientemente. |
@@ -85,14 +85,14 @@ O cadastro aceita `requestedRole` (`PARTICIPANT`/`ORGANIZER`, opcional). `ORGANI
 
 | P30 | Relatórios e Certificados não informam o fuso/atraso do modelo de leitura: o frontend avisa que os números podem atrasar e oferece "Atualizar", mas não há campo "atualizado em". | Incluir `generated_at`/`as_of` no `summary`. | Relatórios | Baixa. |
 | P31 | `GET /certificates/me` não devolve total; o frontend só oferece "Próxima" quando a página vem cheia (pode abrir uma página vazia se o total for múltiplo de 50). Certificados antigos têm `event_id` nulo e aparecem sem título do evento. | Incluir `total` e, se possível, o título do evento. | Certificados | Baixa. |
-| P32 | **Papel retirado continua valendo nos tokens já emitidos** até expirarem (30 min): o JWT carrega `roles` e os outros serviços confiam na claim (ADR-009). Só o serviço de Usuários confere o papel no banco. | Se for exigido efeito imediato: consultar permissões por requisição ou encurtar a validade do token. | Todos os serviços que usam `roles` | Baixa. |
-| P33 | Rotas novas de administração (`GET /api/v1/admin/users`, `PUT /api/v1/admin/users/{id}/organizer`) e os limites 10/min por IP de login e cadastro entram no `x-gateway` (ADR-009). O Gateway só semeia rotas novas: num banco do Gateway **já populado** os limites de login/cadastro **não mudam** (E1 do relatório). | Aplicar `user/scripts/register-gateway-routes.sh` ou `PUT /admin/endpoints`; ou recriar o banco do Gateway. | Gateway + Usuários | Média: sem isso o limite anti-força-bruta não vale em instalações antigas. |
+| P32 | **Papel retirado continua valendo nos tokens já emitidos** até expirarem (30 min): o JWT carrega `roles` e os outros serviços confiam na claim (DT-11). Só o serviço de Usuários confere o papel no banco. | Se for exigido efeito imediato: consultar permissões por requisição ou encurtar a validade do token. | Todos os serviços que usam `roles` | Baixa. |
+| P33 | Rotas novas de administração (`GET /api/v1/admin/users`, `PUT /api/v1/admin/users/{id}/organizer`) e os limites 10/min por IP de login e cadastro entram no `x-gateway` (DT-11). O Gateway só semeia rotas novas: num banco do Gateway **já populado** os limites de login/cadastro **não mudam** (E1 do relatório). | Aplicar `user/scripts/register-gateway-routes.sh` ou `PUT /admin/endpoints`; ou recriar o banco do Gateway. | Gateway + Usuários | Média: sem isso o limite anti-força-bruta não vale em instalações antigas. |
 | P34 | **(relatório de testes, E2)** Inscrições responde `422` em `application/json` (`{"detail":[…]}`, ecoa a entrada) para UUID inválido e JSON malformado, fora do `problem+json` com `code`/`traceId`. Causa: sem handler para `RequestValidationError` em `subscription/app/api.py`. | Handler que devolva `problem+json` (`400 VALIDATION_ERROR`, ou `422` com código) e documentar o código. | Inscrições | Baixa: o frontend só envia UUIDs válidos. |
 | P35 | **(E3)** Pagamento `EXPIRED`: a inscrição segue `PENDING_PAYMENT` e a vaga presa até o prazo da reserva (15 min); a notificação diz "A vaga reservada foi liberada" antes disso; `POST /payments` devolve o mesmo pagamento `EXPIRED`, então não dá para pagar de novo. | Decisão de produto: (a) Inscrições trata `PaymentExpired` como `PaymentDeclined` (expira e promove a lista de espera), ou (b) Pagamentos permite nova cobrança e corrige o texto. | Pagamentos + Inscrições | **Alta** para o fluxo de pagamento. A tela de pagamento do frontend mostra "expirado" enquanto a inscrição segue pendente. |
 | P36 | **(C3)** O PDF do certificado sai em inglês, com `Title: untitled` e `Author: anonymous`. | Traduzir, formatar a data em pt-BR e preencher título/autor/assunto (`pdf_generator.py`). | Certificados | Cosmética. |
 | P37 | **(C4)** Quem estava na lista de espera recebe "O prazo da sua reserva terminou." quando a atividade termina, sem nunca ter tido reserva. | Texto próprio para `WAITLISTED` (`service.py`). | Inscrições | Cosmética. |
 
-## 4b. Tópicos Kafka (Aprovado — ADR-005)
+## 4b. Tópicos Kafka (Aprovado — DT-05)
 
 Quem usa o tópico garante que ele existe antes de consumir ou publicar (cria se ausente; nunca altera um existente; 6 partições por padrão).
 
@@ -107,11 +107,11 @@ Quem usa o tópico garante que ele existe antes de consumir ou publicar (cria se
 | `certificates.dlq` | Certificados | Operação (manual) | Certificados |
 | `reports.dlq` | Relatórios | Operação (manual) | Relatórios |
 
-Inscrições/Pagamentos é declarativo (ADR-007): Inscrições não envia comandos; publica `RegistrationPendingPayment`, `RegistrationCancelled`, `RegistrationExpired` etc. em `subscription.events` e Pagamentos reage. Pagamentos cria a cobrança lendo os fatos por HTTP em `GET /internal/registrations/{registration_id}` de Inscrições (rota interna, sem autenticação, fora do Gateway; resposta `registration_id`, `activity_id`, `user_id`, `status`, `amount_minor`, `currency`, `expires_at`, `event_id`; 404 se desconhecida). Inscrições consome `payments.events` (`PaymentCreated`, `PaymentApproved`, `PaymentDeclined`, `PaymentExpired`, `PaymentCancelled`, `PaymentRefunded`, com `registration_id`, `amount_minor`, `currency`, `trace_id` opcional; campos adicionais ignorados). Detalhes em `subscription/CONTRACTS.md`.
+Inscrições/Pagamentos é declarativo (DT-09): Inscrições não envia comandos; publica `RegistrationPendingPayment`, `RegistrationCancelled`, `RegistrationExpired` etc. em `subscription.events` e Pagamentos reage. Pagamentos cria a cobrança lendo os fatos por HTTP em `GET /internal/registrations/{registration_id}` de Inscrições (rota interna, sem autenticação, fora do Gateway; resposta `registration_id`, `activity_id`, `user_id`, `status`, `amount_minor`, `currency`, `expires_at`, `event_id`; 404 se desconhecida). Inscrições consome `payments.events` (`PaymentCreated`, `PaymentApproved`, `PaymentDeclined`, `PaymentExpired`, `PaymentCancelled`, `PaymentRefunded`, com `registration_id`, `amount_minor`, `currency`, `trace_id` opcional; campos adicionais ignorados). Detalhes em `subscription/CONTRACTS.md`.
 
-Certificados e Pagamentos já usam Kafka e criam os tópicos que consomem/produzem (ADR-006, ADR-007). Eventos publica em `events.events` e cria o tópico; **Eventos não consome Kafka** (ADR-008). Relatórios ainda não foi adaptado: ao usar Kafka deve criar os tópicos que produz ou consome do mesmo modo.
+Certificados e Pagamentos já usam Kafka e criam os tópicos que consomem/produzem (DT-06, DT-09). Eventos publica em `events.events` e cria o tópico; **Eventos não consome Kafka** (DT-10). Relatórios ainda não foi adaptado: ao usar Kafka deve criar os tópicos que produz ou consome do mesmo modo.
 
-### 4b.1 Eventos (Aprovado — ADR-008)
+### 4b.1 Eventos (Aprovado — DT-10)
 
 Eventos implementa o contrato que Inscrições já consome, sob `/api/v1`:
 
@@ -126,7 +126,7 @@ Eventos implementa o contrato que Inscrições já consome, sob `/api/v1`:
 
 Supersedidos (não são mais contratos vivos): o modelo antigo de Eventos com reserva de vagas (saga `registration.requested`/`seat.*`), os tópicos/grupos `events-events`/`subscription-events` e a validação de JWT em Eventos. Relatórios ainda lê o formato antigo de Eventos e deixa de projetar eventos/atividades até ser adaptado.
 
-## 4c. Certificados (Aprovado — ADR-006)
+## 4c. Certificados (Aprovado — DT-06)
 
 | Direção | Contraparte | Contrato |
 |---|---|---|
@@ -142,12 +142,12 @@ Todas as chamadas de saída levam `X-Trace-Id`. O percentual enviado à regra de
 
 | Consumidor | O que recebe de Usuários | Estado |
 |---|---|---|
-| Eventos | `X-User-Id` e `X-User-Roles` do Gateway (sem validar o JWT); valida a responsabilidade pelo evento (RN07) | Aprovado (ADR-008) |
+| Eventos | `X-User-Id` e `X-User-Roles` do Gateway (sem validar o JWT); valida a responsabilidade pelo evento (RN07) | Aprovado (DT-10) |
 | Inscrições | `sub` do token validado (nunca `userId` do corpo) | Proposto |
 | Pagamentos | Referência via Inscrições; sem acesso ao banco de Usuários | Proposto |
 | Notificações | Contrato de mensagem a definir (P8); identifica por `X-User-Id`, que agora é definido pelo Gateway após verificar o JWT (P3) | Pendente |
 | Check-in | Valida inscrição no domínio proprietário | Proposto |
-| Certificados | (leitura de `event_id` em Eventos, ADR-008) `id` e `name` por `GET /internal/users/{id}` (sem autenticação, rede interna; P9, ADR-006) | Aprovado (ADR-006) |
+| Certificados | (leitura de `event_id` em Eventos, DT-10) `id` e `name` por `GET /internal/users/{id}` (sem autenticação, rede interna; P9, DT-06) | Aprovado (DT-06) |
 | Relatórios | Sem dados pessoais de Usuários | Proposto |
 
 ### Serviços atrás do Gateway
@@ -160,8 +160,8 @@ RS256; chave pública em `GET /consult?kind=user` → `http://<host>/.well-known
 | Item | Como o frontend se comporta |
 |---|---|
 | Endereço | só o Gateway, em `VITE_API_BASE_URL`; caminhos `/user/api/v1/...` em `src/config.ts` |
-| Rotas usadas | `POST auth/register` (com `requestedRole`), `POST auth/login`, `GET/PATCH users/me`, `GET users` (busca, só organizador), `GET admin/users` e `PUT admin/users/{id}/organizer` (só administrador, ADR-009) |
-| Token | em memória; enviado como `Authorization: Bearer`; descartado no logout, na expiração e em qualquer 401 autenticado (ADR-006) |
+| Rotas usadas | `POST auth/register` (com `requestedRole`), `POST auth/login`, `GET/PATCH users/me`, `GET users` (busca, só organizador), `GET admin/users` e `PUT admin/users/{id}/organizer` (só administrador, DT-11) |
+| Token | em memória; enviado como `Authorization: Bearer`; descartado no logout, na expiração e em qualquer 401 autenticado (DT-07) |
 | Erros do Gateway em texto puro | 401, 404, 429 e 503 são tratados sem exibir o corpo (relevante se `requireAuth` for ligado, ver P-itens de Gateway) |
 | `X-Request-Id` duplicado (P15) | usa o primeiro valor; as mensagens usam o `traceId` do corpo |
 | CORS | depende do Gateway (reflete a origem; P14). Em dev o Vite roda em `http://localhost:5173` sem proxy |

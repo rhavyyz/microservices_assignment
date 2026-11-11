@@ -51,7 +51,7 @@ export type ConsumerHooks = {
 };
 
 export async function startConsumer(pool: Pool, log: Log, hooks: ConsumerHooks): Promise<Consumer> {
-  // metadataMaxAge = topic.metadata.refresh.interval.ms (ADR-005): picks up a topic created after we subscribed.
+  // metadataMaxAge = topic.metadata.refresh.interval.ms (DT-05): picks up a topic created after we subscribed.
   const consumer = kafka.consumer({ groupId: config.consumerGroup, metadataMaxAge: 10000 });
   // kafkajs restarts by itself while payload.restart is true; only a final crash needs us.
   consumer.on(consumer.events.CRASH, (e) => {

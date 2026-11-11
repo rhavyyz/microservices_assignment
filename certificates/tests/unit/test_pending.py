@@ -1,4 +1,4 @@
-"""Messages that arrive before their event ends are parked, not retried in place (ADR-006 addendum)."""
+"""Messages that arrive before their event ends are parked, not retried in place (DT-06 addendum)."""
 
 import uuid
 from datetime import timedelta, timezone

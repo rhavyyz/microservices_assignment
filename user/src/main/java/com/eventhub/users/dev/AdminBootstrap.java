@@ -21,7 +21,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Cria o primeiro ADMIN (ADR-009). DESATIVADO por padrão: só roda com {@code USERS_ADMIN_BOOTSTRAP_ENABLED=true} e
+ * Cria o primeiro ADMIN (DT-11). DESATIVADO por padrão: só roda com {@code USERS_ADMIN_BOOTSTRAP_ENABLED=true} e
  * credenciais do ambiente; não há rota HTTP que conceda ADMIN. Idempotente: se o e-mail já existe, só garante o papel.
  */
 @Component

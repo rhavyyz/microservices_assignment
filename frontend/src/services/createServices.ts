@@ -9,7 +9,7 @@ import { createSubscriptionApi, type SubscriptionApi } from '../api/subscription
 import { createUsersApi, type UsersApi } from '../api/usersApi';
 import type { AppConfig } from '../config';
 
-/** Ponte entre o cliente HTTP e a sessão: o token vive só aqui, em memória (ADR-006). */
+/** Ponte entre o cliente HTTP e a sessão: o token vive só aqui, em memória (DT-07). */
 export interface SessionBridge {
   getToken(): string | null;
   setToken(token: string | null): void;

@@ -13,7 +13,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 /**
- * Registra esta instância no service-discoverer como kind {@code user} (contrato aprovado, ADR-003).
+ * Registra esta instância no service-discoverer como kind {@code user} (contrato aprovado, DT-03).
  *
  * <p>Roda em thread própria: o serviço atende requisições mesmo com o discoverer fora do ar (RQ03). O registro é
  * repetido periodicamente porque o registry do discoverer é em memória e remove instâncias que ficam sem saúde

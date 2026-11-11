@@ -5,7 +5,7 @@ conventions every service follows. Established services covered here: **gateway*
 **subscription**, **notifications**. Other services (events, payments, reports, certificates) are described by their own
 README/contracts; see [Integration map](#integration-map) for how they connect.
 
-Sources of truth, in order: the code, the service's own README/`CONTRACTS.md`, the ADRs in `docs/decisions/`, and
+Sources of truth, in order: the code, the service's own README/`CONTRACTS.md`, the three ADRs in `docs/decisions/` plus `docs/architecture/technical-decisions.md` (DT-nn), and
 `docs/integration/contracts-with-team.md`. If this guide disagrees with the code, the code wins; fix the guide.
 
 ---
@@ -14,7 +14,7 @@ Sources of truth, in order: the code, the service's own README/`CONTRACTS.md`, t
 
 1. **Everything is locked behind the gateway.** The gateway is the only way in for anyone outside the network. Services
    publish no host ports. There are no shared secrets between the gateway and services: protection is network isolation
-   plus the identity the gateway injects. Do not add `X-Gateway-Token`/`X-Service-Token`-style secrets (rejected in ADR-003).
+   plus the identity the gateway injects. Do not add `X-Gateway-Token`/`X-Service-Token`-style secrets (rejected in DT-03).
 2. **The gateway authenticates, services authorize.** The gateway verifies the JWT and sets `X-User-Id` and
    `X-User-Roles` (stripping any the client sent). A service reads identity **only from those headers** and decides what
    that user may do with *its* resource (ownership, organizer-of-this-activity, etc.). Do not re-validate the JWT in
@@ -31,7 +31,7 @@ Sources of truth, in order: the code, the service's own README/`CONTRACTS.md`, t
 6. **Boot without your dependencies.** A service starts and serves `/healthcheck` even if Kafka, the discoverer, or
    another service is down. Kafka, registration and bucket/topic provisioning run in background threads with backoff.
    Only the service's own database may block readiness.
-7. **Kafka topics are created by whoever uses them, at startup** (ADR-005): create-if-absent, replication 1, configurable
+7. **Kafka topics are created by whoever uses them, at startup** (DT-05): create-if-absent, replication 1, configurable
    partitions (default 6), never alter an existing topic, retry in the background before consuming or producing.
    Consumers set a short `topic.metadata.refresh.interval.ms` (10 s) so a topic created later is noticed fast.
 8. **At-least-once delivery, idempotent handling.** Commit offsets after processing. Dedupe by `message_id` (inbox) or a
@@ -52,7 +52,7 @@ Sources of truth, in order: the code, the service's own README/`CONTRACTS.md`, t
     structured `request completed` record (`traceId`, `userId`, `req.method`, `req.url`, `res.statusCode`,
     `responseTime`). Never log bodies, `Authorization` or other header values.
 12. **Small, boring, documented.** Match the surrounding code's style and comment density. Record decisions that took
-    a debate as ADRs (`docs/decisions/ADR-00N-*.md`, Portuguese), keep each service's README current, and update
+    a debate in `docs/architecture/technical-decisions.md` as a new DT-nn section (Portuguese; the three ADRs in `docs/decisions/` are reserved for architecture-level decisions), keep each service's README current, and update
     `docs/integration/contracts-with-team.md` when a contract with another service changes.
 
 ## 2. Checklist for a service
@@ -74,7 +74,7 @@ Sources of truth, in order: the code, the service's own README/`CONTRACTS.md`, t
       loudly), placeholders in `.env.example`, real values in git-ignored `.env`.
 - [ ] Kafka: ensure topics at startup, own consumer group, outbox/inbox as needed, DLQ with references only.
 - [ ] Tests that run without Docker where possible; unit fakes for Kafka/HTTP. Integration tests may use Testcontainers.
-- [ ] Docs: service README, ADR for non-obvious decisions, contract doc rows.
+- [ ] Docs: service README, DT-nn section (or the service README) for non-obvious decisions, contract doc rows.
 
 ### Running and testing the stack
 
@@ -105,7 +105,7 @@ Sources of truth, in order: the code, the service's own README/`CONTRACTS.md`, t
 ```
 
 Kafka topics in use (all created by their users at startup): `payments.events`, `events.events`,
-`subscription.events`, `subscription.dlq`, `certificates.dlq`, `reports.dlq`, `notifications`, `notifications-push`. (`payments.commands` was removed by ADR-007 and no longer exists.) Details: contracts doc section 4b.
+`subscription.events`, `subscription.dlq`, `certificates.dlq`, `reports.dlq`, `notifications`, `notifications-push`. (`payments.commands` was removed by DT-09 and no longer exists.) Details: contracts doc section 4b.
 
 ---
 
@@ -133,7 +133,7 @@ runtime. Per-endpoint settings, changed at runtime via the admin API:
 Declaration example: `"get": {..., "x-gateway": {"isPublic": true, "requireAuth": true, "maxPerMin": 120, "rateLimitBy": "user_or_ip"}}`.
 All keys optional; an invalid key is ignored (default) and logged, it never fails the sync. Only the first insertion
 honors the declaration: to re-apply a changed one, `PUT` the values or delete the endpoint document in `gateway-db`.
-A service can thereby declare itself public (accepted risk, ADR-003); never declare `/internal/...` routes public.
+A service can thereby declare itself public (accepted risk, DT-03); never declare `/internal/...` routes public.
 
 **API docs.** `GET /openapi.json` (one merged OpenAPI 3.0.3 document) and `GET /docs` (Swagger UI) are public and
 served by the gateway itself, not proxied kinds. The document lists only the endpoints that are **public in the live
@@ -166,7 +166,7 @@ slow consumers are closed (4001); ping every 30 s.
 forwards to the connected user's socket, best-effort.
 
 **Env:** `PORT`, `MONGO_URI`, `SERVICE_DISCOVERER_URL`, `DEFAULT_MAX_PER_MIN`, `DISCOVERY_CACHE_TTL_SECONDS` (10; read by the discovery lib's host cache, validated by the gateway at startup), `TRUSTED_PROXIES`, `KAFKA_BROKERS`,
-`NOTIFICATIONS_PUSH_TOPIC`, `NOTIFICATIONS_PUSH_PARTITIONS` (6). Full detail: root `README.md` (Gateway), ADR-003.
+`NOTIFICATIONS_PUSH_TOPIC`, `NOTIFICATIONS_PUSH_PARTITIONS` (6). Full detail: root `README.md` (Gateway), DT-03.
 
 ## 5. Service-discoverer (`service-discoverer/`, Go + client libs)
 
@@ -191,7 +191,7 @@ Because the registry is in memory, **re-register periodically**. Docker builds r
 ## 6. Users (`user/`, Java 21, Spring Boot, PostgreSQL)
 
 **Role.** Accounts, authentication and the JWT issuer. Path via gateway: `/user/api/v1/...`. Reference:
-`docs/architecture/users-service.md`, `docs/api/users.openapi.yaml`, ADR-001/002.
+`docs/architecture/users-service.md`, `docs/api/users.openapi.yaml`, DT-01/DT-02.
 
 **Auth.** `POST /api/v1/auth/register` and `/login` return an RS256 access token (issuer `eventhub-users`, TTL 1800 s by
 default, `kid` in the header, claims `sub` = user UUID, `roles`). `GET /.well-known/jwks.json` serves the public keys
@@ -216,7 +216,7 @@ does not configure CORS. Audit records never contain the filtered personal data.
 ## 7. Subscription (`subscription/`, Python, FastAPI, PostgreSQL, Kafka)
 
 **Role.** Sign-ups to activities: inventory, waitlist, payment hold, check-in. Path via gateway: `/subscription/...`.
-Reference: `subscription/README.md`, `subscription/CONTRACTS.md`, ADR-003 and ADR-005.
+Reference: `subscription/README.md`, `subscription/CONTRACTS.md`, DT-03 and DT-05.
 
 **Identity.** Trusts the gateway headers only (no JWT validation): 401 `UNAUTHENTICATED` without a valid `X-User-Id`;
 organizer actions need role `ORGANIZER` **and** an Events permission check on the activity.
@@ -290,13 +290,13 @@ the insert; Mongo failures retry forever.
 user's websocket. Best-effort, can duplicate (dedupe by `id`), never delays the consumer.
 
 **To notify a user from your service:** publish the JSON above to `notifications` keyed by `user_id`, and make sure the
-topic exists (ADR-005 pattern).
+topic exists (DT-05 pattern).
 
 ---
 
 ## 9. Known cross-service gaps (verify before relying on them)
 
-- **Subscription ↔ Events contract mismatch: resolved (ADR-008).** Events now serves `/api/v1/activities/{id}` and
+- **Subscription ↔ Events contract mismatch: resolved (DT-10).** Events now serves `/api/v1/activities/{id}` and
   `/api/v1/activities/{id}/permissions/me` in the shape Subscription expects, publishes `ActivityEnded`/`ActivityCancelled`
   on `events.events`, and no longer counts seats or consumes Kafka. Only exercised against test doubles/unit tests on
   Subscription's side; not run end to end here.
@@ -305,14 +305,14 @@ topic exists (ADR-005 pattern).
 - **Gateway cold-start 503** after a failed first JWKS fetch (30 s cooldown).
 - **Kafka replication factor is fixed at 1** in every topic-creation helper.
 - **No refresh tokens**; tokens last 30 minutes.
-- Events used to validate the JWT itself; resolved (ADR-008): it reads only `X-User-Id`/`X-User-Roles`, per principle 2.
+- Events used to validate the JWT itself; resolved (DT-10): it reads only `X-User-Id`/`X-User-Roles`, per principle 2.
 
 ## 10. Working in parallel
 
 - One worktree/branch per task, based on current `main`; keep changes inside your service plus its docs and the root
   compose/`.env.example` entries. Avoid editing another service's code unless the task is that change; if a contract
   needs one (as with `GET /internal/users/{id}`), isolate it in its own commit and document it in the contracts doc.
-- Update `docs/integration/contracts-with-team.md` (rows and open questions) and the ADRs as you go; resolve merge
+- Update `docs/integration/contracts-with-team.md` (rows and open questions) and the decision records as you go; resolve merge
   conflicts in the compose and `.env.example` by keeping both sides' entries.
 - Verify before reporting done: run the service's tests and, when the change crosses a boundary, an end-to-end check in the
   compose stack; then clean Docker.

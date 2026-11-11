@@ -1,7 +1,7 @@
 # Contratos de integração de Inscrições — v1
 
 Estes contratos são implementados **no lado consumidor/produtor de Inscrições**. As APIs e
-mensagens de Eventos abaixo são **implementadas por Eventos** (ver ADR-008). Pagamentos reage aos eventos de Inscrições e lê fatos pelo endpoint interno descrito adiante. Usuários, Gateway, Discoverer e o formato de Notificações seguem o código existente.
+mensagens de Eventos abaixo são **implementadas por Eventos** (ver DT-10). Pagamentos reage aos eventos de Inscrições e lê fatos pelo endpoint interno descrito adiante. Usuários, Gateway, Discoverer e o formato de Notificações seguem o código existente.
 
 ## Descoberta, identidade e HTTP
 

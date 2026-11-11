@@ -19,23 +19,23 @@ export default defineConfig([
     rules: {
       // Nada de log: senha, token e cabeçalho Authorization nunca podem ir para o console.
       'no-console': 'error',
-      // O Access Token fica somente em memória (ADR-006).
+      // O Access Token fica somente em memória (DT-07).
       'no-restricted-globals': [
         'error',
-        { name: 'localStorage', message: 'O token não pode ser persistido (ADR-006).' },
-        { name: 'sessionStorage', message: 'O token não pode ser persistido (ADR-006).' },
+        { name: 'localStorage', message: 'O token não pode ser persistido (DT-07).' },
+        { name: 'sessionStorage', message: 'O token não pode ser persistido (DT-07).' },
       ],
       'no-restricted-properties': [
         'error',
         {
           object: 'window',
           property: 'localStorage',
-          message: 'O token não pode ser persistido (ADR-006).',
+          message: 'O token não pode ser persistido (DT-07).',
         },
         {
           object: 'window',
           property: 'sessionStorage',
-          message: 'O token não pode ser persistido (ADR-006).',
+          message: 'O token não pode ser persistido (DT-07).',
         },
       ],
     },

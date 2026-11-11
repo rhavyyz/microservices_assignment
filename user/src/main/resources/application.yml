@@ -28,7 +28,7 @@ server:
     whitelabel:
       enabled: false
 
-# Contrato do service-discoverer: GET /healthcheck com 2xx (ADR-003). Inclui o banco; sem detalhes.
+# Contrato do service-discoverer: GET /healthcheck com 2xx (DT-03). Inclui o banco; sem detalhes.
 management:
   endpoints:
     web:

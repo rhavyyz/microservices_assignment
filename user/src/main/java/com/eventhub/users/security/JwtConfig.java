@@ -24,7 +24,7 @@ import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 
 /**
- * Chaves e codec de JWT (ADR-001): RS256 com chave privada injetada por arquivo. A mesma chave em todas as
+ * Chaves e codec de JWT (DT-01): RS256 com chave privada injetada por arquivo. A mesma chave em todas as
  * réplicas faz com que um token emitido por uma instância seja aceito pelas outras.
  */
 @Configuration
