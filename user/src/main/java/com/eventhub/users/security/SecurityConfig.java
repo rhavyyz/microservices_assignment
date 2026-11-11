@@ -54,6 +54,8 @@ public class SecurityConfig {
                         // Busca de usuários: dados pessoais de terceiros, somente organizadores (o serviço
                         // confere o papel no banco de novo, para que um rebaixamento valha antes de o token expirar).
                         .requestMatchers(HttpMethod.GET, "/api/v1/users").hasRole("ORGANIZER")
+                        // Área do administrador: papel ADMIN no token e, de novo, no banco (UserService).
+                        .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth -> oauth
                         .authenticationEntryPoint(entryPoint)

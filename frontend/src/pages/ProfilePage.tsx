@@ -5,7 +5,7 @@ import { describeError, isAbortError, toApiError, type ErrorDescription } from '
 import type { UserProfile } from '../api/schemas';
 import { useAuth } from '../auth/AuthContext';
 import { formatDateTime } from '../components/format';
-import { roleLabels } from '../components/roles';
+import { ORGANIZER_REQUEST_LABELS, roleLabels } from '../components/roles';
 import { Alert, Button, LoadingState, TextField } from '../components/ui';
 import { usePageTitle } from '../components/usePageTitle';
 import { profileSchema, type ProfileForm } from '../schemas/forms';
@@ -71,7 +71,7 @@ function ProfileDetails({
   onSaved: (p: UserProfile) => void;
 }) {
   const { usersApi } = useServices();
-  const { updateUserName } = useAuth();
+  const { updateUserName, hasRole } = useAuth();
   const [saved, setSaved] = useState(false);
   const [formError, setFormError] = useState<ErrorDescription | null>(null);
   const {
@@ -107,9 +107,29 @@ function ProfileDetails({
         <dd>{profile.email}</dd>
         <dt>Papéis</dt>
         <dd>{roleLabels(profile.roles)}</dd>
+        {profile.organizerRequest !== 'NONE' ? (
+          <>
+            <dt>Pedido de organizador</dt>
+            <dd>{ORGANIZER_REQUEST_LABELS[profile.organizerRequest]}</dd>
+          </>
+        ) : null}
         <dt>Conta criada em</dt>
         <dd>{formatDateTime(profile.createdAt)}</dd>
       </dl>
+      {profile.roles.includes('ORGANIZER') && !hasRole('ORGANIZER') ? (
+        <Alert kind="success">
+          Você foi aprovado como organizador. Saia e entre novamente para usar a área do
+          organizador.
+        </Alert>
+      ) : null}
+      {profile.organizerRequest === 'PENDING' ? (
+        <Alert kind="info">
+          Seu pedido para ser organizador aguarda a aprovação de um administrador.
+        </Alert>
+      ) : null}
+      {profile.organizerRequest === 'DENIED' ? (
+        <Alert kind="info">Seu pedido para ser organizador não foi aprovado.</Alert>
+      ) : null}
       <h2>Editar nome</h2>
       {saved ? <Alert kind="success">Perfil atualizado com sucesso.</Alert> : null}
       {formError ? (

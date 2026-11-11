@@ -37,6 +37,7 @@ export const registerSchema = z
       .max(72, 'A senha deve ter no máximo 72 caracteres.')
       .refine((v) => utf8Bytes(v) <= 72, 'A senha deve ter no máximo 72 bytes (UTF-8).'),
     confirmPassword: z.string().min(1, 'Confirme a senha.'),
+    accountType: z.enum(['PARTICIPANT', 'ORGANIZER']),
   })
   .refine((d) => d.password === d.confirmPassword, {
     path: ['confirmPassword'],

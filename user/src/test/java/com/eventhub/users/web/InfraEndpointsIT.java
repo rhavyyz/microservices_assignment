@@ -32,6 +32,8 @@ class InfraEndpointsIT extends PostgresIT {
         assertThat(r.<Object>json("$.paths['/api/v1/users/me'].patch")).isNotNull();
         assertThat(r.<Object>json("$.paths['/api/v1/users'].get")).isNotNull();
         assertThat(r.<Object>json("$.paths['/internal/users/{id}'].get")).isNotNull();
+        assertThat(r.<Object>json("$.paths['/api/v1/admin/users'].get")).isNotNull();
+        assertThat(r.<Object>json("$.paths['/api/v1/admin/users/{id}/organizer'].put")).isNotNull();
     }
 
     @Test
@@ -49,6 +51,11 @@ class InfraEndpointsIT extends PostgresIT {
                 assertThat(ext).as("x-gateway of %s", id).isNotNull();
                 assertThat(ext.get("isPublic")).as("isPublic of %s", id).isEqualTo(want[0]);
                 assertThat(ext.get("requireAuth")).as("requireAuth of %s", id).isEqualTo(want[1]);
+                var limit = GatewayExtensionTest.LIMITS.get(id);
+                if (limit != null) {
+                    assertThat(ext.get("maxPerMin")).as("maxPerMin of %s", id).isEqualTo(limit[0]);
+                    assertThat(ext.get("rateLimitBy")).as("rateLimitBy of %s", id).isEqualTo(limit[1]);
+                }
                 seen++;
             }
         }

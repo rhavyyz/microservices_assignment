@@ -6,6 +6,7 @@ const okRegister = {
   email: 'maria@example.com',
   password: 'senha-forte-123',
   confirmPassword: 'senha-forte-123',
+  accountType: 'PARTICIPANT' as const,
 };
 const messages = (r: { success: boolean; error?: { issues: { message: string }[] } }) =>
   r.error?.issues.map((i) => i.message) ?? [];
@@ -19,6 +20,15 @@ describe('registerSchema', () => {
     });
     expect(r.name).toBe('Maria Silva');
     expect(r.email).toBe('maria@example.com');
+  });
+
+  it('aceita só PARTICIPANT ou ORGANIZER como tipo de conta (ADMIN nunca é escolha do cadastro)', () => {
+    expect(registerSchema.safeParse({ ...okRegister, accountType: 'ORGANIZER' }).success).toBe(
+      true,
+    );
+    for (const accountType of ['ADMIN', '', 'organizer', undefined]) {
+      expect(registerSchema.safeParse({ ...okRegister, accountType }).success).toBe(false);
+    }
   });
 
   it('exige campos preenchidos', () => {

@@ -31,13 +31,13 @@ public class UserController {
         this.users = users;
     }
 
-    @GatewaySettings(isPublic = true, requireAuth = true)
+    @GatewaySettings(isPublic = true, requireAuth = true, maxPerMin = 120, rateLimitBy = "user_or_ip")
     @GetMapping
     public UserProfile me(@AuthenticationPrincipal Jwt jwt) {
         return UserProfile.from(users.getActive(subject(jwt)));
     }
 
-    @GatewaySettings(isPublic = true, requireAuth = true)
+    @GatewaySettings(isPublic = true, requireAuth = true, maxPerMin = 30, rateLimitBy = "user_or_ip")
     @PatchMapping
     public UserProfile update(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody UpdateProfileRequest request) {
         return UserProfile.from(users.updateName(subject(jwt), request.name()));

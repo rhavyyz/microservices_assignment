@@ -27,7 +27,7 @@ public class UserSearchController {
         this.users = users;
     }
 
-    @GatewaySettings(isPublic = true, requireAuth = true)
+    @GatewaySettings(isPublic = true, requireAuth = true, maxPerMin = 60, rateLimitBy = "user_or_ip")
     @GetMapping
     public UserPage search(
             @AuthenticationPrincipal Jwt jwt,

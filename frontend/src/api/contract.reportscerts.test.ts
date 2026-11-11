@@ -7,9 +7,11 @@ import { jsonResponse } from '../test/helpers';
 import {
   ActivityReportSchema,
   AttendanceSchema,
+  LifecycleCountsSchema,
   OccupancySchema,
   PaymentsSchema,
   RegistrationsSchema,
+  ReportEventSchema,
 } from './reportsSchemas';
 
 /** Mesma ideia dos outros testes de contrato: o que o cliente chama e lê existe no código dos serviços. */
@@ -63,6 +65,39 @@ describe('Relatórios', () => {
     for (const schema of schemas) {
       for (const key of Object.keys(schema.shape)) {
         expect(queries, `campo ${key}`).toContain(key);
+      }
+    }
+  });
+
+  it('cada campo exigido pelo cliente consta no schema de RESPOSTA do servidor (o que ele realmente serializa)', () => {
+    // O Fastify serializa pelo schema de resposta: campo fora dele some do JSON, mesmo que a consulta SQL o traga.
+    const server = read('reports/src/server.ts');
+    const keysOf = (name: string): string[] => {
+      const block = new RegExp(`const ${name} = obj\\(\\{([\\s\\S]*?)\\}\\);`).exec(server)?.[1];
+      expect(block, `schema ${name} em server.ts`).toBeDefined();
+      const withValue = [...block!.matchAll(/(?:^|[\s,{])([a-z_]+):/g)].map((m) => m[1]!);
+      // propriedade abreviada (`rate` sem valor), como em occupancySchema
+      const shorthand = [...block!.matchAll(/(?:^|[,{])\s*([a-z_]+)\s*(?=[,}]|$)/g)].map(
+        (m) => m[1]!,
+      );
+      return [...withValue, ...shorthand].filter((k) => k !== 'type' && k !== 'format');
+    };
+    const pairs: [string, { shape: Record<string, unknown> }][] = [
+      ['eventSchema', ReportEventSchema],
+      ['registrationsSchema', RegistrationsSchema],
+      ['paymentsSchema', PaymentsSchema],
+      ['occupancySchema', OccupancySchema],
+      ['attendanceSchema', AttendanceSchema],
+      ['lifecycleCountsSchema', LifecycleCountsSchema],
+      ['activitySchema', ActivityReportSchema],
+    ];
+    for (const [name, schema] of pairs) {
+      const served = keysOf(name);
+      expect(served.length, name).toBeGreaterThan(2);
+      for (const key of Object.keys(schema.shape)) {
+        expect(served, `${name}: o cliente exige "${key}", que o servidor não serializa`).toContain(
+          key,
+        );
       }
     }
   });

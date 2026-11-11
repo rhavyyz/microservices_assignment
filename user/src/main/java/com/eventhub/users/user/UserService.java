@@ -60,8 +60,16 @@ public class UserService {
         return raw.strip().toLowerCase(Locale.ROOT);
     }
 
-    /** Cadastro público: sempre {@code PARTICIPANT}; nenhum parâmetro de papel existe nesta assinatura. */
+    /** Cadastro público sem pedido de organizador. */
     public User register(String rawName, String rawEmail, String password) {
+        return register(rawName, rawEmail, password, false);
+    }
+
+    /**
+     * Cadastro público: o papel concedido é sempre {@code PARTICIPANT}. Quem escolhe "organizador"
+     * ({@code requestOrganizer}) só registra um pedido {@code PENDING}; o papel ORGANIZER só é concedido por um ADMIN.
+     */
+    public User register(String rawName, String rawEmail, String password, boolean requestOrganizer) {
         String name = normalizeName(rawName);
         String email = normalizeEmail(rawEmail);
         requirePasswordWithinHashLimit(password);
@@ -71,6 +79,9 @@ public class UserService {
             throw ApiException.emailAlreadyRegistered();
         }
         User user = User.create(name, email, encoder.encode(password), EnumSet.of(Role.PARTICIPANT), now());
+        if (requestOrganizer) {
+            user.requestOrganizer(now());
+        }
         try {
             user = users.saveAndFlush(user);
         } catch (DataIntegrityViolationException e) {
@@ -158,6 +169,71 @@ public class UserService {
                 PageRequest.of(page, size, Sort.by("name").ascending().and(Sort.by("id").ascending())));
         audit.record(Operation.USER_SEARCH, Result.SUCCESS, requesterId, null);
         return result;
+    }
+
+    /**
+     * Listagem para o ADMIN (sem exigir filtro: a tela precisa ver todos). O papel é conferido no banco, não só no
+     * token. {@code requestFilter} aceita NONE, PENDING, APPROVED ou DENIED; {@code term} procura em nome e e-mail.
+     */
+    @Transactional(readOnly = true)
+    public Page<User> adminList(UUID adminId, String term, String requestFilter, int page, int size) {
+        requireAdmin(adminId);
+        String termValue = blankToNull(term);
+        if (termValue != null && termValue.length() > 254) {
+            throw ApiException.validation("q", "A busca deve ter no máximo 254 caracteres.");
+        }
+        OrganizerRequest request = null;
+        if (blankToNull(requestFilter) != null) {
+            try {
+                request = OrganizerRequest.valueOf(requestFilter.strip());
+            } catch (IllegalArgumentException e) {
+                throw ApiException.validation("organizerRequest", "Use NONE, PENDING, APPROVED ou DENIED.");
+            }
+        }
+        if (page < 0) {
+            throw ApiException.validation("page", "A página deve ser maior ou igual a 0.");
+        }
+        if (size < 1 || size > MAX_PAGE_SIZE) {
+            throw ApiException.validation("size", "O tamanho da página deve estar entre 1 e " + MAX_PAGE_SIZE + ".");
+        }
+        Page<User> result = users.findAll(UserSpecifications.forAdmin(termValue, request),
+                PageRequest.of(page, size, Sort.by("name").ascending().and(Sort.by("id").ascending())));
+        audit.recordAdmin(Operation.ADMIN_USER_LIST, Result.SUCCESS, adminId, null);
+        return result;
+    }
+
+    /**
+     * Decisão do ADMIN sobre o papel ORGANIZER de um usuário: {@code approved=true} concede, {@code false} nega
+     * o pedido ou retira o papel. Idempotente. Administradores não são alvo. A mudança chega aos tokens já
+     * emitidos só quando eles expiram (o usuário precisa entrar de novo).
+     */
+    @Transactional
+    public User decideOrganizer(UUID adminId, UUID targetId, boolean approved) {
+        requireAdmin(adminId);
+        User target = users.findById(targetId).orElseThrow(ApiException::internalUserNotFound);
+        if (target.getRoles().contains(Role.ADMIN)) {
+            audit.recordAdmin(Operation.ACCESS_DENIED, Result.FAILURE, adminId, targetId);
+            throw ApiException.adminTargetNotAllowed();
+        }
+        if (approved && target.getStatus() != UserStatus.ACTIVE) {
+            throw ApiException.accountInactive();
+        }
+        if (approved) {
+            target.grantOrganizer(now());
+        } else {
+            target.denyOrganizer(now());
+        }
+        audit.recordAdmin(approved ? Operation.ORGANIZER_GRANTED : Operation.ORGANIZER_DENIED, Result.SUCCESS,
+                adminId, targetId);
+        return target;
+    }
+
+    private void requireAdmin(UUID adminId) {
+        User admin = getActive(adminId);
+        if (!admin.getRoles().contains(Role.ADMIN)) {
+            audit.record(Operation.ACCESS_DENIED, Result.FAILURE, adminId, null);
+            throw ApiException.forbidden();
+        }
     }
 
     private static String blankToNull(String s) {

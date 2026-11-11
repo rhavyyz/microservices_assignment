@@ -26,15 +26,20 @@ tags:
   - name: Autenticação
   - name: Perfil
   - name: Infraestrutura
+  - name: Administração
   - name: Interno
 paths:
   /api/v1/auth/register:
     post:
       tags: [Autenticação]
       operationId: register
-      x-gateway: {isPublic: true, requireAuth: false}
-      summary: Cadastra um participante
-      description: Cria sempre um usuário com o papel `PARTICIPANT`. Papéis enviados pelo cliente são rejeitados.
+      x-gateway: {isPublic: true, requireAuth: false, maxPerMin: 10, rateLimitBy: ip}
+      summary: Cadastra um usuário (participante, com pedido opcional de organizador)
+      description: |
+        Cria sempre um usuário com o papel `PARTICIPANT`. O campo opcional `requestedRole` aceita `PARTICIPANT`
+        (padrão) ou `ORGANIZER`; com `ORGANIZER` o cadastro **não concede** o papel: apenas abre um pedido
+        (`organizerRequest: PENDING`) que um `ADMIN` aprova ou nega. `ADMIN` não pode ser pedido. Campos como
+        `roles` ou `isAdmin` são rejeitados.
       security: []
       parameters:
         - $ref: "#/components/parameters/TraceId"
@@ -82,7 +87,7 @@ paths:
     post:
       tags: [Autenticação]
       operationId: login
-      x-gateway: {isPublic: true, requireAuth: false}
+      x-gateway: {isPublic: true, requireAuth: false, maxPerMin: 10, rateLimitBy: ip}
       summary: Valida credenciais e emite um Access Token
       description: |
         Qualquer falha de credencial (e-mail inexistente, senha incorreta ou conta inativa) retorna a mesma
@@ -136,7 +141,7 @@ paths:
     get:
       tags: [Perfil]
       operationId: getMe
-      x-gateway: {isPublic: true, requireAuth: true}
+      x-gateway: {isPublic: true, requireAuth: true, maxPerMin: 120, rateLimitBy: user_or_ip}
       summary: Consulta o perfil do usuário autenticado
       description: O usuário é identificado exclusivamente pelo claim `sub` do token.
       security:
@@ -168,7 +173,7 @@ paths:
     patch:
       tags: [Perfil]
       operationId: updateMe
-      x-gateway: {isPublic: true, requireAuth: true}
+      x-gateway: {isPublic: true, requireAuth: true, maxPerMin: 30, rateLimitBy: user_or_ip}
       summary: Atualiza campos permitidos do próprio perfil
       description: |
         Somente `name` pode ser alterado. `email`, `password`, `roles`, `id` ou qualquer outro campo
@@ -263,7 +268,7 @@ paths:
     get:
       tags: [Perfil]
       operationId: searchUsers
-      x-gateway: {isPublic: true, requireAuth: true}
+      x-gateway: {isPublic: true, requireAuth: true, maxPerMin: 60, rateLimitBy: user_or_ip}
       summary: Busca usuários por id, e-mail e nome (somente ORGANIZER)
       description: |
         Expõe dados pessoais de terceiros, por isso:
@@ -333,6 +338,121 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/admin/users:
+    get:
+      tags: [Administração]
+      operationId: adminListUsers
+      x-gateway: {isPublic: true, requireAuth: true, maxPerMin: 60, rateLimitBy: user_or_ip}
+      summary: Lista todos os usuários e a situação do pedido de organizador (somente ADMIN)
+      description: |
+        Para a tela de administração. Exige o papel `ADMIN` (conferido no banco, não só no token). Sem filtro devolve
+        todos; `q` procura no nome ou no e-mail e `organizerRequest` filtra pela situação do pedido. Paginado
+        (máx. 50), ordenado por nome. Nunca retorna hash de senha.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TraceId"
+        - name: q
+          in: query
+          required: false
+          description: Trecho do nome ou do e-mail (até 254 caracteres).
+          schema:
+            type: string
+            maxLength: 254
+        - name: organizerRequest
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/OrganizerRequest"
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        "200":
+          description: Página de usuários (pode ser vazia).
+          headers:
+            X-Trace-Id:
+              $ref: "#/components/headers/TraceId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/admin/users/{id}/organizer:
+    put:
+      tags: [Administração]
+      operationId: adminDecideOrganizer
+      x-gateway: {isPublic: true, requireAuth: true, maxPerMin: 30, rateLimitBy: user_or_ip}
+      summary: Concede ou retira o papel de organizador (somente ADMIN)
+      description: |
+        `approved=true` concede `ORGANIZER`; `approved=false` nega o pedido ou retira o papel. Idempotente.
+        Administradores não são alvo (`409 ADMIN_TARGET_NOT_ALLOWED`). A mudança só aparece nos tokens já emitidos
+        quando expiram: o usuário precisa entrar de novo.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TraceId"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrganizerDecisionRequest"
+      responses:
+        "200":
+          description: Usuário com a decisão aplicada.
+          headers:
+            X-Trace-Id:
+              $ref: "#/components/headers/TraceId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserItem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Usuário inexistente.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: O alvo é um administrador (`ADMIN_TARGET_NOT_ALLOWED`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
         "500":
           $ref: "#/components/responses/InternalError"
   /internal/users/{id}:
@@ -461,7 +581,13 @@ components:
   schemas:
     Role:
       type: string
-      enum: [PARTICIPANT, ORGANIZER]
+      enum: [PARTICIPANT, ORGANIZER, ADMIN]
+    OrganizerRequest:
+      type: string
+      enum: [NONE, PENDING, APPROVED, DENIED]
+      description: |
+        `NONE` nunca pediu; `PENDING` escolheu "organizador" no cadastro e aguarda; `APPROVED` um ADMIN concedeu o
+        papel; `DENIED` um ADMIN negou ou retirou o papel.
     RegisterRequest:
       type: object
       additionalProperties: false
@@ -483,6 +609,11 @@ components:
           minLength: 10
           maxLength: 72
           description: Entre 10 caracteres e 72 **bytes** em UTF-8 (limite do BCrypt). Sem regras de composição.
+        requestedRole:
+          type: string
+          enum: [PARTICIPANT, ORGANIZER]
+          default: PARTICIPANT
+          description: Opcional. `ORGANIZER` só abre um pedido pendente; não concede o papel.
     LoginRequest:
       type: object
       additionalProperties: false
@@ -525,8 +656,10 @@ components:
       allOf:
         - $ref: "#/components/schemas/UserSummary"
         - type: object
-          required: [createdAt, updatedAt]
+          required: [organizerRequest, createdAt, updatedAt]
           properties:
+            organizerRequest:
+              $ref: "#/components/schemas/OrganizerRequest"
             createdAt:
               type: string
               format: date-time
@@ -567,6 +700,59 @@ components:
         status:
           type: string
           enum: [ACTIVE, INACTIVE]
+    AdminUserItem:
+      type: object
+      required: [id, name, email, roles, status, organizerRequest, organizerRequestUpdatedAt, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Role"
+        status:
+          type: string
+          enum: [ACTIVE, INACTIVE]
+        organizerRequest:
+          $ref: "#/components/schemas/OrganizerRequest"
+        organizerRequestUpdatedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+    AdminUserPage:
+      type: object
+      required: [items, page, size, totalElements, totalPages]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminUserItem"
+        page:
+          type: integer
+        size:
+          type: integer
+        totalElements:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
+    OrganizerDecisionRequest:
+      type: object
+      additionalProperties: false
+      required: [approved]
+      properties:
+        approved:
+          type: boolean
+          description: "`true` concede o papel ORGANIZER; `false` nega o pedido ou retira o papel."
     UserName:
       type: object
       required: [id, name]

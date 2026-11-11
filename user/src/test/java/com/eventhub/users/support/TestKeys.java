@@ -38,6 +38,7 @@ public final class TestKeys {
                 new UsersProperties.Jwt(issuer, "kid-test", privateKeyFile.toString(), ttlSeconds),
                 new UsersProperties.Password(4),
                 new UsersProperties.DevSeed(false, null, null, null),
+                new UsersProperties.AdminBootstrap(false, null, null, null),
                 new UsersProperties.Discovery(false, 30));
     }
 }

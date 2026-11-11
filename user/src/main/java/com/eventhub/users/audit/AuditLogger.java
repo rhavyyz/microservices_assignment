@@ -19,7 +19,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class AuditLogger {
 
-    public enum Operation { REGISTER, LOGIN, PROFILE_UPDATE, USER_SEARCH, TOKEN_REJECTED, ACCESS_DENIED }
+    public enum Operation { REGISTER, LOGIN, PROFILE_UPDATE, USER_SEARCH, TOKEN_REJECTED, ACCESS_DENIED,
+        ADMIN_USER_LIST, ORGANIZER_GRANTED, ORGANIZER_DENIED }
 
     public enum Result { SUCCESS, FAILURE }
 
@@ -34,6 +35,18 @@ public class AuditLogger {
         }
         if (emailFingerprint != null) {
             b = b.addKeyValue("emailFingerprint", emailFingerprint);
+        }
+        b.log("audit");
+    }
+
+    /** Operação administrativa: quem agiu ({@code actorId}) e sobre quem ({@code targetId}); só ids, nada pessoal. */
+    public void recordAdmin(Operation operation, Result result, UUID actorId, UUID targetId) {
+        LoggingEventBuilder b = (result == Result.SUCCESS ? LOG.atInfo() : LOG.atWarn())
+                .addKeyValue("operation", operation.name())
+                .addKeyValue("result", result.name())
+                .addKeyValue("userId", actorId.toString());
+        if (targetId != null) {
+            b = b.addKeyValue("targetUserId", targetId.toString());
         }
         b.log("audit");
     }

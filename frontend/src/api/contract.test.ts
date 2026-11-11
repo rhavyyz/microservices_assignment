@@ -7,6 +7,8 @@ import { API_PATHS } from '../config';
 import { createServices } from '../services/createServices';
 import { jsonResponse, loginBody, profile } from '../test/helpers';
 import {
+  AdminUserItemSchema,
+  AdminUserPageSchema,
   LoginResponseSchema,
   UserListItemSchema,
   UserPageSchema,
@@ -55,6 +57,8 @@ describe('contrato com docs/api/users.openapi.yaml', () => {
     ['LoginResponse', LoginResponseSchema as unknown as z.ZodObject<z.ZodRawShape>],
     ['UserListItem', UserListItemSchema],
     ['UserPage', UserPageSchema],
+    ['AdminUserItem', AdminUserItemSchema],
+    ['AdminUserPage', AdminUserPageSchema],
   ];
 
   it.each(cases)(
@@ -100,5 +104,44 @@ describe('contrato com docs/api/users.openapi.yaml', () => {
       ).toBeDefined();
     }
     expect(API_PATHS.users).toBe('/user/api/v1');
+  });
+
+  it('as chamadas de administração correspondem às rotas do OpenAPI e a RegisterRequest aceita requestedRole', async () => {
+    const calls: { method: string; path: string }[] = [];
+    const item = {
+      id: '00000000-0000-4000-8000-000000000001',
+      name: 'Ana',
+      email: 'ana@example.com',
+      roles: ['PARTICIPANT'],
+      status: 'ACTIVE',
+      organizerRequest: 'PENDING',
+      organizerRequestUpdatedAt: null,
+      createdAt: '2026-11-03T23:25:45Z',
+    };
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const path = new URL(String(input)).pathname.replace(/^\/user/, '');
+      calls.push({ method: (init?.method ?? 'GET').toLowerCase(), path });
+      return path.endsWith('/organizer')
+        ? jsonResponse(200, item)
+        : jsonResponse(200, { items: [item], page: 0, size: 20, totalElements: 1, totalPages: 1 });
+    });
+    const { usersApi, session } = createServices({ apiBaseUrl: 'https://gateway.test' }, fetchImpl);
+    session.setToken('t');
+    await usersApi.adminListUsers({ organizerRequest: 'PENDING' });
+    await usersApi.adminDecideOrganizer(item.id, true);
+
+    // o OpenAPI usa {id}; a chamada real traz o UUID
+    expect(calls[0]).toEqual({ method: 'get', path: '/api/v1/admin/users' });
+    expect(calls[1]).toEqual({
+      method: 'put',
+      path: `/api/v1/admin/users/${item.id}/organizer`,
+    });
+    expect(doc.paths['/api/v1/admin/users']?.get).toBeDefined();
+    expect(doc.paths['/api/v1/admin/users/{id}/organizer']?.put).toBeDefined();
+    const reg = effective(doc.components.schemas.RegisterRequest!);
+    expect(reg.properties).toContain('requestedRole');
+    expect(reg.required).not.toContain('requestedRole');
+    const roles = doc.components.schemas.Role as unknown as { enum: string[] };
+    expect(roles.enum).toEqual(['PARTICIPANT', 'ORGANIZER', 'ADMIN']);
   });
 });

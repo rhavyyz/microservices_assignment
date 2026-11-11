@@ -9,7 +9,7 @@ PostgreSQL privado (`user-db`), esquema por Flyway (`V1__create_users.sql`).
 | Tabela | Colunas | Regras no banco |
 |---|---|---|
 | `users` | `id` UUID, `name`, `email`, `password_hash`, `status`, `created_at`, `updated_at` | `UNIQUE(email)`; `CHECK email = lower(btrim(email))`; status `ACTIVE`/`INACTIVE`; nome não vazio |
-| `user_roles` | `user_id`, `role` | PK composta; FK com `ON DELETE CASCADE`; role `PARTICIPANT`/`ORGANIZER` |
+| `user_roles` | `user_id`, `role` | PK composta; FK com `ON DELETE CASCADE`; role `PARTICIPANT`/`ORGANIZER`/`ADMIN`; `users` tem `organizer_request` (`NONE`/`PENDING`/`APPROVED`/`DENIED`) e `organizer_request_updated_at` (V2, ADR-009) |
 
 Outros serviços não acessam essas tabelas: usam o JWT e a API.
 
@@ -20,7 +20,7 @@ Outros serviços não acessam essas tabelas: usam o JWT e a API.
 4. Login: falhas (e-mail inexistente, senha errada, conta inativa) retornam a mesma resposta; um hash descartável equaliza o tempo quando o e-mail não existe.
 5. `/users/me` usa o `sub` do token; não há `{id}` em nenhuma rota. Só `name` é editável.
 6. Busca de usuários (`GET /api/v1/users`): somente `ORGANIZER` (conferido no token **e** no banco), ao menos um filtro entre `id` (exato), `email` e `name` (contém, sem diferenciar maiúsculas, `%`/`_` literais), AND entre filtros, paginação obrigatória (máx. 50), ordenação por nome, sem hash de senha. É a única rota que lê dados de terceiros (ver P18).
-7. `ORGANIZER` só existe via seed de desenvolvimento, desativado por padrão (ADR-002). `ORGANIZER` não dá acesso a todos os eventos: o serviço de Eventos valida a responsabilidade (RN07).
+7. `ORGANIZER` só é concedido por um `ADMIN` (ADR-009): o cadastro com `requestedRole=ORGANIZER` só abre um pedido `PENDING`. `ADMIN` só nasce do bootstrap por ambiente (`USERS_ADMIN_BOOTSTRAP_*`, desativado por padrão); o seed de desenvolvimento do ADR-002 continua existindo. Rotas `/api/v1/admin/users` (lista) e `/api/v1/admin/users/{id}/organizer` (decisão): papel `ADMIN` no token **e** no banco. `ORGANIZER` não dá acesso a todos os eventos: o serviço de Eventos valida a responsabilidade (RN07).
 
 ## Segurança
 JWT RS256 com claims `sub`, `roles`, `iss`, `iat`, `exp`, `jti`; validade `USERS_JWT_TTL_SECONDS` (padrão 1800). Chave privada em arquivo montado (mesma em todas as réplicas), chave pública em `/.well-known/jwks.json`. Validação recusa `alg=none`, chave desconhecida, emissor diferente e token expirado. API stateless (sem cookies), logo CSRF desativado. Respostas e logs nunca trazem hash, senha, token ou stack trace.

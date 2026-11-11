@@ -37,6 +37,57 @@ describe('Página de perfil', () => {
     expect(screen.queryByText('Carregando perfil…')).not.toBeInTheDocument();
   });
 
+  it('quem pediu para ser organizador vê o pedido aguardando aprovação', async () => {
+    const f = fakeFetch({
+      [LOGIN]: login,
+      [ME]: () => jsonResponse(200, profile({ organizerRequest: 'PENDING' })),
+    });
+    const { user } = renderApp(f, '/perfil');
+    await fillLogin(user);
+    expect(
+      await screen.findByText(
+        'Seu pedido para ser organizador aguarda a aprovação de um administrador.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Aguardando aprovação')).toBeInTheDocument();
+  });
+
+  it('pedido negado é informado; sem pedido não aparece nada sobre organizador', async () => {
+    const denied = fakeFetch({
+      [LOGIN]: login,
+      [ME]: () => jsonResponse(200, profile({ organizerRequest: 'DENIED' })),
+    });
+    const first = renderApp(denied, '/perfil');
+    await fillLogin(first.user);
+    expect(
+      await screen.findByText('Seu pedido para ser organizador não foi aprovado.'),
+    ).toBeInTheDocument();
+    first.unmount();
+
+    const none = fakeFetch({ [LOGIN]: login, [ME]: () => jsonResponse(200, profile()) });
+    const second = renderApp(none, '/perfil');
+    await fillLogin(second.user);
+    await screen.findByText('maria@example.com');
+    expect(screen.queryByText(/pedido/i)).not.toBeInTheDocument();
+  });
+
+  it('aprovado depois do login: avisa para sair e entrar de novo (o token antigo ainda não tem o papel)', async () => {
+    const f = fakeFetch({
+      [LOGIN]: login, // a sessão foi aberta só como PARTICIPANT
+      [ME]: () =>
+        jsonResponse(
+          200,
+          profile({ roles: ['PARTICIPANT', 'ORGANIZER'], organizerRequest: 'APPROVED' }),
+        ),
+    });
+    const { user } = renderApp(f, '/perfil');
+    await fillLogin(user);
+    expect(
+      await screen.findByText(/Você foi aprovado como organizador\. Saia e entre novamente/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Meus eventos' })).not.toBeInTheDocument();
+  });
+
   it('atualiza o nome (PATCH só com name), confirma e reflete no cabeçalho', async () => {
     const f = fakeFetch({
       [LOGIN]: login,

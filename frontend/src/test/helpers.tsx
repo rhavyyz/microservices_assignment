@@ -49,6 +49,7 @@ export const profile = (over: Record<string, unknown> = {}) => ({
   name: 'Maria Silva',
   email: 'maria@example.com',
   roles: ['PARTICIPANT'],
+  organizerRequest: 'NONE',
   createdAt: '2026-11-03T23:25:45.175467Z',
   updatedAt: '2026-11-03T23:25:45.175467Z',
   ...over,

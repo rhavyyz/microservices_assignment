@@ -8,13 +8,14 @@ SPA em React + TypeScript (Vite). Fala **somente com o API Gateway**, pela URL e
 | `/` | todos | visitante vai ao catálogo; autenticado vai a `/inicio` | — |
 | `/eventos` | público | catálogo com busca, período e paginação (na URL) | Eventos |
 | `/eventos/:eventId` | público | evento, atividades e preço; vagas livres só para autenticado; inscrição por atividade (exige login) | Eventos, Inscrições |
-| `/cadastro`, `/entrar` | visitante | cadastro e login | Usuários |
+| `/cadastro`, `/entrar` | visitante | cadastro (tipo de conta: participante ou organizador, que só abre um pedido) e login | Usuários |
 | `/inicio` | autenticado | atalhos da jornada | — |
 | `/inscricoes` | autenticado | minhas inscrições: situação, prazo, aceitar oferta, cancelar | Inscrições, Eventos |
 | `/pagamentos/:paymentId` | autenticado | situação do pagamento (atualiza sozinho enquanto pendente) e provedor simulado | Pagamentos |
 | `/notificacoes` | autenticado | lista, filtro "Não lidas", marcar como lida, tempo real | Notificações, Gateway (`/ws`) |
 | `/certificados` | autenticado | meus certificados e download do PDF (com token, via `fetch`) | Certificados, Eventos |
 | `/organizador/eventos/:eventId/relatorio` | organizador | indicadores do evento e tabela por atividade (dinheiro por moeda, taxas) | Relatórios |
+| `/admin/usuarios` | administrador | todos os usuários, quem pediu para ser organizador (filtros e busca), aprovar, negar ou retirar o papel | Usuários |
 | `/organizador` | organizador | meus eventos (inclui rascunhos) com paginação | Eventos |
 | `/organizador/novo` | organizador | criar evento (nasce como rascunho) | Eventos |
 | `/organizador/eventos/:eventId` | organizador | editar, publicar, cancelar; adicionar, editar, remover e encerrar atividades | Eventos |

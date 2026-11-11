@@ -32,14 +32,15 @@ public class AuthController {
         this.tokens = tokens;
     }
 
-    @GatewaySettings(isPublic = true, requireAuth = false)
+    @GatewaySettings(isPublic = true, requireAuth = false, maxPerMin = 10, rateLimitBy = "ip")
     @PostMapping("/register")
     @ResponseStatus(HttpStatus.CREATED)
     public UserProfile register(@Valid @RequestBody RegisterRequest request) {
-        return UserProfile.from(users.register(request.name(), request.email(), request.password()));
+        return UserProfile.from(users.register(request.name(), request.email(), request.password(),
+                request.wantsOrganizer()));
     }
 
-    @GatewaySettings(isPublic = true, requireAuth = false)
+    @GatewaySettings(isPublic = true, requireAuth = false, maxPerMin = 10, rateLimitBy = "ip")
     @PostMapping("/login")
     public LoginResponse login(@Valid @RequestBody LoginRequest request) {
         User user = users.authenticate(request.email(), request.password());

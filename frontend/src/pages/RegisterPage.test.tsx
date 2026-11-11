@@ -59,7 +59,29 @@ describe('Página de cadastro', () => {
       name: 'Maria Silva',
       email: 'maria@example.com',
       password: 'senha-forte-123',
+      requestedRole: 'PARTICIPANT',
     });
+  });
+
+  it('escolher "Organizador" envia o pedido e avisa que falta a aprovação de um administrador', async () => {
+    const f = fakeFetch({
+      [REGISTER]: () => jsonResponse(201, profile({ organizerRequest: 'PENDING' })),
+    });
+    const { user } = renderApp(f, '/cadastro');
+    await fillRegister(user);
+    await user.click(screen.getByLabelText('Organizador'));
+    await user.click(screen.getByRole('button', { name: 'Cadastrar' }));
+
+    expect(await screen.findByText(/aguarda a aprovação de um administrador/)).toBeInTheDocument();
+    const [, init] = f.mock.calls[0]!;
+    expect(JSON.parse(String(init?.body))).toMatchObject({ requestedRole: 'ORGANIZER' });
+  });
+
+  it('o cadastro oferece só Participante e Organizador (nunca Administrador) e começa em Participante', () => {
+    renderApp(fakeFetch({}), '/cadastro');
+    expect(screen.getByLabelText('Participante')).toBeChecked();
+    expect(screen.getByLabelText('Organizador')).not.toBeChecked();
+    expect(screen.queryByLabelText(/Administrador/)).not.toBeInTheDocument();
   });
 
   it('e-mail já cadastrado (409) aparece no campo e mantém a página', async () => {

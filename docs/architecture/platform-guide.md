@@ -104,8 +104,8 @@ Sources of truth, in order: the code, the service's own README/`CONTRACTS.md`, t
  any service ──Kafka notifications topic──> NOTIFICATIONS ──> notifications-push ──> GATEWAY ──> /ws
 ```
 
-Kafka topics in use (all created by their users at startup): `payments.commands`, `payments.events`, `events.events`,
-`subscription.events`, `subscription.dlq`, `notifications`, `notifications-push`. Details: contracts doc section 4b.
+Kafka topics in use (all created by their users at startup): `payments.events`, `events.events`,
+`subscription.events`, `subscription.dlq`, `certificates.dlq`, `reports.dlq`, `notifications`, `notifications-push`. (`payments.commands` was removed by ADR-007 and no longer exists.) Details: contracts doc section 4b.
 
 ---
 
@@ -250,7 +250,7 @@ organizer actions need role `ORGANIZER` **and** an Events permission check on th
   is >= 75%. It does not issue certificates.
 
 **Messaging.** Consumes `payments.events` and `events.events` (group `subscription-service`; only `ActivityEnded` and
-`ActivityCancelled` are handled, other Events message types are skipped without the DLQ); produces `payments.commands`,
+`ActivityCancelled` are handled, other Events message types are skipped without the DLQ); produces
 `subscription.events` (`Registration*`, `WaitlistOffered`, `AttendanceRecorded`, `AttendanceEligible`), `notifications`,
 and `subscription.dlq`. Transactional outbox, inbox dedupe by `message_id`, `aggregate_version` to reject stale states.
 Envelope: `message_id`, `schema_version=1`, `type`, `registration_id`, `activity_id`, `user_id`, `aggregate_version`,

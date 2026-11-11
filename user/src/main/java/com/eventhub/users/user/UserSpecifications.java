@@ -51,4 +51,23 @@ final class UserSpecifications {
         }
         return sb.append('%').toString();
     }
+
+    /**
+     * Listagem do ADMIN: {@code term} procura no nome ou no e-mail (contém, sem diferenciar maiúsculas) e
+     * {@code request} filtra pela situação do pedido de organizador. Ambos opcionais.
+     */
+    static Specification<User> forAdmin(String term, OrganizerRequest request) {
+        return (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+            if (term != null) {
+                String like = contains(term.toLowerCase(Locale.ROOT));
+                predicates.add(cb.or(cb.like(cb.lower(root.<String>get("name")), like, ESCAPE),
+                        cb.like(root.<String>get("email"), like, ESCAPE)));
+            }
+            if (request != null) {
+                predicates.add(cb.equal(root.get("organizerRequest"), request));
+            }
+            return cb.and(predicates.toArray(new Predicate[0]));
+        };
+    }
 }

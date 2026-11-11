@@ -17,6 +17,7 @@ import { NotificationsPage } from './pages/NotificationsPage';
 import { PaymentPage } from './pages/PaymentPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { RegisterPage } from './pages/RegisterPage';
+import { AdminUsersPage } from './pages/AdminUsersPage';
 import { UsersSearchPage } from './pages/UsersSearchPage';
 
 export function AppRoutes() {
@@ -37,6 +38,9 @@ export function AppRoutes() {
           <Route path="notificacoes" element={<NotificationsPage />} />
           <Route path="certificados" element={<CertificatesPage />} />
           <Route path="perfil" element={<ProfilePage />} />
+          <Route element={<RequireRole role="ADMIN" />}>
+            <Route path="admin/usuarios" element={<AdminUsersPage />} />
+          </Route>
           <Route element={<RequireRole role="ORGANIZER" />}>
             <Route path="usuarios" element={<UsersSearchPage />} />
             <Route path="organizador" element={<OrganizerEventsPage />} />

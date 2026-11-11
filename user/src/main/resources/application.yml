@@ -73,6 +73,11 @@ users:
     name: ${USERS_DEV_SEED_NAME:}
     email: ${USERS_DEV_SEED_EMAIL:}
     password: ${USERS_DEV_SEED_PASSWORD:}
+  admin-bootstrap:
+    enabled: ${USERS_ADMIN_BOOTSTRAP_ENABLED:false}
+    name: ${USERS_ADMIN_BOOTSTRAP_NAME:}
+    email: ${USERS_ADMIN_BOOTSTRAP_EMAIL:}
+    password: ${USERS_ADMIN_BOOTSTRAP_PASSWORD:}
   discovery:
     enabled: ${USERS_DISCOVERY_ENABLED:true}
     reregister-seconds: ${USERS_DISCOVERY_REREGISTER_SECONDS:30}

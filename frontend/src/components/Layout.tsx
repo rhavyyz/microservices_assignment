@@ -43,6 +43,11 @@ export function Layout() {
                   <li>
                     <NavLink to="/perfil">Meu perfil</NavLink>
                   </li>
+                  {hasRole('ADMIN') ? (
+                    <li>
+                      <NavLink to="/admin/usuarios">Administração</NavLink>
+                    </li>
+                  ) : null}
                   {hasRole('ORGANIZER') ? (
                     <>
                       <li>

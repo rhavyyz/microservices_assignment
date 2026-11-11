@@ -160,7 +160,20 @@ answers `404` in microseconds, without reaching the service. Reset it (stop the 
 
 or fix single routes with `PUT /admin/endpoints`. Check with `curl -s localhost:8080/admin/endpoints | tr '{' '\n' | grep subscription`.
 
-Then the API is `http://localhost:8080/user/api/v1/...` (register, login, `users/me`, `users` search for organizers).
+Then the API is `http://localhost:8080/user/api/v1/...` (register, login, `users/me`, `users` search for organizers, `admin/users` for administrators).
+
+Organizers and the administrator (ADR-009): the sign-up form lets a person choose *Organizer*, but that only opens a pending request;
+the account stays a participant until an **administrator** approves it in the web app (`/admin/usuarios`). No HTTP route grants
+`ADMIN`; create the first one from the environment, then turn it off again:
+
+    # in .env
+    USERS_ADMIN_BOOTSTRAP_ENABLED=true
+    USERS_ADMIN_BOOTSTRAP_NAME=Administrador
+    USERS_ADMIN_BOOTSTRAP_EMAIL=admin@example.test
+    USERS_ADMIN_BOOTSTRAP_PASSWORD=<a strong password>
+
+After an approval the person must sign out and in again (the role travels in the 30-minute token). Login and sign-up are limited to
+10 requests/min per IP through `x-gateway`; on an already populated Gateway database apply it with `user/scripts/register-gateway-routes.sh`.
 Warning: the Gateway admin API (`/admin/...`) has no authentication and shares that port.
 
 Run the tests (needs JDK 21; `*IT` need Docker):
@@ -180,6 +193,6 @@ React 19 + TypeScript + Vite: catálogo público de eventos, inscrição por ati
     npm ci
     npm run dev              # http://localhost:5173
 
-Scripts: `npm run lint`, `npm run typecheck`, `npm run format:check`, `npm run test:run` (274 testes), `npm run build` (saída em `frontend/dist`). Requer Node `^20.19` ou `>=22.12`.
+Scripts: `npm run lint`, `npm run typecheck`, `npm run format:check`, `npm run test:run` (296 testes), `npm run build` (saída em `frontend/dist`). Requer Node `^22.22.2`, `^24.15.0` ou `>=26` (o jsdom 30, usado nos testes, exige isso; o build sozinho aceitaria `^20.19` ou `>=22.12`).
 
 O token de acesso fica só em memória: recarregar a página exige novo login (ADR-006). As rotas dos serviços são abertas no Gateway pelo `x-gateway` de cada OpenAPI, sem scripts, mas só em um banco do Gateway novo: o Gateway não altera rotas que já existiam (veja a observação acima sobre `down -v`). O catálogo de eventos funciona sem login; inscrever-se exige login. O contrato de Eventos mudou no `main` (rotas em `/api/v1`, vagas vindas de Inscrições): o frontend segue o contrato atual, e os testes leem as rotas direto do código dos serviços para acusar qualquer divergência.

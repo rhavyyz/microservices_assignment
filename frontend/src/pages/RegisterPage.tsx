@@ -25,7 +25,13 @@ export function RegisterPage() {
     formState: { errors, isSubmitting },
   } = useForm<RegisterForm>({
     resolver: zodResolver(registerSchema),
-    defaultValues: { name: '', email: '', password: '', confirmPassword: '' },
+    defaultValues: {
+      name: '',
+      email: '',
+      password: '',
+      confirmPassword: '',
+      accountType: 'PARTICIPANT',
+    },
   });
 
   const onSubmit = handleSubmit(async (values) => {
@@ -35,8 +41,12 @@ export function RegisterPage() {
         name: values.name,
         email: values.email,
         password: values.password,
+        requestedRole: values.accountType,
       });
-      void navigate('/entrar', { replace: true, state: { registered: true } });
+      void navigate('/entrar', {
+        replace: true,
+        state: { registered: true, organizerRequested: values.accountType === 'ORGANIZER' },
+      });
     } catch (e) {
       const err = toApiError(e);
       // Erros de validação do servidor voltam para o campo correspondente.
@@ -90,6 +100,31 @@ export function RegisterPage() {
           error={errors.confirmPassword?.message}
           {...register('confirmPassword')}
         />
+        <fieldset className="field-group">
+          <legend>Tipo de conta</legend>
+          <div className="field field-check">
+            <input
+              id="account-participant"
+              type="radio"
+              value="PARTICIPANT"
+              {...register('accountType')}
+            />
+            <label htmlFor="account-participant">Participante</label>
+          </div>
+          <div className="field field-check">
+            <input
+              id="account-organizer"
+              type="radio"
+              value="ORGANIZER"
+              {...register('accountType')}
+            />
+            <label htmlFor="account-organizer">Organizador</label>
+            <p className="field-hint">
+              Quem se cadastra como organizador começa como participante. Um administrador precisa
+              aprovar o pedido antes de você poder criar eventos.
+            </p>
+          </div>
+        </fieldset>
         <Button type="submit" loading={isSubmitting} loadingText="Cadastrando…">
           Cadastrar
         </Button>

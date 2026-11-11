@@ -145,7 +145,6 @@ export const certificate = (over: Record<string, unknown> = {}) => ({
 export const reportSummary = (over: Record<string, unknown> = {}) => ({
   event: {
     event_id: EVENT_ID,
-    organizer_id: USER,
     name: 'Semana de Tecnologia',
     status: 'PUBLISHED',
     starts_at: '2099-03-10T12:00:00.000Z',

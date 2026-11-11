@@ -185,6 +185,119 @@ class UserServiceTest {
                 .satisfies(t -> assertApi(t, "ACCESS_DENIED"));
     }
 
+    @Test
+    void registerWithOrganizerChoiceOnlyOpensAPendingRequestAndNeverGrantsTheRole() {
+        when(repo.existsByEmail("org@example.com")).thenReturn(false);
+        when(repo.saveAndFlush(any(User.class))).thenAnswer(i -> i.getArgument(0));
+
+        service.register("Olga", "org@example.com", PW, true);
+
+        ArgumentCaptor<User> saved = ArgumentCaptor.forClass(User.class);
+        verify(repo).saveAndFlush(saved.capture());
+        assertThat(saved.getValue().getRoles()).containsExactly(Role.PARTICIPANT);
+        assertThat(saved.getValue().getOrganizerRequest()).isEqualTo(OrganizerRequest.PENDING);
+    }
+
+    @Test
+    void plainRegistrationHasNoOrganizerRequest() {
+        when(repo.existsByEmail("p@example.com")).thenReturn(false);
+        when(repo.saveAndFlush(any(User.class))).thenAnswer(i -> i.getArgument(0));
+        assertThat(service.register("Pedro", "p@example.com", PW).getOrganizerRequest())
+                .isEqualTo(OrganizerRequest.NONE);
+    }
+
+    @Test
+    void adminListIsForbiddenToOrganizersAndParticipants() {
+        for (Role role : new Role[] { Role.PARTICIPANT, Role.ORGANIZER }) {
+            User u = requester(role);
+            assertThatThrownBy(() -> service.adminList(u.getId(), null, null, 0, 20))
+                    .as(role.name()).satisfies(t -> assertApi(t, "ACCESS_DENIED"));
+        }
+    }
+
+    @Test
+    void adminListValidatesFilterAndPaging() {
+        User admin = requester(Role.ADMIN);
+        assertThatThrownBy(() -> service.adminList(admin.getId(), null, "TALVEZ", 0, 20))
+                .satisfies(t -> assertApi(t, "VALIDATION_ERROR"));
+        assertThatThrownBy(() -> service.adminList(admin.getId(), null, null, -1, 20))
+                .satisfies(t -> assertApi(t, "VALIDATION_ERROR"));
+        assertThatThrownBy(() -> service.adminList(admin.getId(), null, null, 0, 51))
+                .satisfies(t -> assertApi(t, "VALIDATION_ERROR"));
+        assertThatThrownBy(() -> service.adminList(admin.getId(), "x".repeat(255), null, 0, 20))
+                .satisfies(t -> assertApi(t, "VALIDATION_ERROR"));
+    }
+
+    @Test
+    void decideOrganizerIsForbiddenToNonAdmins() {
+        User org = requester(Role.ORGANIZER);
+        UUID target = UUID.randomUUID();
+        assertThatThrownBy(() -> service.decideOrganizer(org.getId(), target, true))
+                .satisfies(t -> assertApi(t, "ACCESS_DENIED"));
+        verify(repo, never()).findById(target);
+    }
+
+    @Test
+    void approvingGrantsOrganizerAndDenyingRemovesItWithTheRequestState() {
+        User admin = requester(Role.ADMIN);
+        User target = existing("alvo@example.com");
+        ReflectionTestUtils.setField(target, "id", UUID.randomUUID());
+        target.requestOrganizer(NOW);
+        when(repo.findById(target.getId())).thenReturn(Optional.of(target));
+
+        User granted = service.decideOrganizer(admin.getId(), target.getId(), true);
+        assertThat(granted.getRoles()).containsExactlyInAnyOrder(Role.PARTICIPANT, Role.ORGANIZER);
+        assertThat(granted.getOrganizerRequest()).isEqualTo(OrganizerRequest.APPROVED);
+
+        User denied = service.decideOrganizer(admin.getId(), target.getId(), false);
+        assertThat(denied.getRoles()).containsExactly(Role.PARTICIPANT);
+        assertThat(denied.getOrganizerRequest()).isEqualTo(OrganizerRequest.DENIED);
+    }
+
+    @Test
+    void decisionsAreIdempotent() {
+        User admin = requester(Role.ADMIN);
+        User target = existing("alvo@example.com");
+        ReflectionTestUtils.setField(target, "id", UUID.randomUUID());
+        when(repo.findById(target.getId())).thenReturn(Optional.of(target));
+        service.decideOrganizer(admin.getId(), target.getId(), true);
+        assertThat(service.decideOrganizer(admin.getId(), target.getId(), true).getRoles())
+                .containsExactlyInAnyOrder(Role.PARTICIPANT, Role.ORGANIZER);
+    }
+
+    @Test
+    void anAdminIsNeverTheTargetOfADecision() {
+        User admin = requester(Role.ADMIN);
+        User otherAdmin = User.create("Outro", "outro@example.com", "$2a$04$x", EnumSet.of(Role.ADMIN), NOW);
+        ReflectionTestUtils.setField(otherAdmin, "id", UUID.randomUUID());
+        when(repo.findById(otherAdmin.getId())).thenReturn(Optional.of(otherAdmin));
+        assertThatThrownBy(() -> service.decideOrganizer(admin.getId(), otherAdmin.getId(), true))
+                .satisfies(t -> assertApi(t, "ADMIN_TARGET_NOT_ALLOWED"));
+        assertThat(otherAdmin.getRoles()).containsExactly(Role.ADMIN);
+    }
+
+    @Test
+    void anInactiveAccountCannotBeApprovedButCanBeDenied() {
+        User admin = requester(Role.ADMIN);
+        User target = existing("inativa@example.com");
+        ReflectionTestUtils.setField(target, "id", UUID.randomUUID());
+        ReflectionTestUtils.setField(target, "status", UserStatus.INACTIVE);
+        when(repo.findById(target.getId())).thenReturn(Optional.of(target));
+        assertThatThrownBy(() -> service.decideOrganizer(admin.getId(), target.getId(), true))
+                .satisfies(t -> assertApi(t, "ACCESS_DENIED"));
+        assertThat(service.decideOrganizer(admin.getId(), target.getId(), false).getOrganizerRequest())
+                .isEqualTo(OrganizerRequest.DENIED);
+    }
+
+    @Test
+    void decisionOnAnUnknownUserIsNotFound() {
+        User admin = requester(Role.ADMIN);
+        UUID unknown = UUID.randomUUID();
+        when(repo.findById(unknown)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.decideOrganizer(admin.getId(), unknown, true))
+                .satisfies(t -> assertApi(t, "NOT_FOUND"));
+    }
+
     private static ApiException catchApi(Runnable r) {
         try {
             r.run();
