@@ -255,3 +255,23 @@ def test_rediscovery_resets_ttl_and_failure_raises(discoverer, clock):
     discoverer["hosts"] = []
     with pytest.raises(Exception):
         call(discovery.Kind.USER)
+
+
+def test_self_host_uses_service_host(monkeypatch):
+    monkeypatch.setenv("SERVICE_HOST", "payments-1:9000")
+    monkeypatch.setenv("PORT", "1234")
+    assert discovery.self_host() == "payments-1:9000"
+
+
+def test_self_host_defaults_to_hostname_and_8080(monkeypatch):
+    monkeypatch.delenv("SERVICE_HOST", raising=False)
+    monkeypatch.delenv("PORT", raising=False)
+    monkeypatch.setattr(client.socket, "gethostname", lambda: "box")
+    assert discovery.self_host() == "box:8080"
+
+
+def test_self_host_uses_port_and_ignores_empty_service_host(monkeypatch):
+    monkeypatch.setenv("SERVICE_HOST", "")
+    monkeypatch.setenv("PORT", "9100")
+    monkeypatch.setattr(client.socket, "gethostname", lambda: "box")
+    assert discovery.self_host() == "box:9100"

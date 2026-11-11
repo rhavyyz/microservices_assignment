@@ -72,6 +72,13 @@ public class DiscoveryTest {
         HttpServer target = serve(0, ex -> reply(ex, 200,
                 ex.getRequestHeaders().getFirst("X-Test") + "|" + ex.getRequestHeaders().getFirst("Content-Type") + "|" + read(ex)));
 
+        // selfHost: SERVICE_HOST wins, else <hostname>:<PORT or 8080>
+        check(Discovery.selfHost("svc-1:9000", "7000", "h").equals("svc-1:9000"), "selfHost SERVICE_HOST");
+        check(Discovery.selfHost(null, "7000", "h").equals("h:7000"), "selfHost PORT");
+        check(Discovery.selfHost("", "", "h").equals("h:8080"), "selfHost default port");
+        check(Discovery.selfHost(null, null, "h").equals("h:8080"), "selfHost null port");
+        check(Discovery.selfHost().equals("payments-1:9000"), "selfHost from env: " + Discovery.selfHost());
+
         // register sends the kind and the host
         Discovery.register(Kind.PAYMENTS);
         check("{\"kind\":\"payments\",\"host\":\"payments-1:9000\"}".equals(registered.get())

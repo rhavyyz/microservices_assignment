@@ -64,6 +64,7 @@ func NewProxy(disc *Discovery) http.Handler {
 			}
 			return
 		}
+		recordUpstream(r.Context(), host)
 		rp.ServeHTTP(w, r.WithContext(withHost(r.Context(), host)))
 	})
 }
@@ -102,6 +103,7 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	retry := req.Clone(req.Context())
 	retry.URL.Host = host
 	retry.Body = orig
+	recordUpstream(req.Context(), host)
 	return t.base.RoundTrip(retry)
 }
 

@@ -1,22 +1,57 @@
 """Logging do servidor: formato dos logs da aplicação e a linha de acesso padrão da plataforma."""
 
+import copy
 import logging
 import os
 import sys
 import time
 from uuid import UUID
 
+from discovery import self_host
+
 access_log = logging.getLogger("app.access")
+
+
+class InstanceFilter(logging.Filter):
+    """Sets record.instance to this instance's discoverer host (SERVICE_HOST, else <hostname>:<PORT>)."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.instance = self_host()
+
+    def filter(self, record):
+        record.instance = self.instance
+        return True
+
+
+LOG_FORMAT = "%(asctime)s %(levelname)s instance=%(instance)s %(name)s %(message)s"
 
 
 def configure_logging():
     """Só para o servidor real (nunca durante os testes). LOG_LEVEL é opcional e o padrão é INFO."""
     level = os.getenv("LOG_LEVEL", "INFO").upper()
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    handler.addFilter(InstanceFilter())
     logging.basicConfig(
         level=level if level in logging.getLevelNamesMapping() else "INFO",
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-        stream=sys.stdout,
+        handlers=[handler],
     )
+
+
+def uvicorn_log_config():
+    """A cópia da configuração padrão do uvicorn com `instance=` nas linhas do próprio uvicorn."""
+    from uvicorn.config import LOGGING_CONFIG
+
+    config = copy.deepcopy(LOGGING_CONFIG)
+    config["filters"] = {"instance": {"()": InstanceFilter}}
+    for name, handler in config["handlers"].items():
+        handler["filters"] = ["instance"]
+    config["formatters"]["default"]["fmt"] = "%(levelprefix)s instance=%(instance)s %(message)s"
+    config["formatters"]["access"]["fmt"] = (
+        '%(levelprefix)s instance=%(instance)s %(client_addr)s - "%(request_line)s" %(status_code)s'
+    )
+    return config
 
 
 def access_user(raw):

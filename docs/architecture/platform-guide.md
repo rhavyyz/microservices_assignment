@@ -50,7 +50,12 @@ Sources of truth, in order: the code, the service's own README/`CONTRACTS.md`, t
     `-`) and `trace_id` (`/healthcheck` is skipped). The Go and Python services and Users print it as one line
     (`GET /x status=200 duration=14ms user=<uuid|-> trace_id=<id>`); the Fastify services write the equivalent
     structured `request completed` record (`traceId`, `userId`, `req.method`, `req.url`, `res.statusCode`,
-    `responseTime`). Never log bodies, `Authorization` or other header values.
+    `responseTime`). Never log bodies, `Authorization` or other header values. **Every log line also carries the
+    instance** (`instance=<id>`, or the `instance` field in structured logs): the id is the host string the service
+    registers in the discoverer (`SERVICE_HOST`, else `<hostname>:<PORT or 8080>`), computed by one function in each
+    discovery lib (`SelfHost`/`self_host`/`selfHost`), so a log line, the discoverer and the gateway's
+    `upstream=<host:port>` (its access line names the instance that served a proxied call, `-` otherwise; it is
+    never sent to clients) all use the same value.
 12. **Small, boring, documented.** Match the surrounding code's style and comment density. Record decisions that took
     a debate as ADRs (`docs/decisions/ADR-00N-*.md`, Portuguese), keep each service's README current, and update
     `docs/integration/contracts-with-team.md` when a contract with another service changes.

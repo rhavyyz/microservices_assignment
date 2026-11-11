@@ -220,6 +220,7 @@ func newMux(store interface {
 }
 
 func main() {
+	log.SetPrefix("instance=" + discovery.SelfHost() + " ")
 	store, err := newStore(env("MONGO_URI", "mongodb://notifications-db:27017"), "notifications")
 	if err != nil {
 		log.Fatal(err)

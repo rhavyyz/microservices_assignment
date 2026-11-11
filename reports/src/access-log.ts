@@ -1,3 +1,5 @@
+import { hostname } from 'node:os';
+import { selfHost } from 'discovery';
 import { LogController, type FastifyInstance, type FastifyServerOptions } from 'fastify';
 
 // Access log: Fastify's 'request completed' record is the equivalent of the platform access line
@@ -32,13 +34,24 @@ class AccessLogController extends LogController {
   }
 }
 
-/** Logger options of the server: `logger` as given (true by default) plus the path-only req serializer. */
-export function accessLogOptions(logger: FastifyServerOptions['logger'] = true) {
+/**
+ * Logger options of the server: `logger` as given (true by default) plus the path-only req serializer and the
+ * `instance` binding (the host this service registers in the discoverer), so every record of the process carries it.
+ * pid and hostname stay as pino's default base; a caller-supplied `base` object gets `instance` unless it sets one; `base: null` is left as it is.
+ */
+export function accessLogOptions(logger: FastifyServerOptions['logger'] = true, instance: string = selfHost()) {
   const base = logger === true ? {} : logger;
+  const given = base === false || base === undefined ? undefined : (base as { base?: Record<string, unknown> | null; serializers?: object });
   return {
-    logger: base === false || base === undefined
+    logger: given === undefined
       ? false
-      : { ...base, serializers: { ...(base as { serializers?: object }).serializers, req: serializeReq } },
+      : {
+        ...given,
+        base: 'base' in given
+          ? (given.base === null ? null : { instance, ...given.base })
+          : { pid: process.pid, hostname: hostname(), instance },
+        serializers: { ...given.serializers, req: serializeReq },
+      },
     logController: new AccessLogController({ requestIdLogLabel: 'traceId' }),
   } as Pick<FastifyServerOptions, 'logger' | 'logController'>;
 }

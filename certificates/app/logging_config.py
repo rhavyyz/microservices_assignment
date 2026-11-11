@@ -6,16 +6,35 @@ import sys
 import time
 from uuid import UUID
 
+from discovery import self_host
+
 access_log = logging.getLogger("app.access")
+
+
+class InstanceFilter(logging.Filter):
+    """Sets record.instance to this instance's discoverer host (SERVICE_HOST, else <hostname>:<PORT>)."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.instance = self_host()
+
+    def filter(self, record):
+        record.instance = self.instance
+        return True
+
+
+LOG_FORMAT = "%(levelname)s instance=%(instance)s %(name)s %(message)s"
 
 
 def configure_logging():
     """Only for the real server (never under pytest). LOG_LEVEL is optional and defaults to INFO."""
     level = os.getenv("LOG_LEVEL", "INFO").upper()
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    handler.addFilter(InstanceFilter())
     logging.basicConfig(
         level=level if level in logging.getLevelNamesMapping() else "INFO",
-        format="%(levelname)s %(name)s %(message)s",
-        stream=sys.stdout,
+        handlers=[handler],
     )
 
 
