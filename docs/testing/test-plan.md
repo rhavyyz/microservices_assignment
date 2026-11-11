@@ -46,6 +46,21 @@ Não coberto: carga/pico, rate limit (Gateway), `register-gateway-routes.sh` e D
 
 Não coberto: navegador real (E2E), CORS contra o Gateway real, leitor de tela, desempenho. Ver `test-report.md`.
 
+## Administração e pedido de organizador (ADR-009)
+| Requisito | Caso | Arquivo | Esperado |
+|---|---|---|---|
+| Cadastro | `requestedRole` só `PARTICIPANT`/`ORGANIZER`; `ADMIN` e valores soltos são `400`; `ORGANIZER` abre `PENDING` e nunca concede o papel; `roles`/`isAdmin` continuam rejeitados | `RegisterRequestValidationTest`, `UserServiceTest`, `AdminFlowIT` (Java) | conforme* |
+| Admin (backend) | só `ADMIN` lista e decide (organizador/participante: `403`; sem token: `401`); filtros e paginação validados; aprovar concede, negar/retirar remove; idempotente; administrador nunca é alvo (`409`); papel retirado vale na hora na busca; novo login traz o papel | `UserServiceTest`, `AdminFlowIT` (Java) | conforme* |
+| Bootstrap | só com a variável ligada; conta com apenas `ADMIN`; e-mail tomado para o cadastro público | `AdminBootstrapIT` (Java) | conforme* |
+| Banco | `ADMIN` aceito, papel desconhecido e `organizer_request` inválido recusados | `MigrationIT` (Java) | conforme* |
+| Gateway (E1) | `x-gateway` publica `maxPerMin`/`rateLimitBy` (login e cadastro 10/min por IP) e as rotas de admin; YAML versionado coerente | `GatewayExtensionTest`, `InfraEndpointsIT` (Java) | conforme* |
+| Cadastro (tela) | começa em Participante; só Participante/Organizer (nunca Administrador); corpo com `requestedRole`; aviso de aprovação pendente | `RegisterPage.test.tsx`, `forms.test.ts` | conforme |
+| Tela de admin | lista com Bearer, situação do pedido, filtros e busca, aprovar, negar (só pendente), retirar com confirmação, 409, erro + tentar de novo, vazio, paginação, acesso negado a não admin | `AdminUsersPage.test.tsx` | conforme |
+| Perfil e início | pedido pendente/negado; aviso de novo login após aprovação; atalho de admin só para ADMIN | `ProfilePage.test.tsx`, `HomePage.test.tsx` | conforme |
+| Contrato | schemas e rotas de admin e `requestedRole` conferidos contra o OpenAPI | `api/contract.test.ts` | conforme |
+
+\* Testes Java **escritos mas não executados** pelo autor (sem Maven Central e sem Docker no ambiente); ver `test-report.md`.
+
 ## Fase C (Relatórios e Certificados)
 | Requisito | Caso | Arquivo | Esperado |
 |---|---|---|---|

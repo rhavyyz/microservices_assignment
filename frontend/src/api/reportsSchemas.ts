@@ -3,6 +3,10 @@ import { z } from 'zod';
 /**
  * Relatórios (reports/src/server.ts e queries.ts). Valores em unidades inteiras; dinheiro em centavos, sempre
  * por moeda (nunca somado entre moedas). Taxas são 0–1 ou `null` quando o denominador é zero.
+ *
+ * O servidor serializa pelo schema de resposta de `reports/src/server.ts`: campo que ele não lista (como
+ * `organizer_id` no evento) NÃO chega ao cliente. Por isso só se exige aqui o que esse schema declara (o teste
+ * `contract.reportscerts.test.ts` confere campo a campo).
  */
 const count = z.number().int().nonnegative();
 const rate = z.number().nullable();
@@ -11,7 +15,6 @@ export const MoneySchema = z.object({ currency: z.string(), amount_minor: z.numb
 
 export const ReportEventSchema = z.object({
   event_id: z.guid(),
-  organizer_id: z.string().nullable(),
   name: z.string().nullable(),
   status: z.string(),
   starts_at: z.string().nullable(),

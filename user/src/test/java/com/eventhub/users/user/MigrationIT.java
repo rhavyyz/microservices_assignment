@@ -58,10 +58,22 @@ class MigrationIT extends PostgresIT {
         String e = email();
         insertUser(e, "ACTIVE");
         UUID id = jdbc.queryForObject("select id from users where email = ?", UUID.class, e);
-        assertThatThrownBy(() -> jdbc.update("insert into user_roles values (?, 'ADMIN')", id))
+        assertThatThrownBy(() -> jdbc.update("insert into user_roles values (?, 'SUPERUSER')", id))
                 .hasMessageContaining("ck_user_roles_role");
         assertThatThrownBy(() -> jdbc.update("insert into user_roles values (?, 'PARTICIPANT')", UUID.randomUUID()))
                 .hasMessageContaining("fk_user_roles_user");
+    }
+
+    @Test
+    void databaseAcceptsAdminRoleAndRejectsUnknownOrganizerRequest() {
+        String e = email();
+        insertUser(e, "ACTIVE");
+        UUID id = jdbc.queryForObject("select id from users where email = ?", UUID.class, e);
+        jdbc.update("insert into user_roles values (?, 'ADMIN')", id);
+        assertThat(jdbc.queryForObject("select organizer_request from users where id = ?", String.class, id))
+                .isEqualTo("NONE");
+        assertThatThrownBy(() -> jdbc.update("update users set organizer_request = 'MAYBE' where id = ?", id))
+                .hasMessageContaining("ck_users_organizer_request");
     }
 
     @Test

@@ -47,6 +47,13 @@ public class User {
     @Enumerated(EnumType.STRING)
     private Set<Role> roles = EnumSet.noneOf(Role.class);
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "organizer_request", nullable = false, length = 20)
+    private OrganizerRequest organizerRequest = OrganizerRequest.NONE;
+
+    @Column(name = "organizer_request_updated_at")
+    private Instant organizerRequestUpdatedAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -74,6 +81,34 @@ public class User {
         this.updatedAt = now;
     }
 
+    /** Cadastro que escolheu "organizador": continua sem o papel até um ADMIN decidir. */
+    public void requestOrganizer(Instant now) {
+        this.organizerRequest = OrganizerRequest.PENDING;
+        this.organizerRequestUpdatedAt = now;
+        this.updatedAt = now;
+    }
+
+    /** Decisão de um ADMIN: concede o papel ORGANIZER. */
+    public void grantOrganizer(Instant now) {
+        this.roles.add(Role.ORGANIZER);
+        this.organizerRequest = OrganizerRequest.APPROVED;
+        this.organizerRequestUpdatedAt = now;
+        this.updatedAt = now;
+    }
+
+    /** Decisão de um ADMIN: nega o pedido ou retira o papel ORGANIZER. */
+    public void denyOrganizer(Instant now) {
+        this.roles.remove(Role.ORGANIZER);
+        this.organizerRequest = OrganizerRequest.DENIED;
+        this.organizerRequestUpdatedAt = now;
+        this.updatedAt = now;
+    }
+
+    public void grantAdmin(Instant now) {
+        this.roles.add(Role.ADMIN);
+        this.updatedAt = now;
+    }
+
     public UUID getId() {
         return id;
     }
@@ -96,6 +131,14 @@ public class User {
 
     public Set<Role> getRoles() {
         return Collections.unmodifiableSet(roles);
+    }
+
+    public OrganizerRequest getOrganizerRequest() {
+        return organizerRequest;
+    }
+
+    public Instant getOrganizerRequestUpdatedAt() {
+        return organizerRequestUpdatedAt;
     }
 
     public Instant getCreatedAt() {

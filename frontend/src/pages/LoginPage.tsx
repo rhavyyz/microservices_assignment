@@ -12,7 +12,9 @@ export function LoginPage() {
   usePageTitle('Entrar');
   const { login, notice, clearNotice } = useAuth();
   const location = useLocation();
-  const justRegistered = (location.state as { registered?: boolean } | null)?.registered === true;
+  const navState = location.state as { registered?: boolean; organizerRequested?: boolean } | null;
+  const justRegistered = navState?.registered === true;
+  const organizerRequested = navState?.organizerRequested === true;
   const [formError, setFormError] = useState<ErrorDescription | null>(null);
   const {
     register,
@@ -43,6 +45,13 @@ export function LoginPage() {
       {notice ? <Alert kind="info">{notice}</Alert> : null}
       {justRegistered ? (
         <Alert kind="success">Cadastro realizado. Entre com seu e-mail e senha.</Alert>
+      ) : null}
+      {justRegistered && organizerRequested ? (
+        <Alert kind="info">
+          Seu pedido para ser organizador foi enviado e aguarda a aprovação de um administrador.
+          Enquanto isso, sua conta funciona como participante. Depois de aprovado, saia e entre
+          novamente.
+        </Alert>
       ) : null}
       {formError ? (
         <Alert kind="error" traceId={formError.traceId}>

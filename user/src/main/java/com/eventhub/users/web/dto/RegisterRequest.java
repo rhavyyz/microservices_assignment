@@ -5,8 +5,9 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 /**
- * Cadastro público. Só existem estes três campos: qualquer outro (roles, isAdmin...) é rejeitado
- * na desserialização (400 MALFORMED_REQUEST) e, de qualquer forma, nunca é lido.
+ * Cadastro público. Só existem estes quatro campos: qualquer outro (roles, isAdmin...) é rejeitado
+ * na desserialização (400 MALFORMED_REQUEST) e, de qualquer forma, nunca é lido. {@code requestedRole} é opcional
+ * (PARTICIPANT por padrão) e <b>não concede</b> papel algum: ORGANIZER vira apenas um pedido pendente.
  */
 public record RegisterRequest(
         @NotBlank(message = "Informe o nome.")
@@ -20,7 +21,15 @@ public record RegisterRequest(
 
         @NotBlank(message = "Informe a senha.")
         @Size(min = 10, max = 72, message = "A senha deve ter entre 10 e 72 caracteres.")
-        String password) {
+        String password,
+
+        @Pattern(regexp = "PARTICIPANT|ORGANIZER", message = "Use PARTICIPANT ou ORGANIZER.")
+        String requestedRole) {
+
+    /** Quem escolheu "organizador" só abre um pedido: o papel é concedido por um ADMIN (ADR-009). */
+    public boolean wantsOrganizer() {
+        return "ORGANIZER".equals(requestedRole);
+    }
 
     @Override
     public String toString() {

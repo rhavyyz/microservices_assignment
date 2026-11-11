@@ -28,6 +28,21 @@ describe('Início', () => {
     expect(screen.queryByText(/Em breve/)).not.toBeInTheDocument();
   });
 
+  it('só o administrador vê o atalho de administração; participante e organizador não', async () => {
+    await signInTo(loginAs(['ADMIN']), '/inicio');
+    expect(await screen.findByRole('link', { name: /Administração de usuários/ })).toHaveAttribute(
+      'href',
+      '/admin/usuarios',
+    );
+    expect(screen.queryByRole('link', { name: /Buscar usuários/ })).not.toBeInTheDocument();
+  });
+
+  it('organizador não vê a administração', async () => {
+    await signInTo(loginAs(['PARTICIPANT', 'ORGANIZER']), '/inicio');
+    await screen.findByRole('heading', { name: 'Início' });
+    expect(screen.queryByRole('link', { name: /Administração/ })).not.toBeInTheDocument();
+  });
+
   it('organizador também vê a busca de usuários', async () => {
     await signInTo(loginAs(['PARTICIPANT', 'ORGANIZER']), '/inicio');
     expect(await screen.findByRole('link', { name: /Buscar usuários/ })).toHaveAttribute(

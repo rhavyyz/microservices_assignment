@@ -17,12 +17,25 @@ public class GatewayExtensionTest {
     /** "METHOD path" -> {isPublic, requireAuth}; a mesma tabela é conferida contra o OpenAPI servido (InfraEndpointsIT). */
     public static final Map<String, boolean[]> EXPECTED = new LinkedHashMap<>();
 
+    /** "METHOD path" -> {maxPerMin, rateLimitBy}: os limites que o Gateway deve semear (E1: login e cadastro, 10/min por IP). */
+    public static final Map<String, Object[]> LIMITS = new LinkedHashMap<>();
+
     static {
+        LIMITS.put("post /api/v1/auth/register", new Object[] {10, "ip"});
+        LIMITS.put("post /api/v1/auth/login", new Object[] {10, "ip"});
+        LIMITS.put("get /api/v1/users/me", new Object[] {120, "user_or_ip"});
+        LIMITS.put("patch /api/v1/users/me", new Object[] {30, "user_or_ip"});
+        LIMITS.put("get /api/v1/users", new Object[] {60, "user_or_ip"});
+        LIMITS.put("get /api/v1/admin/users", new Object[] {60, "user_or_ip"});
+        LIMITS.put("put /api/v1/admin/users/{id}/organizer", new Object[] {30, "user_or_ip"});
+
         EXPECTED.put("post /api/v1/auth/register", new boolean[] {true, false});
         EXPECTED.put("post /api/v1/auth/login", new boolean[] {true, false});
         EXPECTED.put("get /api/v1/users/me", new boolean[] {true, true});
         EXPECTED.put("patch /api/v1/users/me", new boolean[] {true, true});
         EXPECTED.put("get /api/v1/users", new boolean[] {true, true});
+        EXPECTED.put("get /api/v1/admin/users", new boolean[] {true, true});
+        EXPECTED.put("put /api/v1/admin/users/{id}/organizer", new boolean[] {true, true});
         EXPECTED.put("get /.well-known/jwks.json", new boolean[] {false, false});
         EXPECTED.put("get /internal/users/{id}", new boolean[] {false, false});
         EXPECTED.put("get /healthcheck", new boolean[] {false, false});
@@ -51,6 +64,11 @@ public class GatewayExtensionTest {
                 Map<String, Object> g = (Map<String, Object>) ext;
                 assertThat(g.get("isPublic")).as("isPublic of %s", id).isInstanceOf(Boolean.class);
                 assertThat(g.get("requireAuth")).as("requireAuth of %s", id).isInstanceOf(Boolean.class);
+                Object[] limit = LIMITS.get(id);
+                if (limit != null) {
+                    assertThat(g.get("maxPerMin")).as("maxPerMin of %s", id).isEqualTo(limit[0]);
+                    assertThat(g.get("rateLimitBy")).as("rateLimitBy of %s", id).isEqualTo(limit[1]);
+                }
                 found.put(id, new boolean[] {(Boolean) g.get("isPublic"), (Boolean) g.get("requireAuth")});
             }
         }

@@ -7,7 +7,7 @@ import org.springdoc.core.customizers.OperationCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-/** Adds {@code x-gateway: {isPublic, requireAuth}} to every operation annotated with {@link GatewaySettings}. */
+/** Adds {@code x-gateway: {isPublic, requireAuth[, maxPerMin, rateLimitBy]}} to every operation annotated with {@link GatewaySettings}. */
 @Configuration
 public class GatewayOpenApiConfig {
 
@@ -19,6 +19,12 @@ public class GatewayOpenApiConfig {
                 Map<String, Object> ext = new LinkedHashMap<>();
                 ext.put("isPublic", settings.isPublic());
                 ext.put("requireAuth", settings.requireAuth());
+                if (settings.maxPerMin() >= 0) {
+                    ext.put("maxPerMin", settings.maxPerMin());
+                }
+                if (!settings.rateLimitBy().isEmpty()) {
+                    ext.put("rateLimitBy", settings.rateLimitBy());
+                }
                 operation.addExtension("x-gateway", ext);
             }
             return operation;

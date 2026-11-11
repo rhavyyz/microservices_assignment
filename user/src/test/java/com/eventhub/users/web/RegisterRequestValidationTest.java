@@ -18,7 +18,7 @@ class RegisterRequestValidationTest {
     private static final String PW = "senha-forte-123";
 
     private Set<ConstraintViolation<RegisterRequest>> check(String n, String e, String p) {
-        return validator.validate(new RegisterRequest(n, e, p));
+        return validator.validate(new RegisterRequest(n, e, p, null));
     }
 
     @Test
@@ -48,6 +48,24 @@ class RegisterRequestValidationTest {
 
     @Test
     void toStringNeverShowsPassword() {
-        assertThat(new RegisterRequest("Maria", "m@x.com", PW).toString()).doesNotContain(PW);
+        assertThat(new RegisterRequest("Maria", "m@x.com", PW, null).toString()).doesNotContain(PW);
+    }
+
+    @Test
+    void requestedRoleIsOptionalAndLimitedToParticipantOrOrganizer() {
+        for (String ok : new String[] { null, "PARTICIPANT", "ORGANIZER" }) {
+            assertThat(validator.validate(new RegisterRequest("Maria", "a@example.com", PW, ok))).as(ok).isEmpty();
+        }
+        for (String bad : new String[] { "ADMIN", "organizer", "", "ORGANIZER,ADMIN" }) {
+            assertThat(validator.validate(new RegisterRequest("Maria", "a@example.com", PW, bad))).as(bad)
+                    .isNotEmpty();
+        }
+    }
+
+    @Test
+    void onlyTheOrganizerChoiceAsksForOrganizer() {
+        assertThat(new RegisterRequest("M", "a@b.co", PW, "ORGANIZER").wantsOrganizer()).isTrue();
+        assertThat(new RegisterRequest("M", "a@b.co", PW, "PARTICIPANT").wantsOrganizer()).isFalse();
+        assertThat(new RegisterRequest("M", "a@b.co", PW, null).wantsOrganizer()).isFalse();
     }
 }

@@ -79,6 +79,52 @@ Depois de reverter: 89/89.
 
 ---
 
+# Defeito achado no navegador: relatório com "Ocorreu um erro inesperado" (2026-11-11)
+Sintoma: `GET /reports/events/{id}/summary` e `/activities` respondiam `200`, mas a tela de relatório mostrava erro genérico.
+**Causa (minha):** o schema do frontend (`ReportEventSchema`) exigia `organizer_id` no evento, mas o Fastify serializa pelo **schema de resposta** de `reports/src/server.ts`, que não lista esse campo, então ele nunca chega ao cliente; a validação falhava (`INVALID_RESPONSE`, que a tela mostra como erro inesperado).
+**Por que os testes não pegaram:** as fixtures traziam `organizer_id` e o teste de contrato conferia os campos contra as consultas SQL (`queries.ts`), não contra o schema de resposta.
+**Correção:** `organizer_id` removido do schema e da fixture; novo teste de contrato compara cada campo exigido com o schema de resposta de `server.ts` (reintroduzir o campo faz o teste falhar). Certificados foi conferido da mesma forma contra `certificates/app/schemas/certificate.py`: sem divergência.
+**Lição:** em contratos de serviços Fastify, a fonte de verdade é o schema de resposta, não a consulta.
+
+---
+
+# Relatório de testes — administração e pedido de organizador (ADR-009)
+
+## Execução do autor (sandbox Linux, Node 22)
+| Verificação | Resultado |
+|---|---|
+| `prettier`, `eslint .`, `tsc --noEmit` (frontend) | **OK**, 0 problemas |
+| `vitest run` (frontend) | **296/296** em 27 arquivos (eram 274 em 26) |
+| `npm run build` (frontend) | **OK** |
+| YAML `docs/api/users.openapi.yaml` × `GatewayExtensionTest` | rotas e limites conferidos por script: coerentes |
+| Migrações `V1`+`V2` num PostgreSQL 16 local (sem Docker) | **OK**: `V2` aplica sobre dados existentes, organizador antigo vira `APPROVED`, `ADMIN` aceito, `SUPERUSER` e `organizer_request` inválido recusados pelas constraints |
+| `javac` (só sintaxe) nos arquivos Java alterados | **sem erros de sintaxe**; erros de símbolo/pacote esperados (sem dependências) |
+
+### Mutação manual no frontend (uma falha por vez)
+| Falha introduzida | Resultado |
+|---|---|
+| cadastro ignora a escolha de organizador | 1 teste quebrou |
+| rota de admin liberada ao organizador | 10 testes quebraram |
+| decisão sempre envia `approved: true` | 1 teste quebrou |
+| "Retirar papel" sem confirmação | 1 teste quebrou |
+| sem aviso de novo login no perfil | 1 teste quebrou |
+| menu de administração para organizador | 11 testes quebraram |
+| tipo de conta aceita qualquer texto (ex.: `ADMIN`) | 1 teste quebrou |
+| "Negar" também para quem nunca pediu | **sobreviveu** na 1ª rodada; adicionado teste e a mutação passou a ser detectada (1 teste) |
+
+### Execução da equipe (2026-11-11, depois do patch `admin-organizer-fix1`)
+`./mvnw verify` em `user/`: **BUILD SUCCESS**. Unitários **53/53** (inclui `UserServiceTest` 21, `RegisterRequestValidationTest` 7, `GatewayExtensionTest`) e integração **47/47** com Testcontainers (inclui `AdminFlowIT` 7, `AdminBootstrapIT` 1, `MigrationIT` 6, `AuthFlowIT` 14, `InfraEndpointsIT` 4). Antes disso, a 1ª rodada não compilou por um teste que ainda usava o construtor antigo de `RegisterRequest` (corrigido no `fix1`).
+
+### NÃO EXECUTADO (importante)
+- O código Java foi escrito sem compilar no ambiente do autor (sem Maven Central nem Docker); a validação real é a execução acima, feita pela equipe.
+- Fluxo no navegador contra o stack real (cadastro como organizador → login do administrador → aprovar → novo login → criar evento), (a migração em si foi validada num PostgreSQL local, mas não pelo Flyway/Hibernate `validate`).
+- Aplicar `register-gateway-routes.sh` num Gateway já populado (P33).
+
+## Execução da equipe em 2026-11-11 (anterior a este ADR)
+Relatório enviado pela equipe, com o stack completo (18 contêineres) e `git status` limpo: nenhum teste automatizado falhou — user 41 unitários + 38 `*IT`, events 74 + 22, payments 67, reports 63 + 8, subscription 182 (com Postgres), certificates 209, frontend 274, Go (gateway, notifications, service-discoverer) sem falhas, 1 teste do Gateway não executado (precisa de Kafka real). O fluxo cadastro → evento → inscrição → pagamento → confirmação → notificação em tempo real → check-in → relatório → certificado em PDF funcionou pela API. Achados: E1 (limite de login/cadastro ausente; **corrigido aqui**, ver P33), E2/E3/C3/C4 (P34–P37, do time) e C1/C2 (documentação e `engines`, **corrigidos aqui**). Não testados: o fluxo do navegador (passo 4) e `accept-offer` da lista de espera.
+
+---
+
 # Relatório de testes — frontend, fase C (Relatórios e Certificados)
 
 ## Execução (sandbox Linux, Node 22), sobre o `main` em `9b9da6a`

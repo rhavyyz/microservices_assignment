@@ -1,10 +1,15 @@
 import { API_PATHS } from '../config';
 import type { ApiClient } from './client';
 import {
+  AdminUserItemSchema,
+  AdminUserPageSchema,
   LoginResponseSchema,
   UserPageSchema,
   UserProfileSchema,
+  type AdminUserItem,
+  type AdminUserPage,
   type LoginResponse,
+  type OrganizerRequest,
   type UserPage,
   type UserProfile,
 } from './schemas';
@@ -13,11 +18,20 @@ export interface RegisterInput {
   name: string;
   email: string;
   password: string;
+  /** ORGANIZER só abre um pedido: o papel é concedido por um administrador. */
+  requestedRole?: 'PARTICIPANT' | 'ORGANIZER' | undefined;
 }
 
 export interface LoginInput {
   email: string;
   password: string;
+}
+
+export interface AdminListParams {
+  q?: string | undefined;
+  organizerRequest?: OrganizerRequest | undefined;
+  page?: number | undefined;
+  size?: number | undefined;
 }
 
 export interface UserSearchParams {
@@ -35,7 +49,12 @@ export function createUsersApi(client: ApiClient, basePath: string = API_PATHS.u
       return client.request({
         method: 'POST',
         path: `${basePath}/auth/register`,
-        body: { name: input.name, email: input.email, password: input.password },
+        body: {
+          name: input.name,
+          email: input.email,
+          password: input.password,
+          requestedRole: input.requestedRole ?? 'PARTICIPANT',
+        },
         schema: UserProfileSchema,
         signal,
       });
@@ -84,6 +103,38 @@ export function createUsersApi(client: ApiClient, basePath: string = API_PATHS.u
         },
         auth: true,
         schema: UserPageSchema,
+        signal,
+      });
+    },
+
+    /** Somente ADMIN: todos os usuários, com o pedido de organizador. O servidor recusa os demais com 403. */
+    adminListUsers(params: AdminListParams, signal?: AbortSignal): Promise<AdminUserPage> {
+      return client.request({
+        path: `${basePath}/admin/users`,
+        query: {
+          q: params.q,
+          organizerRequest: params.organizerRequest,
+          page: params.page,
+          size: params.size,
+        },
+        auth: true,
+        schema: AdminUserPageSchema,
+        signal,
+      });
+    },
+
+    /** Somente ADMIN: `approved=true` concede ORGANIZER; `false` nega o pedido ou retira o papel. */
+    adminDecideOrganizer(
+      id: string,
+      approved: boolean,
+      signal?: AbortSignal,
+    ): Promise<AdminUserItem> {
+      return client.request({
+        method: 'PUT',
+        path: `${basePath}/admin/users/${encodeURIComponent(id)}/organizer`,
+        body: { approved },
+        auth: true,
+        schema: AdminUserItemSchema,
         signal,
       });
     },

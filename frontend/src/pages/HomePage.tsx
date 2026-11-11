@@ -40,6 +40,14 @@ export function HomePage() {
             <span>Consulte e atualize o seu nome.</span>
           </Link>
         </li>
+        {hasRole('ADMIN') ? (
+          <li>
+            <Link className="tile" to="/admin/usuarios">
+              <strong>Administração de usuários</strong>
+              <span>Veja quem pediu para ser organizador e aprove ou negue.</span>
+            </Link>
+          </li>
+        ) : null}
         {hasRole('ORGANIZER') ? (
           <li>
             <Link className="tile" to="/organizador">

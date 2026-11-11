@@ -18,6 +18,7 @@ public record UsersProperties(
         @NotNull Jwt jwt,
         @NotNull Password password,
         @NotNull DevSeed devSeed,
+        @NotNull AdminBootstrap adminBootstrap,
         @NotNull Discovery discovery) {
 
     /**
@@ -39,6 +40,13 @@ public record UsersProperties(
 
     /** Organizador de demonstração para ambiente local. Desativado por padrão (ADR-002). */
     public record DevSeed(boolean enabled, String name, String email, String password) {
+    }
+
+    /**
+     * Primeiro administrador (ADR-009): único caminho para criar um ADMIN, porque nenhuma rota HTTP concede o papel.
+     * Desativado por padrão; as credenciais vêm só do ambiente.
+     */
+    public record AdminBootstrap(boolean enabled, String name, String email, String password) {
     }
 
     /**

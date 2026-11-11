@@ -1,6 +1,6 @@
 # ADR-002 — Papéis de usuário
 
-- **Estado:** Proposto (aguarda P7)
+- **Estado:** Proposto; a criação de organizadores foi definida no [ADR-009](ADR-009-admin-role-and-organizer-requests.md) (papel `ADMIN` e pedido de organizador)
 - **Data:** 2026-10-30
 
 ## Contexto
