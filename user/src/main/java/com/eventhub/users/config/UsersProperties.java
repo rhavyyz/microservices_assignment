@@ -10,7 +10,7 @@ import org.springframework.validation.annotation.Validated;
 
 /**
  * Configuração externa do serviço (prefixo {@code users}). Nenhum segredo tem valor padrão aqui:
- * a chave privada vem de arquivo montado como segredo (ADR-001).
+ * a chave privada vem de arquivo montado como segredo (DT-01).
  */
 @Validated
 @ConfigurationProperties(prefix = "users")
@@ -38,12 +38,12 @@ public record UsersProperties(
     public record Password(@Min(4) @Max(31) int bcryptStrength) {
     }
 
-    /** Organizador de demonstração para ambiente local. Desativado por padrão (ADR-002). */
+    /** Organizador de demonstração para ambiente local. Desativado por padrão (DT-02). */
     public record DevSeed(boolean enabled, String name, String email, String password) {
     }
 
     /**
-     * Primeiro administrador (ADR-009): único caminho para criar um ADMIN, porque nenhuma rota HTTP concede o papel.
+     * Primeiro administrador (DT-11): único caminho para criar um ADMIN, porque nenhuma rota HTTP concede o papel.
      * Desativado por padrão; as credenciais vêm só do ambiente.
      */
     public record AdminBootstrap(boolean enabled, String name, String email, String password) {

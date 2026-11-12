@@ -10,7 +10,7 @@ info:
     O serviço publica este mesmo conjunto de rotas, gerado do código, em `GET /openapi.json` (uso interno do Gateway).
 
     Convenções:
-    - Autenticação: `Authorization: Bearer <access token>` (JWT RS256, ver ADR-001).
+    - Autenticação: `Authorization: Bearer <access token>` (JWT RS256, ver DT-01).
     - Todo corpo JSON rejeita campos desconhecidos com `400 MALFORMED_REQUEST`.
     - Todas as respostas incluem `X-Trace-Id`. Erros seguem `application/problem+json`.
     - Exemplos usam valores fictícios; nenhum token ou senha é válido.

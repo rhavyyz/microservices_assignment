@@ -1,5 +1,7 @@
 # Monorepo
 
+Execução completa, dados de demonstração e testes: [`docs/running.md`](docs/running.md). Evidências de validação: [`docs/evidence/`](docs/evidence/README.md).
+
 Docker Compose monorepo of services: service-discoverer, gateway, certificates, events, subscription, payments, user, notifications, reports.
 
 - Each service folder has a `Dockerfile` and a `docker-compose.yml` (its shared infra).
@@ -33,7 +35,7 @@ UI-facing entry point on host port `8080` (so it cannot be scaled). Call `/{kind
   All keys are optional; with no `x-gateway` the endpoint is created with the defaults (private). The keys are the same as the admin API's.
   - Insert-only: the declaration is read only when the sync **inserts** an endpoint that is not stored yet. An endpoint already in the DB is never changed by the spec, so admin `PUT` edits stay authoritative at runtime and a later change to the declaration does not reach an endpoint already stored. To re-apply a declaration, `PUT` the values through the admin API, or delete the endpoint document in `gateway-db` (the next sync, at gateway start, inserts it again from the declaration).
   - Validation: an invalid value (wrong type, negative `maxPerMin`, unknown `rateLimitBy`) is ignored for that key only, which takes its default, and is logged once per sync as `sync <kind>: <METHOD> <path>: x-gateway.<key> ignored: <reason>`. An `x-gateway` that is not a JSON object is ignored (logged); unknown keys inside it are ignored (one log line per endpoint). A bad declaration never fails the sync. Logged values are truncated.
-  - Security: a service can now declare itself public. The risk is accepted (trusted network, services are ours, and the admin API remains the runtime control); see ADR-003.
+  - Security: a service can now declare itself public. The risk is accepted (trusted network, services are ours, and the admin API remains the runtime control); see DT-03.
 - Admin API (no auth yet): `GET /admin/endpoints[?kind=]`, `PUT /admin/endpoints` (partial update: `kind`, `method`, `path` identify the endpoint, plus at least one of `maxPerMin`, `rateLimitBy`, `requireAuth`, `isPublic`; only those change; 400 on invalid input, 404 if unregistered; returns the full doc), e.g.
 
       curl -X PUT localhost:8080/admin/endpoints -d '{"kind":"payments","method":"POST","path":"/login","rateLimitBy":"ip","maxPerMin":5,"requireAuth":false}'
@@ -162,7 +164,7 @@ or fix single routes with `PUT /admin/endpoints`. Check with `curl -s localhost:
 
 Then the API is `http://localhost:8080/user/api/v1/...` (register, login, `users/me`, `users` search for organizers, `admin/users` for administrators).
 
-Organizers and the administrator (ADR-009): the sign-up form lets a person choose *Organizer*, but that only opens a pending request;
+Organizers and the administrator (DT-11): the sign-up form lets a person choose *Organizer*, but that only opens a pending request;
 the account stays a participant until an **administrator** approves it in the web app (`/admin/usuarios`). No HTTP route grants
 `ADMIN`; create the first one from the environment, then turn it off again:
 
@@ -186,7 +188,7 @@ Run outside Docker: publish the database with `docker compose --env-file .env -f
 > Status: the backend test suite is `cd user && ./mvnw verify` (needs Docker); run it after pulling, since other teams changed the service (trace id, access log, OpenAPI gateway settings). See `docs/testing/test-report.md` for the last recorded results.
 
 ## Frontend (`frontend/`)
-React 19 + TypeScript + Vite: catálogo público de eventos, inscrição por atividade, minhas inscrições, cadastro, login, perfil e, para organizadores, busca de usuários e a área do organizador (criar, editar, publicar e cancelar eventos, atividades, participantes e check-in). Também: pagamento das inscrições (provedor simulado) e notificações em tempo real (WebSocket do Gateway, com consulta periódica como reserva). Fala só com o Gateway. Docs: `docs/architecture/frontend.md`, `docs/decisions/ADR-006-frontend-session-and-stack.md`, `docs/decisions/ADR-007-frontend-scope-and-phases.md`.
+React 19 + TypeScript + Vite: catálogo público de eventos, inscrição por atividade, minhas inscrições, cadastro, login, perfil e, para organizadores, busca de usuários e a área do organizador (criar, editar, publicar e cancelar eventos, atividades, participantes e check-in). Também: pagamento das inscrições (provedor simulado) e notificações em tempo real (WebSocket do Gateway, com consulta periódica como reserva). Fala só com o Gateway. Docs: `docs/architecture/frontend.md`, `docs/architecture/technical-decisions.md` (DT-07), (DT-08).
 
     cd frontend
     cp .env.example .env     # VITE_API_BASE_URL = URL do Gateway (http://localhost:8080 com o docker compose)
@@ -195,4 +197,4 @@ React 19 + TypeScript + Vite: catálogo público de eventos, inscrição por ati
 
 Scripts: `npm run lint`, `npm run typecheck`, `npm run format:check`, `npm run test:run` (296 testes), `npm run build` (saída em `frontend/dist`). Requer Node `^22.22.2`, `^24.15.0` ou `>=26` (o jsdom 30, usado nos testes, exige isso; o build sozinho aceitaria `^20.19` ou `>=22.12`).
 
-O token de acesso fica só em memória: recarregar a página exige novo login (ADR-006). As rotas dos serviços são abertas no Gateway pelo `x-gateway` de cada OpenAPI, sem scripts, mas só em um banco do Gateway novo: o Gateway não altera rotas que já existiam (veja a observação acima sobre `down -v`). O catálogo de eventos funciona sem login; inscrever-se exige login. O contrato de Eventos mudou no `main` (rotas em `/api/v1`, vagas vindas de Inscrições): o frontend segue o contrato atual, e os testes leem as rotas direto do código dos serviços para acusar qualquer divergência.
+O token de acesso fica só em memória: recarregar a página exige novo login (DT-07). As rotas dos serviços são abertas no Gateway pelo `x-gateway` de cada OpenAPI, sem scripts, mas só em um banco do Gateway novo: o Gateway não altera rotas que já existiam (veja a observação acima sobre `down -v`). O catálogo de eventos funciona sem login; inscrever-se exige login. O contrato de Eventos mudou no `main` (rotas em `/api/v1`, vagas vindas de Inscrições): o frontend segue o contrato atual, e os testes leem as rotas direto do código dos serviços para acusar qualquer divergência.

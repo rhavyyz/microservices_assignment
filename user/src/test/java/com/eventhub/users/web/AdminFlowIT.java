@@ -13,7 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
- * Fluxo do pedido de organizador (ADR-009): cadastro com "organizador" só abre um pedido; a listagem e a decisão
+ * Fluxo do pedido de organizador (DT-11): cadastro com "organizador" só abre um pedido; a listagem e a decisão
  * são do ADMIN; o papel só vale no token depois de um novo login.
  */
 class AdminFlowIT extends PostgresIT {

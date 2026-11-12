@@ -8,7 +8,7 @@
 | RF01 validação | Campos vazios, e-mail inválido, senha curta/longa | `RegisterRequestValidationTest`, `AuthFlowIT` | 400 `VALIDATION_ERROR`, sem eco da senha |
 | RF01 / 6.1 e-mail único | Duplicado, caixa/espaços, corrida de 8 requisições, constraint do banco | `UserServiceTest`, `AuthFlowIT`, `MigrationIT`, `scripts/check-migration.sh` | 409; exatamente 1 conta |
 | RN07 papéis | `roles`/`isAdmin` no cadastro e no PATCH | `AuthFlowIT` | 400 `MALFORMED_REQUEST`; nada criado/alterado |
-| RN07 / ADR-002 | Seed desativado por padrão; ativado cria `ORGANIZER` | `NoSeedByDefaultIT`, `DevSeedIT` | conforme configuração |
+| RN07 / DT-02 | Seed desativado por padrão; ativado cria `ORGANIZER` | `NoSeedByDefaultIT`, `DevSeedIT` | conforme configuração |
 | Login | Válido; senha errada; e-mail inexistente; conta inativa; senha > 72 bytes | `UserServiceTest`, `AuthFlowIT` | respostas idênticas (401 genérico) |
 | Token | Claims exatas, `exp-iat`, `kid`; expirado, adulterado, `alg=none`, outra chave, outro emissor | `TokenServiceTest`, `AuthFlowIT` | 401 `UNAUTHENTICATED` |
 | Perfil | GET/PATCH próprio; sem rota para terceiros; sem hash na resposta | `AuthFlowIT` | 200 / 404 |
@@ -46,7 +46,7 @@ Não coberto: carga/pico, rate limit (Gateway), `register-gateway-routes.sh` e D
 
 Não coberto: navegador real (E2E), CORS contra o Gateway real, leitor de tela, desempenho. Ver `test-report.md`.
 
-## Administração e pedido de organizador (ADR-009)
+## Administração e pedido de organizador (DT-11)
 | Requisito | Caso | Arquivo | Esperado |
 |---|---|---|---|
 | Cadastro | `requestedRole` só `PARTICIPANT`/`ORGANIZER`; `ADMIN` e valores soltos são `400`; `ORGANIZER` abre `PENDING` e nunca concede o papel; `roles`/`isAdmin` continuam rejeitados | `RegisterRequestValidationTest`, `UserServiceTest`, `AdminFlowIT` (Java) | conforme* |

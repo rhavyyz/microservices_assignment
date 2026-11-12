@@ -26,7 +26,7 @@ public record RegisterRequest(
         @Pattern(regexp = "PARTICIPANT|ORGANIZER", message = "Use PARTICIPANT ou ORGANIZER.")
         String requestedRole) {
 
-    /** Quem escolheu "organizador" só abre um pedido: o papel é concedido por um ADMIN (ADR-009). */
+    /** Quem escolheu "organizador" só abre um pedido: o papel é concedido por um ADMIN (DT-11). */
     public boolean wantsOrganizer() {
         return "ORGANIZER".equals(requestedRole);
     }

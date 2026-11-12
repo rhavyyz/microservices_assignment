@@ -1,5 +1,5 @@
 #!/bin/sh
-# Generates the DEVELOPMENT RSA key pair used to sign Access Tokens (ADR-001) in user/.keys (ignored by git).
+# Generates the DEVELOPMENT RSA key pair used to sign Access Tokens (DT-01) in user/.keys (ignored by git).
 # Every replica must use the same private key, so it is generated once and mounted, never per instance.
 # Production keys come from the team's secret management, not from this script.
 set -eu

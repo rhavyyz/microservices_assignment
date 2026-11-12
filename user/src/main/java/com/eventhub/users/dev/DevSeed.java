@@ -21,7 +21,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 /**
- * Organizador de demonstração para desenvolvimento local (ADR-002). DESATIVADO por padrão: só existe quando
+ * Organizador de demonstração para desenvolvimento local (DT-02). DESATIVADO por padrão: só existe quando
  * {@code USERS_DEV_SEED_ENABLED=true}, e as credenciais vêm exclusivamente do ambiente. Não é exposto por HTTP.
  */
 @Component

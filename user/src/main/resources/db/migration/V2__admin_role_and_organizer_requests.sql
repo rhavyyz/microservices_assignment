@@ -1,4 +1,4 @@
--- Papel ADMIN e pedido de organizador (ADR-009).
+-- Papel ADMIN e pedido de organizador (DT-11).
 -- O cadastro público continua criando só PARTICIPANT; quem escolhe "organizador" fica com um pedido PENDING até
 -- um ADMIN decidir. O papel ORGANIZER só entra em user_roles por decisão de um ADMIN.
 

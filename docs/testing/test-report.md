@@ -88,7 +88,7 @@ Sintoma: `GET /reports/events/{id}/summary` e `/activities` respondiam `200`, ma
 
 ---
 
-# Relatório de testes — administração e pedido de organizador (ADR-009)
+# Relatório de testes — administração e pedido de organizador (DT-11)
 
 ## Execução do autor (sandbox Linux, Node 22)
 | Verificação | Resultado |

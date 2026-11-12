@@ -1,4 +1,4 @@
-"""Idempotent creation of the Kafka topics the service uses, before consuming or producing (ADR-005)."""
+"""Idempotent creation of the Kafka topics the service uses, before consuming or producing (DT-05)."""
 
 from confluent_kafka import KafkaError, KafkaException
 from confluent_kafka.admin import AdminClient, NewTopic

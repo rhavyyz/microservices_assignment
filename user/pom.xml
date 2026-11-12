@@ -19,7 +19,7 @@
 
   <properties>
     <java.version>21</java.version>
-    <!-- Linha 3.0.x do springdoc é a que declara suporte ao Spring Boot 4 (ver ADR-004). -->
+    <!-- Linha 3.0.x do springdoc é a que declara suporte ao Spring Boot 4 (ver DT-04). -->
     <springdoc.version>3.0.3</springdoc.version>
     <!-- Lib de descoberta da equipe: service-discoverer/Libs/java (instalada no repositório Maven local). -->
     <discovery.version>0.1.0</discovery.version>

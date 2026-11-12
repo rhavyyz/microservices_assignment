@@ -486,7 +486,7 @@ input[readonly] {
   white-space: nowrap;
 }
 
-/* Cadastro e administração (ADR-009) */
+/* Cadastro e administração (DT-11) */
 .field-group {
   border: 1px solid var(--border, #d5dbe5);
   border-radius: 8px;

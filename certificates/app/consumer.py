@@ -1,4 +1,4 @@
-"""Certificates are created only here, from Subscription's `AttendanceEligible` events (ADR-006).
+"""Certificates are created only here, from Subscription's `AttendanceEligible` events (DT-06).
 
 Delivery is at least once: the offset is committed after processing, and a redelivered event is a
 no-op because a certificate is unique per registration and per (user, event). The event is not trusted

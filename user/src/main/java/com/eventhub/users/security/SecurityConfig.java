@@ -18,7 +18,7 @@ import org.springframework.security.web.SecurityFilterChain;
 
 /**
  * API stateless protegida por Bearer Token (JWT). Sem sessão e sem cookies, logo CSRF não se aplica.
- * CORS não é configurado aqui: o Gateway responde preflights e define os cabeçalhos CORS (ADR-003).
+ * CORS não é configurado aqui: o Gateway responde preflights e define os cabeçalhos CORS (DT-03).
  */
 @Configuration
 @EnableWebSecurity
