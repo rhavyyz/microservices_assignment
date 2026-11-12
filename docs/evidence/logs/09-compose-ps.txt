@@ -1,0 +1,20 @@
+NAME                                            IMAGE                                         COMMAND                   SERVICE              CREATED         STATUS                   PORTS
+microservices_assignment-certificates-1         microservices_assignment-certificates         "sh -c 'python -m ap…"    certificates         2 minutes ago   Up About a minute        8080/tcp
+microservices_assignment-certificates-db-1      postgres:16-alpine                            "docker-entrypoint.s…"    certificates-db      2 minutes ago   Up 2 minutes (healthy)   5432/tcp
+microservices_assignment-certificates-s3-1      chrislusf/seaweedfs:3.97                      "sh -c 'set -eu\n[ -n…"   certificates-s3      2 minutes ago   Up 2 minutes (healthy)   7333/tcp, 8080/tcp, 8333/tcp, 8888/tcp, 9333/tcp, 18080/tcp, 18888/tcp, 19333/tcp
+microservices_assignment-events-1               microservices_assignment-events               "docker-entrypoint.s…"    events               2 minutes ago   Up About a minute        8080/tcp
+microservices_assignment-events-db-1            postgres:16-alpine                            "docker-entrypoint.s…"    events-db            2 minutes ago   Up 2 minutes (healthy)   5432/tcp
+microservices_assignment-gateway-1              microservices_assignment-gateway              "/gateway"                gateway              2 minutes ago   Up 2 minutes             0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp
+microservices_assignment-kafka-1                apache/kafka:3.9.1                            "/__cacert_entrypoin…"    kafka                2 minutes ago   Up 2 minutes (healthy)   9092/tcp
+microservices_assignment-notifications-1        microservices_assignment-notifications        "/notifications"          notifications        2 minutes ago   Up About a minute        8080/tcp
+microservices_assignment-notifications-db-1     mongo:7                                       "docker-entrypoint.s…"    notifications-db     2 minutes ago   Up 2 minutes (healthy)   27017/tcp
+microservices_assignment-payments-1             microservices_assignment-payments             "docker-entrypoint.s…"    payments             2 minutes ago   Up 2 minutes             8080/tcp
+microservices_assignment-payments-db-1          postgres:16-alpine                            "docker-entrypoint.s…"    payments-db          2 minutes ago   Up 2 minutes (healthy)   5432/tcp
+microservices_assignment-reports-1              microservices_assignment-reports              "docker-entrypoint.s…"    reports              2 minutes ago   Up 2 minutes             8080/tcp
+microservices_assignment-reports-db-1           postgres:16-alpine                            "docker-entrypoint.s…"    reports-db           2 minutes ago   Up 2 minutes (healthy)   5432/tcp
+microservices_assignment-service-discoverer-1   microservices_assignment-service-discoverer   "/service-discoverer"     service-discoverer   2 minutes ago   Up 2 minutes             8080/tcp
+microservices_assignment-subscription-1         microservices_assignment-subscription         "python -m app"           subscription         2 minutes ago   Up About a minute        8080/tcp
+microservices_assignment-subscription-db-1      postgres:17-alpine                            "docker-entrypoint.s…"    subscription-db      2 minutes ago   Up 2 minutes (healthy)   5432/tcp
+microservices_assignment-user-1                 microservices_assignment-user                 "java -jar /app/app.…"    user                 2 minutes ago   Up About a minute        8080/tcp
+microservices_assignment-user-db-1              postgres:16-alpine                            "docker-entrypoint.s…"    user-db              2 minutes ago   Up 2 minutes (healthy)   5432/tcp
+docs=200

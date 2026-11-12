@@ -1,0 +1,38 @@
+### A) Pagamento recusado
+{"id":"eddaafd6-2a1b-42da-a3b3-09631ecc2d8e","activity_id":"14c1f87d-2dd0-4d4d-83bb-fab9e9c5612d","user_id":"aaafec94-d243-4fac-8ea3-a63d63f7662f","status":"PENDING_PAYMENT","amount_minor":5000,"currency":"BRL","expires_at":"2026-11-12T17:31:34.004354+00:00","version":2,"created_at":"2026-11-12T17:16:34.004023+00:00","updated_at":"2026-11-12T17:16:34.004785+00:00","event_id":"5ed3c5be-d7da-4532-9d88-a5054ff19a88"}
+{"payment_id":"4e07c290-1fe4-438f-9521-94cb12121d90","registration_id":"eddaafd6-2a1b-42da-a3b3-09631ecc2d8e","user_id":"aaafec94-d243-4fac-8ea3-a63d63f7662f","event_id":"5ed3c5be-d7da-4532-9d88-a5054ff19a88","activity_id":"14c1f87d-2dd0-4d4d-83bb-fab9e9c5612d","amount_minor":5000,"currency":"BRL","status":"PENDING","expires_at":"2026-11-12T17:31:34.045Z","created_at":"2026-11-12T17:16:34.045Z"}
+{"payment_id":"4e07c290-1fe4-438f-9521-94cb12121d90","registration_id":"eddaafd6-2a1b-42da-a3b3-09631ecc2d8e","user_id":"aaafec94-d243-4fac-8ea3-a63d63f7662f","event_id":"5ed3c5be-d7da-4532-9d88-a5054ff19a88","activity_id":"14c1f87d-2dd0-4d4d-83bb-fab9e9c5612d","amount_minor":5000,"currency":"BRL","status":"DECLINED","expires_at":"2026-11-12T17:31:34.045Z","created_at":"2026-11-12T17:16:34.045Z"}
+estado final (esperado REJECTED):
+{"id":"eddaafd6-2a1b-42da-a3b3-09631ecc2d8e","activity_id":"14c1f87d-2dd0-4d4d-83bb-fab9e9c5612d","user_id":"aaafec94-d243-4fac-8ea3-a63d63f7662f","status":"REJECTED","amount_minor":5000,"currency":"BRL","expires_at":null,"version":3,"created_at":"2026-11-12T17:16:34.004023+00:00","updated_at":"2026-11-12T17:16:34.268485+00:00","event_id":"5ed3c5be-d7da-4532-9d88-a5054ff19a88"}
+### B) Eventos indisponível (esperado 503 e nenhuma reserva)
+ Container microservices_assignment-events-1 Stopping 
+ Container microservices_assignment-events-1 Stopped 
+HTTP/1.1 503 Service Unavailable
+Content-Length: 124
+Content-Type: application/problem+json
+Date: Thu, 12 Nov 2026 17:16:37 GMT
+Server: uvicorn
+X-Trace-Id: 7f56580277f93fcd64f394679f6e6a86
+
+{"status":503,"title":"DEPENDENCY_UNAVAILABLE","code":"DEPENDENCY_UNAVAILABLE","traceId":"7f56580277f93fcd64f394679f6e6a86"} Container microservices_assignment-events-db-1 Waiting 
+ Container microservices_assignment-kafka-1 Waiting 
+ Container microservices_assignment-events-db-1 Healthy 
+ Container microservices_assignment-kafka-1 Healthy 
+ Container microservices_assignment-events-1 Starting 
+ Container microservices_assignment-events-1 Started 
+### C) Notificações indisponível (esperado inscrição criada normalmente)
+ Container microservices_assignment-notifications-1 Stopping 
+ Container microservices_assignment-notifications-1 Stopped 
+HTTP/1.1 201 Created
+Content-Length: 378
+Content-Type: application/json
+Date: Thu, 12 Nov 2026 17:16:59 GMT
+Server: uvicorn
+X-Trace-Id: fd0be5eed05d54e0406b8d8e14a95909
+
+{"id":"cf638b58-a2be-4192-98f8-b0281ac6ffe0","activity_id":"246b8896-50ed-4f29-a0b4-a23a7795e8b0","user_id":"91b331e3-abeb-4482-b8ca-0806008aab8b","status":"CONFIRMED","amount_minor":0,"currency":"BRL","expires_at":null,"version":2,"created_at":"2026-11-12T17:16:59.891472+00:00","updated_at":"2026-11-12T17:16:59.892023+00:00","event_id":"5ed3c5be-d7da-4532-9d88-a5054ff19a88"} Container microservices_assignment-notifications-db-1 Waiting 
+ Container microservices_assignment-kafka-1 Waiting 
+ Container microservices_assignment-notifications-db-1 Healthy 
+ Container microservices_assignment-kafka-1 Healthy 
+ Container microservices_assignment-notifications-1 Starting 
+ Container microservices_assignment-notifications-1 Started 

@@ -1,0 +1,31 @@
+## gateway
+go: downloading github.com/twmb/franz-go v1.20.4
+go: downloading go.mongodb.org/mongo-driver/v2 v2.0.1
+go: downloading github.com/golang-jwt/jwt/v5 v5.3.1
+go: downloading github.com/twmb/franz-go/pkg/kadm v1.17.0
+go: downloading github.com/gorilla/websocket v1.5.3
+go: downloading github.com/klauspost/compress v1.18.0
+go: downloading github.com/twmb/franz-go/pkg/kmsg v1.12.0
+go: downloading github.com/pierrec/lz4/v4 v4.1.22
+go: downloading golang.org/x/crypto v0.43.0
+go: downloading github.com/golang/snappy v1.0.0
+go: downloading github.com/xdg-go/scram v1.2.0
+go: downloading github.com/xdg-go/stringprep v1.0.4
+go: downloading github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78
+go: downloading golang.org/x/sync v0.17.0
+go: downloading golang.org/x/text v0.30.0
+ok  	gateway	0.623s
+## notifications
+go: downloading github.com/twmb/franz-go/pkg/kmsg v1.13.1
+go: downloading golang.org/x/crypto v0.48.0
+go: downloading github.com/pierrec/lz4/v4 v4.1.33
+go: downloading github.com/golang/snappy v0.0.4
+go: downloading github.com/xdg-go/scram v1.1.2
+go: downloading golang.org/x/text v0.34.0
+go: downloading golang.org/x/sync v0.19.0
+go: downloading github.com/xdg-go/pbkdf2 v1.0.0
+ok  	notifications	0.113s
+## service-discoverer
+ok  	service-discoverer	10.495s
+## service-discoverer/Libs/go
+ok  	microservices/discovery	0.018s

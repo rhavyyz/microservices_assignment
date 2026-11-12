@@ -1,4 +1,17 @@
-# Relatório de testes — backend de Usuários
+# Relatório de testes
+
+Execução mais recente e completa (todos os serviços, pilha no ar, falhas e concorrência): [`../evidence/resultados.md`](../evidence/resultados.md), de 12/11/2026,
+com logs em `../evidence/logs/`. Este arquivo guarda o histórico detalhado do serviço de Usuários e do frontend.
+
+## Execução 4 — 2026-11-12 (máquina da equipe, Docker Compose)
+- `./mvnw verify` do serviço de Usuários: **BUILD SUCCESS**, 53 testes unitários e 47 de integração, 0 falhas e 0 ignorados. Isso encerra as pendências
+  "re-execução pendente" da Execução 2 e "pendente" da Execução 3 (busca de usuários, administração e pedido de organizador).
+- Frontend: 297 testes, lint, tipos e build limpos.
+- Os itens da seção "Ainda não executado" abaixo (imagem Docker, `docker compose up`, fluxo real pelo Gateway, registro no service-discoverer) **foram
+  executados**: os 18 containers subiram, `scripts/demo-seed.sh` terminou em `CONFIRMED` e as falhas A, B e C se comportaram como esperado. Ficaram sem
+  execução com a pilha: queda do Kafka, espera real do prazo de 900 s e carga/pico.
+
+# Histórico do serviço de Usuários
 
 ## Execução 2 — `./mvnw verify` na máquina da equipe (2026-10-31, 15:00 -03)
 **Ambiente:** Ubuntu 24.04, JDK 21.0.12, Docker 29.9.0 (Server API 1.56), Testcontainers 2.0.5, `postgres:16-alpine` (PostgreSQL 16.15), Spring Boot 4.1.1, Hibernate 7.4.5, Spring Security 7.1.1, springdoc 3.0.3.
@@ -7,7 +20,7 @@
 |---|---|
 | Compilação (30 fontes main, 15 test) | **OK** |
 | `*Test` (surefire, sem Docker) | **26/26 aprovados** (após corrigir a asserção do `iss`, ver abaixo) |
-| `*IT` (failsafe, PostgreSQL real) | **22/23 aprovados; 1 erro no próprio teste** (corrigido, **re-execução pendente**) |
+| `*IT` (failsafe, PostgreSQL real) | **22/23 aprovados; 1 erro no próprio teste** (corrigido e reexecutado na Execução 4) |
 
 Passaram nos `*IT`: `InfraEndpointsIT` (3: healthcheck, `/openapi.json`, JWKS), `MigrationIT` (5), `NoSeedByDefaultIT` (1), `DevSeedIT` (1) e 12 dos 13 de `AuthFlowIT`, incluindo cadastro/duplicidade, campos privilegiados rejeitados, 8 cadastros concorrentes do mesmo e-mail (1 criado e 7 `409`, nenhum `500`), login genérico, perfil próprio, PATCH restrito, `X-Request-Id`, erros sem vazamento e logs sem senha/token.
 
@@ -24,13 +37,13 @@ Na duplicidade de e-mail o Hibernate registrava em WARN `Key (email)=(...) alrea
 - `SpringDoc /openapi.json endpoint is enabled by default`: esperado, pois o Gateway precisa ler esse endpoint; ele não é aberto no Gateway público (nasce privado).
 - Avisos do Mockito/ByteBuddy (agente dinâmico): inofensivos hoje; podem exigir configuração em JDKs futuros.
 
-## Execução 3 — busca de usuários (`GET /api/v1/users`) — **pendente**
+## Execução 3 — busca de usuários (`GET /api/v1/users`) — aprovada na Execução 4
 Código e testes escritos (`UserServiceTest` +3, `UserSpecificationsTest`, `UserSearchIT` com 8 casos, `InfraEndpointsIT` e `AuthFlowIT` ajustados), mas **ainda não executados**. Registrar aqui o resultado do próximo `./mvnw verify`. Pontos de atenção na primeira execução: API de `Specification` do Spring Data JPA 4.x, `like(..., escape)` no PostgreSQL e o tratamento de `MethodArgumentTypeMismatchException`.
 
 ## Execução 1 — sandbox sem Maven Central (2026-10-31, antes da execução 2)
 Verificações parciais, todas aprovadas: migração e 11 cenários de constraint no PostgreSQL 16 (`src/test/sql/constraints.sql`), `PemKeys` com chaves do `openssl` (5 cenários), OpenAPI estático válido (`swagger-parser`), YAML dos composes e scripts. Substituída pela execução 2, que cobre compilação e testes completos.
 
-## Ainda não executado
+## Ainda não executado (atualizado na Execução 4: só o que está listado na seção 'Execução 4')
 - Build da imagem Docker do serviço e `docker compose up` com `user`, `user-db`, discoverer e Gateway.
 - `user/scripts/register-gateway-routes.sh` e o fluxo real pelo Gateway.
 - Registro real no `service-discoverer` (`USERS_DISCOVERY_ENABLED=true`): desativado nos testes.

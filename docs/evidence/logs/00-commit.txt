@@ -1,0 +1,3 @@
+196853c docs: reduz os ADRs do repositório para 3 (decomposição, comunicação, dados), guia de execução, script de dados de demo e modelo de evidências (#36)
+72fcabf feat: papel ADMIN, pedido de organizador e tela de administração (ADR-009) (#35)
+ed37467 feat(frontend): implementação do frontend de login, cadastro, perfil, busca de usuários, catalogo de eventos, detalhes e área de organizador (meus eventos, criar/editar/publicar/cancelar, atividades, participantes e check-in), pagamentos, notificações, relatórios e certificados (#34)

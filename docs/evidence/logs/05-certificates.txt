@@ -1,0 +1,33 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-8.3.5, pluggy-1.7.0
+rootdir: <repo>/certificates
+plugins: anyio-4.16.0
+collected 209 items
+
+tests/integration/test_app.py ..                                         [  0%]
+tests/unit/test_access_log.py ........                                   [  4%]
+tests/unit/test_api.py ..................                                [ 13%]
+tests/unit/test_certificate_repository.py ..                             [ 14%]
+tests/unit/test_certificate_service.py ......                            [ 17%]
+tests/unit/test_consumer.py ............................................ [ 38%]
+.................................                                        [ 54%]
+tests/unit/test_database.py ...                                          [ 55%]
+tests/unit/test_directory.py ..................                          [ 64%]
+tests/unit/test_eligibility.py ...........                               [ 69%]
+tests/unit/test_gateway_declaration.py .                                 [ 69%]
+tests/unit/test_healthcheck.py ...                                       [ 71%]
+tests/unit/test_lifespan.py .                                            [ 71%]
+tests/unit/test_migrate.py .......                                       [ 75%]
+tests/unit/test_pdf_generator.py ...                                     [ 76%]
+tests/unit/test_pending.py ...................                           [ 85%]
+tests/unit/test_s3_storage.py ...............                            [ 92%]
+tests/unit/test_storage.py ........                                      [ 96%]
+tests/unit/test_topics.py .......                                        [100%]
+
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/starlette/testclient.py:37
+  <repo>/certificates/.venv/lib/python3.12/site-packages/starlette/testclient.py:37: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = typing.Callable[[], typing.ContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 209 passed, 1 warning in 5.43s ========================

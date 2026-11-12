@@ -88,8 +88,8 @@ cd frontend && cp .env.example .env && npm ci && npm run dev    # http://localho
 | Frontend | `cd frontend && npm run lint && npm run typecheck && npm run test:run && npm run build` | sem Docker |
 | Usuários | `(cd service-discoverer/Libs/java && mvn -q install -DskipTests) && cd user && ./mvnw verify` | `*IT` precisam de Docker |
 | Eventos, Pagamentos, Relatórios | `cd <serviço> && npm ci && npm test` | `node:test` |
-| Inscrições | `cd subscription && python -m pytest -q && ruff check app tests scripts` | PostgreSQL de teste, veja o README |
-| Certificados | `cd certificates && python -m pytest` | |
+| Inscrições | `cd subscription && python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.lock ../service-discoverer/Libs/python "httpx>=0.28,<1" pytest ruff && TEST_DATABASE_URL=postgresql://postgres:test@localhost:55432/subscription_test python -m pytest -v && ruff check app tests scripts` | precisa de um PostgreSQL de teste (`docker run -d --name pgtest -e POSTGRES_PASSWORD=test -e POSTGRES_DB=subscription_test -p 55432:5432 postgres:16`). Sem `TEST_DATABASE_URL` os testes de concorrência são ignorados |
+| Certificados | `cd certificates && python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt ../service-discoverer/Libs/python pytest && PYTHONPATH=$PWD python -m pytest` | |
 | Gateway, Notificações, service-discoverer | `cd <pasta> && go test ./...` | |
 
 ## 6. Documentação das APIs

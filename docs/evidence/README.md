@@ -18,11 +18,11 @@ estão em [`docs/testing/`](../testing/). Aqui ficam as evidências de execuçã
 | 9 | Capturas de tela | veja abaixo | `screenshots/` |
 | 10 | Cenários alternativos | tabela da seção 3 de `docs/running.md`, com o `curl` e a resposta de cada um | `cenarios-alternativos.md` |
 
-### Capturas de tela sugeridas (`screenshots/`)
+### Capturas de tela (`capturas/`)
 
-`01-catalogo.png`, `02-cadastro-organizador.png`, `03-admin-aprova.png`, `04-criar-evento.png`, `05-inscricao-pendente.png`,
-`06-pagamento-simulado.png`, `07-inscricao-confirmada.png`, `08-notificacao.png`, `09-relatorio-evento.png`, `10-certificado.png`,
-`11-swagger-gateway.png`.
+`01-catalogo`, `02-cadastro-de-organizador`, `03-admin-aprova`, `04-criar-evento`, `05-criar-atividade`, `06-inscricao-pendente`, `07-evento-publicado`,
+`08-relatorio-evento`, `09-participantes-evento`, `10-pagamento-simulado`, `11-notificacao`, `12-swagger-gateway` (todas `.png`; as longas em partes `-pt-1`, `-pt-2`).
+Use só contas de demonstração (`@example.test`): não mostre e-mails ou nomes reais, nem a barra de favoritos do navegador.
 
 ## Cuidados antes de commitar
 
@@ -35,4 +35,4 @@ Preencha ao anexar as evidências.
 
 | Data | Quem | Commit | Resultado | Observações |
 |---|---|---|---|---|
-| | | | | |
+| 12/11/2026 | equipe | `196853c` | Todos os testes passaram, fluxo pago e falhas A, B e C conforme o esperado | veja [`resultados.md`](resultados.md) e `logs/` |

@@ -1,0 +1,157 @@
+notifications-1  | 2026/11/12 17:10:31 notifications listening on :8080
+notifications-1  | 2026/11/12 17:10:31 registered with the service-discoverer
+notifications-1  | 2026/11/12 17:10:31 consuming topic notifications as group notifications-service
+notifications-1  | 2026/11/12 17:10:40 GET /openapi.json status=200 duration=175.581µs user=- trace_id=1876498de5362baa3da2983a63582988
+notifications-1  | 2026/11/12 17:10:40 GET /openapi.json status=200 duration=122.92µs user=- trace_id=aa05788e5727109cff897ddf6c2bbb3f
+notifications-1  | 2026/11/12 17:16:00 GET /openapi.json status=200 duration=214.133µs user=- trace_id=81d53f9a4f28a201fde5d840c0d10df5
+notifications-1  | 2026/11/12 17:17:00 notifications listening on :8080
+notifications-1  | 2026/11/12 17:17:00 registered with the service-discoverer
+notifications-1  | 2026/11/12 17:17:00 consuming topic notifications as group notifications-service
+notifications-1  | 2026/11/12 17:21:00 GET /openapi.json status=200 duration=335.168µs user=- trace_id=ef155802b7cad09a18411fcf8d91c92e
+subscription-1   | INFO:     Started server process [1]
+subscription-1   | INFO:     Waiting for application startup.
+subscription-1   | INFO:     Application startup complete.
+events-1         | {"level":30,"time":1794503431548,"pid":1,"hostname":"35c0911475e1","msg":"Server listening at http://127.0.0.1:8080"}
+events-1         | {"level":30,"time":1794503431549,"pid":1,"hostname":"35c0911475e1","msg":"Server listening at http://172.23.0.3:8080"}
+events-1         | {"level":30,"time":1794503431549,"pid":1,"hostname":"35c0911475e1","msg":"Server listening at http://172.24.0.9:8080"}
+events-1         | {"level":30,"time":1794503431578,"pid":1,"hostname":"35c0911475e1","msg":"registered in the service-discoverer"}
+events-1         | {"level":"ERROR","timestamp":"2026-11-12T17:10:31.674Z","logger":"kafkajs","message":"[Connection] Response CreateTopics(key: 19, version: 3)","broker":"kafka:9092","clientId":"events","error":"Topic creation errors","correlationId":2,"size":68}
+events-1         | {"level":30,"time":1794503440386,"pid":1,"hostname":"35c0911475e1","traceId":"19442e58-45cf-48e5-a865-0a8a3948aa87","req":{"method":"GET","url":"/openapi.json"},"res":{"statusCode":200},"responseTime":8.019175999999788,"msg":"request completed"}
+events-1         | {"level":30,"time":1794503440386,"pid":1,"hostname":"35c0911475e1","traceId":"e5480421-1ef9-4a93-8e7d-4015cfc1cffd","req":{"method":"GET","url":"/openapi.json"},"res":{"statusCode":200},"responseTime":0.43581000000085623,"msg":"request completed"}
+events-1         | {"level":30,"time":1794503617671,"pid":1,"hostname":"35c0911475e1","audit":true,"operation":"EVENT_CREATE","user_id":"d816d6fc-7241-4797-8036-370307d1dbe0","trace_id":"48e54e6e794f01d599c9c7122a12917d","event_id":"5ed3c5be-d7da-4532-9d88-a5054ff19a88","result":"SUCCESS","msg":"audit"}
+events-1         | {"level":30,"time":1794503617673,"pid":1,"hostname":"35c0911475e1","traceId":"48e54e6e794f01d599c9c7122a12917d","userId":"d816d6fc-7241-4797-8036-370307d1dbe0","req":{"method":"POST","url":"/api/v1/events"},"res":{"statusCode":201},"responseTime":6.307854000013322,"msg":"request completed"}
+events-1         | {"level":30,"time":1794503617690,"pid":1,"hostname":"35c0911475e1","audit":true,"operation":"ACTIVITY_CREATE","user_id":"d816d6fc-7241-4797-8036-370307d1dbe0","trace_id":"03fc1873f10d477469e472bb8ba8ff58","event_id":"5ed3c5be-d7da-4532-9d88-a5054ff19a88","activity_id":"14c1f87d-2dd0-4d4d-83bb-fab9e9c5612d","result":"SUCCESS","msg":"audit"}
+events-1         | {"level":30,"time":1794503617691,"pid":1,"hostname":"35c0911475e1","traceId":"03fc1873f10d477469e472bb8ba8ff58","userId":"d816d6fc-7241-4797-8036-370307d1dbe0","req":{"method":"POST","url":"/api/v1/events/5ed3c5be-d7da-4532-9d88-a5054ff19a88/activities"},"res":{"statusCode":201},"responseTime":5.516903000010643,"msg":"request completed"}
+subscription-1   | INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+subscription-1   | 2026-11-12 17:10:32,105 INFO app.workers kafka_topics_ready
+subscription-1   | %4|1794503432.778|GETPID|rdkafka#producer-2| [thrd:main]: Failed to acquire idempotence PID from broker kafka:9092/1: Broker: Coordinator load in progress: retrying
+subscription-1   | 2026-11-12 17:10:40,406 INFO app.access GET /openapi.json status=200 duration=4ms user=- trace_id=68efde29-effd-4622-be6c-ecdd3d93ecc7
+subscription-1   | 2026-11-12 17:10:40,406 INFO app.access GET /openapi.json status=200 duration=4ms user=- trace_id=6a6de854-46a9-43b1-a0e0-e7086f141f7f
+subscription-1   | 2026-11-12 17:13:37,978 INFO app.access POST /api/v1/activities/14c1f87d-2dd0-4d4d-83bb-fab9e9c5612d/registrations status=201 duration=14ms user=91b331e3-abeb-4482-b8ca-0806008aab8b trace_id=a9d1762cded9164258657153dbd2cbc4
+subscription-1   | 2026-11-12 17:13:38,039 INFO app.access GET /internal/registrations/d150f1c4-3b7c-48c7-ad84-0a5058220eb6 status=200 duration=1ms user=- trace_id=4d2d37ba1fc35bcf6d46310f599754be
+subscription-1   | 2026-11-12 17:13:38,088 INFO app.access GET /api/v1/registrations/d150f1c4-3b7c-48c7-ad84-0a5058220eb6 status=200 duration=1ms user=91b331e3-abeb-4482-b8ca-0806008aab8b trace_id=4f6041917cb6ded308193594e4e1bbf0
+subscription-1   | 2026-11-12 17:13:39,109 INFO app.access GET /api/v1/registrations/d150f1c4-3b7c-48c7-ad84-0a5058220eb6 status=200 duration=1ms user=91b331e3-abeb-4482-b8ca-0806008aab8b trace_id=0aaba5e23c9d804aa08ca1d83449338e
+subscription-1   | 2026-11-12 17:16:00,878 INFO app.access GET /openapi.json status=200 duration=0ms user=- trace_id=7c650894-2690-495e-83cd-0721dab41723
+subscription-1   | 2026-11-12 17:16:34,006 INFO app.access POST /api/v1/activities/14c1f87d-2dd0-4d4d-83bb-fab9e9c5612d/registrations status=201 duration=12ms user=aaafec94-d243-4fac-8ea3-a63d63f7662f trace_id=2e5641bb99c6432a47e8bdb9700fb982
+subscription-1   | 2026-11-12 17:16:34,044 INFO app.access GET /internal/registrations/eddaafd6-2a1b-42da-a3b3-09631ecc2d8e status=200 duration=1ms user=- trace_id=5b182eb0dcefd5d2c6139257fc2394ef
+subscription-1   | 2026-11-12 17:16:37,090 INFO app.access GET /api/v1/registrations/eddaafd6-2a1b-42da-a3b3-09631ecc2d8e status=200 duration=1ms user=aaafec94-d243-4fac-8ea3-a63d63f7662f trace_id=d3face42e7273256656c5a3c4b57d4fd
+subscription-1   | 2026-11-12 17:16:38,835 INFO app.access POST /api/v1/activities/246b8896-50ed-4f29-a0b4-a23a7795e8b0/registrations status=503 duration=1209ms user=aaafec94-d243-4fac-8ea3-a63d63f7662f trace_id=7f56580277f93fcd64f394679f6e6a86
+subscription-1   | 2026-11-12 17:16:59,894 INFO app.access POST /api/v1/activities/246b8896-50ed-4f29-a0b4-a23a7795e8b0/registrations status=201 duration=21ms user=91b331e3-abeb-4482-b8ca-0806008aab8b trace_id=fd0be5eed05d54e0406b8d8e14a95909
+subscription-1   | 2026-11-12 17:21:00,890 INFO app.access GET /openapi.json status=200 duration=0ms user=- trace_id=1a7d31a9-ae7c-45ff-b43d-4d27d5ee0a74
+events-1         | {"level":30,"time":1794503617705,"pid":1,"hostname":"35c0911475e1","audit":true,"operation":"ACTIVITY_CREATE","user_id":"d816d6fc-7241-4797-8036-370307d1dbe0","trace_id":"d5b0e32505f935b70117ad1b1bfe7140","event_id":"5ed3c5be-d7da-4532-9d88-a5054ff19a88","activity_id":"246b8896-50ed-4f29-a0b4-a23a7795e8b0","result":"SUCCESS","msg":"audit"}
+events-1         | {"level":30,"time":1794503617706,"pid":1,"hostname":"35c0911475e1","traceId":"d5b0e32505f935b70117ad1b1bfe7140","userId":"d816d6fc-7241-4797-8036-370307d1dbe0","req":{"method":"POST","url":"/api/v1/events/5ed3c5be-d7da-4532-9d88-a5054ff19a88/activities"},"res":{"statusCode":201},"responseTime":2.940387999988161,"msg":"request completed"}
+events-1         | {"level":30,"time":1794503617724,"pid":1,"hostname":"35c0911475e1","audit":true,"operation":"EVENT_PUBLISH","user_id":"d816d6fc-7241-4797-8036-370307d1dbe0","trace_id":"60de0c19e08eb5adeb5c0d07e5d4d606","event_id":"5ed3c5be-d7da-4532-9d88-a5054ff19a88","result":"SUCCESS","msg":"audit"}
+events-1         | {"level":30,"time":1794503617725,"pid":1,"hostname":"35c0911475e1","traceId":"60de0c19e08eb5adeb5c0d07e5d4d606","userId":"d816d6fc-7241-4797-8036-370307d1dbe0","req":{"method":"POST","url":"/api/v1/events/5ed3c5be-d7da-4532-9d88-a5054ff19a88/publish"},"res":{"statusCode":200},"responseTime":3.435213000018848,"msg":"request completed"}
+events-1         | {"level":"WARN","timestamp":"2026-11-12T17:13:37.916Z","logger":"kafkajs","message":"KafkaJS v2.0.0 switched default partitioner. To retain the same partitioning behavior as in previous versions, create the producer with the option \"createPartitioner: Partitioners.LegacyPartitioner\". See the migration guide at https://kafka.js.org/docs/migration-guide-v2.0.0#producer-new-default-partitioner for details. Silence this warning by setting the environment variable \"KAFKAJS_NO_PARTITIONER_WARNING=1\""}
+events-1         | {"level":30,"time":1794503617972,"pid":1,"hostname":"35c0911475e1","traceId":"a9d1762cded9164258657153dbd2cbc4","userId":"91b331e3-abeb-4482-b8ca-0806008aab8b","req":{"method":"GET","url":"/api/v1/activities/14c1f87d-2dd0-4d4d-83bb-fab9e9c5612d"},"res":{"statusCode":200},"responseTime":1.9752509999962058,"msg":"request completed"}
+events-1         | {"level":30,"time":1794503760875,"pid":1,"hostname":"35c0911475e1","traceId":"38c1735c-12ac-4c5d-8b42-b1af9fef7a97","req":{"method":"GET","url":"/openapi.json"},"res":{"statusCode":200},"responseTime":0.3252509999438189,"msg":"request completed"}
+events-1         | {"level":30,"time":1794503794000,"pid":1,"hostname":"35c0911475e1","traceId":"2e5641bb99c6432a47e8bdb9700fb982","userId":"aaafec94-d243-4fac-8ea3-a63d63f7662f","req":{"method":"GET","url":"/api/v1/activities/14c1f87d-2dd0-4d4d-83bb-fab9e9c5612d"},"res":{"statusCode":200},"responseTime":2.110603000037372,"msg":"request completed"}
+events-1         | {"level":30,"time":1794503800040,"pid":1,"hostname":"35c0911475e1","msg":"Server listening at http://127.0.0.1:8080"}
+events-1         | {"level":30,"time":1794503800040,"pid":1,"hostname":"35c0911475e1","msg":"Server listening at http://172.23.0.3:8080"}
+events-1         | {"level":30,"time":1794503800040,"pid":1,"hostname":"35c0911475e1","msg":"Server listening at http://172.24.0.9:8080"}
+events-1         | {"level":30,"time":1794503800064,"pid":1,"hostname":"35c0911475e1","msg":"registered in the service-discoverer"}
+events-1         | {"level":"ERROR","timestamp":"2026-11-12T17:16:40.109Z","logger":"kafkajs","message":"[Connection] Response CreateTopics(key: 19, version: 3)","broker":"kafka:9092","clientId":"events","error":"Topic creation errors","correlationId":2,"size":68}
+events-1         | {"level":30,"time":1794503819888,"pid":1,"hostname":"35c0911475e1","traceId":"fd0be5eed05d54e0406b8d8e14a95909","userId":"91b331e3-abeb-4482-b8ca-0806008aab8b","req":{"method":"GET","url":"/api/v1/activities/246b8896-50ed-4f29-a0b4-a23a7795e8b0"},"res":{"statusCode":200},"responseTime":3.350146999997378,"msg":"request completed"}
+events-1         | {"level":30,"time":1794504060886,"pid":1,"hostname":"35c0911475e1","traceId":"20791117-8961-4c28-a82d-936d1569233c","req":{"method":"GET","url":"/openapi.json"},"res":{"statusCode":200},"responseTime":11.484839000011561,"msg":"request completed"}
+payments-1       | {"level":30,"time":1794503425699,"pid":1,"hostname":"46a4dde1c561","msg":"Server listening at http://127.0.0.1:8080"}
+payments-1       | {"level":30,"time":1794503425699,"pid":1,"hostname":"46a4dde1c561","msg":"Server listening at http://172.24.0.5:8080"}
+payments-1       | {"level":30,"time":1794503425699,"pid":1,"hostname":"46a4dde1c561","msg":"Server listening at http://172.27.0.3:8080"}
+payments-1       | {"level":40,"time":1794503425737,"pid":1,"hostname":"46a4dde1c561","err":"connect ECONNREFUSED 172.27.0.2:5432","msg":"migrate failed; retrying in 1000ms"}
+payments-1       | {"level":30,"time":1794503425752,"pid":1,"hostname":"46a4dde1c561","msg":"registered in the service-discoverer"}
+payments-1       | {"level":"ERROR","timestamp":"2026-11-12T17:10:26.830Z","logger":"kafkajs","message":"[Connection] Connection error: connect ECONNREFUSED 172.24.0.3:9092","broker":"kafka:9092","clientId":"payments","stack":"Error: connect ECONNREFUSED 172.24.0.3:9092\n    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1638:16)"}
+payments-1       | {"level":"ERROR","timestamp":"2026-11-12T17:10:26.831Z","logger":"kafkajs","message":"[BrokerPool] Failed to connect to seed broker, trying another broker from the list: Connection error: connect ECONNREFUSED 172.24.0.3:9092","retryCount":0,"retryTime":245}
+payments-1       | {"level":"ERROR","timestamp":"2026-11-12T17:10:27.078Z","logger":"kafkajs","message":"[Connection] Connection error: connect ECONNREFUSED 172.24.0.3:9092","broker":"kafka:9092","clientId":"payments","stack":"Error: connect ECONNREFUSED 172.24.0.3:9092\n    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1638:16)"}
+payments-1       | {"level":"ERROR","timestamp":"2026-11-12T17:10:27.079Z","logger":"kafkajs","message":"[BrokerPool] Failed to connect to seed broker, trying another broker from the list: Connection error: connect ECONNREFUSED 172.24.0.3:9092","retryCount":1,"retryTime":544}
+payments-1       | {"level":"ERROR","timestamp":"2026-11-12T17:10:27.625Z","logger":"kafkajs","message":"[Connection] Connection error: connect ECONNREFUSED 172.24.0.3:9092","broker":"kafka:9092","clientId":"payments","stack":"Error: connect ECONNREFUSED 172.24.0.3:9092\n    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1638:16)"}
+payments-1       | {"level":"ERROR","timestamp":"2026-11-12T17:10:27.625Z","logger":"kafkajs","message":"[BrokerPool] Failed to connect to seed broker, trying another broker from the list: Connection error: connect ECONNREFUSED 172.24.0.3:9092","retryCount":2,"retryTime":996}
+gateway-1        | 2026/11/12 17:10:25 gateway listening on :8080
+gateway-1        | 2026/11/12 17:10:25 jwks refresh failed: consult user failed: 503 no healthy instance available (no healthy instance available)
+gateway-1        | 2026/11/12 17:10:25 docs certificates failed: consult certificates failed: 503 no healthy instance available (no healthy instance available)
+gateway-1        | 2026/11/12 17:10:25 docs events failed: consult events failed: 503 no healthy instance available (no healthy instance available)
+gateway-1        | 2026/11/12 17:10:25 docs subscription failed: consult subscription failed: 503 no healthy instance available (no healthy instance available)
+gateway-1        | 2026/11/12 17:10:25 docs payments failed: consult payments failed: 503 no healthy instance available (no healthy instance available)
+gateway-1        | 2026/11/12 17:10:25 ensuring push topic notifications-push: unable to dial: dial tcp 172.24.0.3:9092: connect: connection refused
+gateway-1        | 2026/11/12 17:10:25 docs user failed: consult user failed: 503 no healthy instance available (no healthy instance available)
+gateway-1        | 2026/11/12 17:10:25 docs notifications failed: consult notifications failed: 503 no healthy instance available (no healthy instance available)
+gateway-1        | 2026/11/12 17:10:25 docs reports failed: consult reports failed: 503 no healthy instance available (no healthy instance available)
+gateway-1        | 2026/11/12 17:10:25 docs: retrying [certificates events subscription payments user notifications reports] in 5s
+gateway-1        | 2026/11/12 17:10:25 sync certificates failed: consult certificates failed: 503 no healthy instance available (no healthy instance available)
+gateway-1        | 2026/11/12 17:10:25 sync events failed: consult events failed: 503 no healthy instance available (no healthy instance available)
+payments-1       | {"level":"WARN","timestamp":"2026-11-12T17:10:28.822Z","logger":"kafkajs","message":"KafkaJS v2.0.0 switched default partitioner. To retain the same partitioning behavior as in previous versions, create the producer with the option \"createPartitioner: Partitioners.LegacyPartitioner\". See the migration guide at https://kafka.js.org/docs/migration-guide-v2.0.0#producer-new-default-partitioner for details. Silence this warning by setting the environment variable \"KAFKAJS_NO_PARTITIONER_WARNING=1\""}
+gateway-1        | 2026/11/12 17:10:25 sync subscription failed: consult subscription failed: 503 no healthy instance available (no healthy instance available)
+gateway-1        | 2026/11/12 17:10:25 sync payments failed: consult payments failed: 503 no healthy instance available (no healthy instance available)
+gateway-1        | 2026/11/12 17:10:25 sync user failed: consult user failed: 503 no healthy instance available (no healthy instance available)
+gateway-1        | 2026/11/12 17:10:25 sync notifications failed: consult notifications failed: 503 no healthy instance available (no healthy instance available)
+payments-1       | {"level":"ERROR","timestamp":"2026-11-12T17:10:28.841Z","logger":"kafkajs","message":"[Connection] Response GroupCoordinator(key: 10, version: 2)","broker":"kafka:9092","clientId":"payments","error":"The group coordinator is not available","correlationId":2,"size":55}
+gateway-1        | 2026/11/12 17:10:25 sync reports failed: consult reports failed: 503 no healthy instance available (no healthy instance available)
+payments-1       | {"level":30,"time":1794503430342,"pid":1,"hostname":"46a4dde1c561","traceId":"67f1d555-b599-4d78-97cf-ec9559622601","req":{"method":"GET","url":"/openapi.json"},"res":{"statusCode":200},"responseTime":7.500184999999874,"msg":"request completed"}
+payments-1       | {"level":30,"time":1794503430345,"pid":1,"hostname":"46a4dde1c561","traceId":"6883dcc6-15e7-4498-8e04-05cb52fcd4fe","req":{"method":"GET","url":"/openapi.json"},"res":{"statusCode":200},"responseTime":0.8320889999995416,"msg":"request completed"}
+payments-1       | {"level":30,"time":1794503618045,"pid":1,"hostname":"46a4dde1c561","traceId":"4d2d37ba1fc35bcf6d46310f599754be","userId":"91b331e3-abeb-4482-b8ca-0806008aab8b","req":{"method":"POST","url":"/payments"},"res":{"statusCode":201},"responseTime":18.15083999998751,"msg":"request completed"}
+payments-1       | {"level":30,"time":1794503618077,"pid":1,"hostname":"46a4dde1c561","traceId":"9ba3270377d99e758d2bf52b8660df1e","userId":"91b331e3-abeb-4482-b8ca-0806008aab8b","req":{"method":"POST","url":"/payments/b68869e5-2840-4bb6-8c3c-96b4c4279035/simulate"},"res":{"statusCode":200},"responseTime":4.7810540000209585,"msg":"request completed"}
+payments-1       | {"level":30,"time":1794503618348,"pid":1,"hostname":"46a4dde1c561","published":3,"msg":"outbox published"}
+payments-1       | {"level":30,"time":1794503760881,"pid":1,"hostname":"46a4dde1c561","traceId":"4053ed74-fa77-45ac-b8eb-f7ec9823a618","req":{"method":"GET","url":"/openapi.json"},"res":{"statusCode":200},"responseTime":0.2940309999976307,"msg":"request completed"}
+payments-1       | {"level":30,"time":1794503794048,"pid":1,"hostname":"46a4dde1c561","traceId":"5b182eb0dcefd5d2c6139257fc2394ef","userId":"aaafec94-d243-4fac-8ea3-a63d63f7662f","req":{"method":"POST","url":"/payments"},"res":{"statusCode":201},"responseTime":11.745347000018228,"msg":"request completed"}
+payments-1       | {"level":30,"time":1794503794080,"pid":1,"hostname":"46a4dde1c561","traceId":"a2ea9913ad3dc6e6265dc4d8bd0b4a00","userId":"aaafec94-d243-4fac-8ea3-a63d63f7662f","req":{"method":"POST","url":"/payments/4e07c290-1fe4-438f-9521-94cb12121d90/simulate"},"res":{"statusCode":200},"responseTime":2.9374550000065938,"msg":"request completed"}
+payments-1       | {"level":30,"time":1794503794265,"pid":1,"hostname":"46a4dde1c561","published":3,"msg":"outbox published"}
+payments-1       | {"level":30,"time":1794504060893,"pid":1,"hostname":"46a4dde1c561","traceId":"b48f4f3b-70c8-4500-97cc-76a8e5ec5676","req":{"method":"GET","url":"/openapi.json"},"res":{"statusCode":200},"responseTime":0.3096069999737665,"msg":"request completed"}
+gateway-1        | 2026/11/12 17:10:25 sync: retrying [certificates events subscription payments user notifications reports] in 5s
+gateway-1        | 2026/11/12 17:10:28 push topic notifications-push ready
+gateway-1        | 2026/11/12 17:10:28 consuming push topic notifications-push
+gateway-1        | 2026/11/12 17:10:30 docs certificates failed: consult certificates failed: 503 no healthy instance available (no healthy instance available)
+gateway-1        | 2026/11/12 17:10:30 docs events failed: consult events failed: 503 no healthy instance available (no healthy instance available)
+gateway-1        | 2026/11/12 17:10:30 docs subscription failed: consult subscription failed: 503 no healthy instance available (no healthy instance available)
+gateway-1        | 2026/11/12 17:10:30 sync certificates failed: consult certificates failed: 503 no healthy instance available (no healthy instance available)
+gateway-1        | 2026/11/12 17:10:30 sync events failed: consult events failed: 503 no healthy instance available (no healthy instance available)
+gateway-1        | 2026/11/12 17:10:30 sync subscription failed: consult subscription failed: 503 no healthy instance available (no healthy instance available)
+gateway-1        | 2026/11/12 17:10:30 docs user failed: consult user failed: 503 no healthy instance available (no healthy instance available)
+gateway-1        | 2026/11/12 17:10:30 docs notifications failed: consult notifications failed: 503 no healthy instance available (no healthy instance available)
+gateway-1        | 2026/11/12 17:10:30 sync payments: 5 of 5 endpoints declare x-gateway
+gateway-1        | 2026/11/12 17:10:30 sync payments: 5 endpoints added, 0 removed
+gateway-1        | 2026/11/12 17:10:30 sync user failed: consult user failed: 503 no healthy instance available (no healthy instance available)
+gateway-1        | 2026/11/12 17:10:30 sync notifications failed: consult notifications failed: 503 no healthy instance available (no healthy instance available)
+gateway-1        | 2026/11/12 17:10:30 docs: retrying [certificates events subscription user notifications] in 10s
+gateway-1        | 2026/11/12 17:10:30 sync reports: 7 of 7 endpoints declare x-gateway
+gateway-1        | 2026/11/12 17:10:30 sync reports: 7 endpoints added, 0 removed
+gateway-1        | 2026/11/12 17:10:30 sync: retrying [certificates events subscription user notifications] in 10s
+gateway-1        | 2026/11/12 17:10:40 docs certificates failed: consult certificates failed: 503 no healthy instance available (no healthy instance available)
+gateway-1        | 2026/11/12 17:10:40 sync certificates failed: consult certificates failed: 503 no healthy instance available (no healthy instance available)
+gateway-1        | 2026/11/12 17:10:40 sync events: 14 of 14 endpoints declare x-gateway
+gateway-1        | 2026/11/12 17:10:40 sync events: 14 endpoints added, 0 removed
+gateway-1        | 2026/11/12 17:10:40 sync subscription: 9 of 9 endpoints declare x-gateway
+gateway-1        | 2026/11/12 17:10:40 sync subscription: 9 endpoints added, 0 removed
+gateway-1        | 2026/11/12 17:10:40 docs: retrying [certificates] in 20s
+gateway-1        | 2026/11/12 17:10:40 sync user: 9 of 9 endpoints declare x-gateway
+gateway-1        | 2026/11/12 17:10:40 sync user: 9 endpoints added, 0 removed
+gateway-1        | 2026/11/12 17:10:40 sync notifications: 3 of 3 endpoints declare x-gateway
+gateway-1        | 2026/11/12 17:10:40 sync notifications: 3 endpoints added, 0 removed
+gateway-1        | 2026/11/12 17:10:40 sync: retrying [certificates] in 20s
+gateway-1        | 2026/11/12 17:11:00 docs: all specs fetched
+gateway-1        | 2026/11/12 17:11:00 sync certificates: 3 of 3 endpoints declare x-gateway
+gateway-1        | 2026/11/12 17:11:00 sync certificates: 3 endpoints added, 0 removed
+gateway-1        | 2026/11/12 17:11:00 sync: all kinds synced
+gateway-1        | 2026/11/12 17:12:53 GET /docs kind=docs status=200 duration=143.874µs user=- trace_id=f5de0d69dedc78c8abd7b45a058ad166
+gateway-1        | 2026/11/12 17:13:36 POST /user/api/v1/auth/register kind=user status=201 duration=290.229694ms user=- trace_id=599c4d53499b3d678d2ce8e7934e7482
+gateway-1        | 2026/11/12 17:13:37 POST /user/api/v1/auth/register kind=user status=201 duration=218.638542ms user=- trace_id=b65e0e6bacbc41bd05c9234d9cb4957a
+gateway-1        | 2026/11/12 17:13:37 POST /user/api/v1/auth/login kind=user status=200 duration=267.416949ms user=- trace_id=bb9e1db981b8828f0963eeaa9a08a643
+gateway-1        | 2026/11/12 17:13:37 GET /user/api/v1/admin/users kind=user status=200 duration=52.016876ms user=f2829cc3-46b3-44ef-8086-5a034c5e9edf trace_id=f8b189b894f69184b6f90340c69cf5cc
+gateway-1        | 2026/11/12 17:13:37 PUT /user/api/v1/admin/users/d816d6fc-7241-4797-8036-370307d1dbe0/organizer kind=user status=200 duration=21.064618ms user=f2829cc3-46b3-44ef-8086-5a034c5e9edf trace_id=1b43f5b2565b689188b7e608dd708d80
+gateway-1        | 2026/11/12 17:13:37 POST /user/api/v1/auth/login kind=user status=200 duration=223.771527ms user=- trace_id=bfa1eed6321e523acb8e982b1b449468
+gateway-1        | 2026/11/12 17:13:37 POST /events/api/v1/events kind=events status=201 duration=9.68035ms user=d816d6fc-7241-4797-8036-370307d1dbe0 trace_id=48e54e6e794f01d599c9c7122a12917d
+gateway-1        | 2026/11/12 17:13:37 POST /events/api/v1/events/5ed3c5be-d7da-4532-9d88-a5054ff19a88/activities kind=events status=201 duration=6.545315ms user=d816d6fc-7241-4797-8036-370307d1dbe0 trace_id=03fc1873f10d477469e472bb8ba8ff58
+gateway-1        | 2026/11/12 17:13:37 POST /events/api/v1/events/5ed3c5be-d7da-4532-9d88-a5054ff19a88/activities kind=events status=201 duration=3.548077ms user=d816d6fc-7241-4797-8036-370307d1dbe0 trace_id=d5b0e32505f935b70117ad1b1bfe7140
+gateway-1        | 2026/11/12 17:13:37 POST /events/api/v1/events/5ed3c5be-d7da-4532-9d88-a5054ff19a88/publish kind=events status=200 duration=4.205772ms user=d816d6fc-7241-4797-8036-370307d1dbe0 trace_id=60de0c19e08eb5adeb5c0d07e5d4d606
+gateway-1        | 2026/11/12 17:13:37 POST /user/api/v1/auth/login kind=user status=200 duration=217.077101ms user=- trace_id=c4a3545221dabe8c83d3a5efd531357e
+gateway-1        | 2026/11/12 17:13:37 POST /subscription/api/v1/activities/14c1f87d-2dd0-4d4d-83bb-fab9e9c5612d/registrations kind=subscription status=201 duration=18.012555ms user=91b331e3-abeb-4482-b8ca-0806008aab8b trace_id=a9d1762cded9164258657153dbd2cbc4
+gateway-1        | 2026/11/12 17:13:38 POST /payments/payments kind=payments status=201 duration=21.645ms user=91b331e3-abeb-4482-b8ca-0806008aab8b trace_id=4d2d37ba1fc35bcf6d46310f599754be
+gateway-1        | 2026/11/12 17:13:38 POST /payments/payments/b68869e5-2840-4bb6-8c3c-96b4c4279035/simulate kind=payments status=200 duration=5.717766ms user=91b331e3-abeb-4482-b8ca-0806008aab8b trace_id=9ba3270377d99e758d2bf52b8660df1e
+gateway-1        | 2026/11/12 17:13:38 GET /subscription/api/v1/registrations/d150f1c4-3b7c-48c7-ad84-0a5058220eb6 kind=subscription status=200 duration=2.478527ms user=91b331e3-abeb-4482-b8ca-0806008aab8b trace_id=4f6041917cb6ded308193594e4e1bbf0
+gateway-1        | 2026/11/12 17:13:39 GET /subscription/api/v1/registrations/d150f1c4-3b7c-48c7-ad84-0a5058220eb6 kind=subscription status=200 duration=2.405334ms user=91b331e3-abeb-4482-b8ca-0806008aab8b trace_id=0aaba5e23c9d804aa08ca1d83449338e
+gateway-1        | 2026/11/12 17:16:33 POST /user/api/v1/auth/register kind=user status=201 duration=220.630974ms user=- trace_id=71d92cd06ab4dbaf8f187e7650577109
+gateway-1        | 2026/11/12 17:16:33 POST /user/api/v1/auth/login kind=user status=200 duration=216.946008ms user=- trace_id=60ec3f08d463feeeaca5b1634b42fae6
+gateway-1        | 2026/11/12 17:16:33 POST /user/api/v1/auth/login kind=user status=200 duration=216.72985ms user=- trace_id=854f52ab9e109a6f761921180f748ed0
+gateway-1        | 2026/11/12 17:16:34 POST /subscription/api/v1/activities/14c1f87d-2dd0-4d4d-83bb-fab9e9c5612d/registrations kind=subscription status=201 duration=16.195354ms user=aaafec94-d243-4fac-8ea3-a63d63f7662f trace_id=2e5641bb99c6432a47e8bdb9700fb982
+gateway-1        | 2026/11/12 17:16:34 POST /payments/payments kind=payments status=201 duration=15.368503ms user=aaafec94-d243-4fac-8ea3-a63d63f7662f trace_id=5b182eb0dcefd5d2c6139257fc2394ef
+gateway-1        | 2026/11/12 17:16:34 POST /payments/payments/4e07c290-1fe4-438f-9521-94cb12121d90/simulate kind=payments status=200 duration=3.455467ms user=aaafec94-d243-4fac-8ea3-a63d63f7662f trace_id=a2ea9913ad3dc6e6265dc4d8bd0b4a00
+gateway-1        | 2026/11/12 17:16:37 GET /subscription/api/v1/registrations/eddaafd6-2a1b-42da-a3b3-09631ecc2d8e kind=subscription status=200 duration=2.633994ms user=aaafec94-d243-4fac-8ea3-a63d63f7662f trace_id=d3face42e7273256656c5a3c4b57d4fd
+gateway-1        | 2026/11/12 17:16:38 POST /subscription/api/v1/activities/246b8896-50ed-4f29-a0b4-a23a7795e8b0/registrations kind=subscription status=503 duration=1.210259963s user=aaafec94-d243-4fac-8ea3-a63d63f7662f trace_id=7f56580277f93fcd64f394679f6e6a86
+gateway-1        | 2026/11/12 17:16:59 POST /subscription/api/v1/activities/246b8896-50ed-4f29-a0b4-a23a7795e8b0/registrations kind=subscription status=201 duration=25.380111ms user=91b331e3-abeb-4482-b8ca-0806008aab8b trace_id=fd0be5eed05d54e0406b8d8e14a95909
