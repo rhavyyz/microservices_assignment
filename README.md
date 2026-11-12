@@ -2,7 +2,7 @@
 
 Execução completa, dados de demonstração e testes: [`docs/running.md`](docs/running.md). Evidências de validação: [`docs/evidence/`](docs/evidence/README.md).
 
-Docker Compose monorepo of services: service-discoverer, gateway, certificates, events, subscription, payments, user, notifications, reports.
+Docker Compose monorepo of services: service-discoverer, gateway, certificates, events, subscription, payments, user, notifications, reports, plus the React frontend in `frontend/` (run with Vite, not in the Compose stack). Architecture decisions: the three ADRs in `docs/decisions/` and the implementation notes (DT-nn) in `docs/architecture/technical-decisions.md`.
 
 - Each service folder has a `Dockerfile` and a `docker-compose.yml` (its shared infra).
 - The root `docker-compose.yml` includes them all and runs one instance per service.
@@ -126,14 +126,17 @@ Consumes user notifications from Kafka and always stores them in its own MongoDB
 ## Events
 Events, their schedule (activities) and seat capacity (TypeScript, Fastify, its own PostgreSQL `events-db`). Full docs in `events/README.md`; architecture decisions in `events/docs/decisions.md`.
 - Public reads (search of published events, schedule with available seats); changes need the user service's access token (`Authorization: Bearer`, verified against its JWKS), and only the event's organizer can change it.
-- Publishes `event.*`, `activity.*` and `seat.*` on `events-events` through a transactional outbox; consumes `registration.requested/cancelled/expired` from `subscription-events` to take and free seats without overbooking.
-- After the gateway synced the `events` kind, open the routes with `events/scripts/register-gateway-routes.sh`.
+- Keeps only the capacity of each activity (the reservation and the seat counting belong to the subscription service, which asks Events for the activity with `GET /api/v1/activities/{id}`). Publishes `EventCreated|Updated|Published|Cancelled`, `ActivityCreated|Updated|Deleted|Ended|Cancelled` on `events.events` through a transactional outbox; consumes nothing.
+- A fresh gateway seeds the routes from the service's OpenAPI (`x-gateway`); only a gateway that already had the `events` kind needs `events/scripts/register-gateway-routes.sh`.
 
 ## Run
-Two steps, in this order (the gateway's private MongoDB is its own compose project and creates the `gateway-net` network):
+Full guide (prerequisites, `.env`, demo data, failure scenarios, tests per service): [`docs/running.md`](docs/running.md). In short, in this order (the gateway's private MongoDB is its own compose project and creates the `gateway-net` network):
 
+    cp .env.example .env                       # set USERS_DB_PASSWORD and SUBSCRIPTION_DB_PASSWORD (and the admin bootstrap, if wanted)
+    user/scripts/gen-dev-keys.sh               # JWT signing key for development
     docker compose -f gateway/docker-compose.yml up -d
-    docker compose up --build
+    docker compose --env-file .env up --build -d
+    ADMIN_PASSWORD='...' scripts/demo-seed.sh  # optional: demo users, event and a paid registration
 
 Stop in reverse: `docker compose down`, then `docker compose -f gateway/docker-compose.yml down` (add `-v` to wipe the gateway DB).
 
@@ -195,6 +198,6 @@ React 19 + TypeScript + Vite: catálogo público de eventos, inscrição por ati
     npm ci
     npm run dev              # http://localhost:5173
 
-Scripts: `npm run lint`, `npm run typecheck`, `npm run format:check`, `npm run test:run` (296 testes), `npm run build` (saída em `frontend/dist`). Requer Node `^22.22.2`, `^24.15.0` ou `>=26` (o jsdom 30, usado nos testes, exige isso; o build sozinho aceitaria `^20.19` ou `>=22.12`).
+Scripts: `npm run lint`, `npm run typecheck`, `npm run format:check`, `npm run test:run` (297 testes), `npm run build` (saída em `frontend/dist`). Requer Node `^22.22.2`, `^24.15.0` ou `>=26` (o jsdom 30, usado nos testes, exige isso; o build sozinho aceitaria `^20.19` ou `>=22.12`).
 
 O token de acesso fica só em memória: recarregar a página exige novo login (DT-07). As rotas dos serviços são abertas no Gateway pelo `x-gateway` de cada OpenAPI, sem scripts, mas só em um banco do Gateway novo: o Gateway não altera rotas que já existiam (veja a observação acima sobre `down -v`). O catálogo de eventos funciona sem login; inscrever-se exige login. O contrato de Eventos mudou no `main` (rotas em `/api/v1`, vagas vindas de Inscrições): o frontend segue o contrato atual, e os testes leem as rotas direto do código dos serviços para acusar qualquer divergência.

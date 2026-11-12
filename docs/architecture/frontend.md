@@ -1,6 +1,6 @@
 # Frontend (`frontend/`)
 
-SPA em React + TypeScript (Vite). Fala **somente com o API Gateway**, pela URL em `VITE_API_BASE_URL`; nunca com um serviço direto. Hoje consome só o serviço de Usuários (`/user/api/v1/...`); os demais entram quando seus contratos existirem.
+SPA em React + TypeScript (Vite). Fala **somente com o API Gateway**, pela URL em `VITE_API_BASE_URL`; nunca com um serviço direto. Consome Usuários, Eventos, Inscrições, Pagamentos, Notificações, Relatórios e Certificados, sempre pelo Gateway (`/{serviço}/api/v1/...`).
 
 ## Telas e rotas
 | Rota | Acesso | Conteúdo | Serviço |
