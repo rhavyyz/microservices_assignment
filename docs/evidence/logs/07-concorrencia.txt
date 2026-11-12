@@ -1,0 +1,59 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.2.0, pluggy-1.7.0 -- <repo>/subscription/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: <repo>/subscription
+configfile: pyproject.toml
+testpaths: tests
+plugins: anyio-4.16.0
+collecting ... collected 182 items / 140 deselected / 42 selected
+
+tests/test_declarative.py::test_paid_create_emits_pending_payment_with_trace_id_and_stores_event_id PASSED [  2%]
+tests/test_declarative.py::test_approved_confirms_pending_registration_and_propagates_trace_id PASSED [  4%]
+tests/test_service.py::test_hundred_concurrent_requests_ten_seats[0] PASSED [  7%]
+tests/test_service.py::test_hundred_concurrent_requests_ten_seats[1500] PASSED [  9%]
+tests/test_service.py::test_concurrent_requests_same_user_single_registration PASSED [ 11%]
+tests/test_service.py::test_expiry_and_payment_race PASSED               [ 14%]
+tests/test_service.py::test_cancel_and_payment_race PASSED               [ 16%]
+tests/test_service.py::test_concurrent_end_of_last_activities_emits_once PASSED [ 19%]
+tests/test_trace_id.py::test_emit_carries_trace_id_and_not_in_notifications PASSED [ 21%]
+tests/test_trace_id.py::test_emit_without_trace_id_sends_null PASSED     [ 23%]
+tests/test_trace_id.py::test_every_domain_event_carries_event_id[RegistrationWaitlisted] PASSED [ 26%]
+tests/test_trace_id.py::test_every_domain_event_carries_event_id[WaitlistOffered] PASSED [ 28%]
+tests/test_trace_id.py::test_every_domain_event_carries_event_id[RegistrationPendingPayment] PASSED [ 30%]
+tests/test_trace_id.py::test_every_domain_event_carries_event_id[RegistrationConfirmed] PASSED [ 33%]
+tests/test_trace_id.py::test_every_domain_event_carries_event_id[RegistrationCancelled] PASSED [ 35%]
+tests/test_trace_id.py::test_every_domain_event_carries_event_id[RegistrationExpired] PASSED [ 38%]
+tests/test_trace_id.py::test_every_domain_event_carries_event_id[RegistrationRejected] PASSED [ 40%]
+tests/test_trace_id.py::test_every_domain_event_carries_event_id[AttendanceRecorded] PASSED [ 42%]
+tests/test_trace_id.py::test_every_domain_event_carries_event_id[AttendanceEligible] PASSED [ 45%]
+tests/test_trace_id.py::test_attendance_eligible_keeps_extra_fields_and_same_event_id PASSED [ 47%]
+tests/test_trace_id.py::test_emit_falls_back_to_inventory_event_id_when_registration_has_none PASSED [ 50%]
+tests/test_trace_id.py::test_emit_sends_null_event_id_when_nothing_is_known PASSED [ 52%]
+tests/test_trace_id.py::test_payment_event_accepts_any_string_trace_id[req-12345678] PASSED [ 54%]
+tests/test_trace_id.py::test_payment_event_accepts_any_string_trace_id[x] PASSED [ 57%]
+tests/test_trace_id.py::test_payment_event_accepts_any_string_trace_id[com espa\xe7os e \xe7\xe3o] PASSED [ 59%]
+tests/test_trace_id.py::test_payment_event_accepts_any_string_trace_id[] PASSED [ 61%]
+tests/test_trace_id.py::test_payment_event_trace_id_optional PASSED      [ 64%]
+tests/test_trace_id.py::test_payment_event_ignores_extra_fields PASSED   [ 66%]
+tests/test_trace_id.py::test_payment_event_currency_is_plain_string[BRL] PASSED [ 69%]
+tests/test_trace_id.py::test_payment_event_currency_is_plain_string[brl] PASSED [ 71%]
+tests/test_trace_id.py::test_payment_event_currency_is_plain_string[Real] PASSED [ 73%]
+tests/test_trace_id.py::test_payment_event_currency_is_plain_string[USD1] PASSED [ 76%]
+tests/test_trace_id.py::test_payment_event_still_rejects_unknown_type_and_missing_fields PASSED [ 78%]
+tests/test_trace_id.py::test_http_layer_passes_trace_id_to_service PASSED [ 80%]
+tests/test_trace_id.py::test_legacy_request_id_header_is_ignored_and_not_echoed PASSED [ 83%]
+tests/test_trace_id.py::test_access_line_format_and_valid_trace_id PASSED [ 85%]
+tests/test_trace_id.py::test_access_line_shows_the_replacement_of_an_invalid_trace_id PASSED [ 88%]
+tests/test_trace_id.py::test_access_line_user_only_for_a_valid_uuid PASSED [ 90%]
+tests/test_trace_id.py::test_access_line_has_no_query_string_or_authorization PASSED [ 92%]
+tests/test_trace_id.py::test_healthcheck_is_not_logged PASSED            [ 95%]
+tests/test_trace_id.py::test_client_errors_are_logged_once_each PASSED   [ 97%]
+tests/test_trace_id.py::test_unhandled_exception_logs_status_500_once PASSED [100%]
+
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  <repo>/subscription/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================ 42 passed, 140 deselected, 1 warning in 1.61s =================

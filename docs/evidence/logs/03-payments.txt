@@ -1,0 +1,86 @@
+
+added 75 packages, and audited 77 packages in 1s
+
+23 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+
+> payments@1.0.0 test
+> node --experimental-strip-types --test test/*.test.ts
+
+✔ access log: one completion record per request with method, path, status, responseTime and traceId (129.878449ms)
+✔ access log: an invalid X-Trace-Id is replaced by a fresh id (18.204409ms)
+✔ access log: the path is logged without the query string (15.07119ms)
+✔ access log: userId is bound only for a valid UUID X-User-Id; forged values are never logged raw (13.542853ms)
+✔ access log: /healthcheck is not logged (11.843125ms)
+✔ access log: a 404 and a 4xx are logged with their status; the user id is on them (12.854706ms)
+✔ defaults: topics, consumer group and payment TTL; no commands topic (5.540369ms)
+✔ env overrides; the old PAYMENTS_TOPIC and PAYMENT_COMMANDS_TOPIC are ignored (5.058115ms)
+✔ PAYMENT_TTL_SECONDS must be a positive integer (5.607417ms)
+✔ cancel for a PENDING payment cancels it (no notification), reason registration_cancelled (3.111708ms)
+✔ expire for a PENDING payment cancels it with reason registration_expired (0.952565ms)
+✔ cancel and expire for an APPROVED payment refund it and notify (0.787321ms)
+✔ no payment, or a payment already in a final state: no-op (0.479042ms)
+✔ duplicate message_id is applied once (0.416743ms)
+✔ invalid and unknown messages are skipped without touching the database; logs carry no payload (0.379797ms)
+✔ a database error throws so the offset is not committed (0.546438ms)
+✔ create body: only registration_id (UUID) is read; unknown properties are ignored (1.514438ms)
+✔ create body: missing, non-string or non-UUID registration_id is rejected (0.271473ms)
+✔ subscription message: cancel and expire map to a close reason; extra fields are tolerated (0.501181ms)
+✔ subscription message: a message that only has the old request_id has no trace id (0.250032ms)
+✔ subscription message: other types parse but have no close reason (0.273708ms)
+✔ subscription message: invalid ones are rejected (0.46647ms)
+✔ event types follow Subscription naming (1.700286ms)
+✔ payment event is a flat envelope keyed by registration (1.747149ms)
+✔ notifications: payload and payload_type go together, keyed by user (0.548883ms)
+✔ no notification for a new or user-cancelled payment (0.220978ms)
+✔ notification shows a human amount computed from amount_minor (0.515847ms)
+✔ REFUNDED maps to PaymentRefunded and notifies the user in Portuguese (0.323854ms)
+✔ a payment without an event publishes event_id null (0.278527ms)
+✔ old CONFIRMED / REFUSED statuses are no longer mapped (0.344876ms)
+✔ ensureTopics creates events, notifications and subscription topics (no commands topic) and disconnects (1.698401ms)
+✔ X-Trace-Id: valid value is kept and echoed (135.016321ms)
+✔ X-Trace-Id: missing or invalid values are replaced by a UUID (18.830676ms)
+✔ 401 UNAUTHENTICATED when X-User-Id is missing or not a UUID (16.886923ms)
+✔ 404 PAYMENT_NOT_FOUND for unknown id, bad id and someone else's payment (26.024955ms)
+✔ unknown route is a problem+json 404 (13.285208ms)
+✔ POST /payments: 201, amount/currency/user/event_id/activity_id come from Subscription, own TTL, client body ignored (20.094313ms)
+✔ POST /payments: null event_id is stored as NULL (11.985182ms)
+✔ POST /payments: a lookup without activity_id is an invalid upstream body, 503 (23.992784ms)
+✔ POST /payments: 404 REGISTRATION_NOT_FOUND for unknown and for someone else's registration (22.498879ms)
+✔ POST /payments: 409 REGISTRATION_NOT_PAYABLE when the registration is not PENDING_PAYMENT (30.608849ms)
+✔ POST /payments: 409 (not 503) for non-pending registrations with null expires_at / zero amount (15.951468ms)
+✔ POST /payments: end to end through the client, null expires_at is 409 when CONFIRMED, 503 when PENDING_PAYMENT or garbage (35.371325ms)
+✔ POST /payments: 409 REGISTRATION_NOT_PAYABLE when the reservation deadline passed or is exactly now, no INSERT (25.191679ms)
+✔ POST /payments: 201 when the reservation deadline is still in the future (8.17569ms)
+✔ POST /payments: foreign owner with an expired registration still gets 404 (8.501499ms)
+✔ POST /payments: an existing payment after the deadline is still 200 and Subscription is not called (10.067271ms)
+✔ POST /payments: 503 UPSTREAM_UNAVAILABLE hides internals (9.139849ms)
+✔ POST /payments: 400 for missing/invalid registration_id, 401 without user (9.699138ms)
+✔ POST /payments: idempotent, an existing payment is returned unchanged with 200 (no Subscription call) (9.805366ms)
+✔ simulate: old action names are rejected with 400 (8.642789ms)
+✔ simulate: 409 PAYMENT_NOT_APPLIED keeps the real payment status (8.253423ms)
+✔ simulate: approve on an already approved payment is a no-op 200 (10.224693ms)
+✔ simulate: 401 without a valid user (7.874395ms)
+✔ 500 INTERNAL_ERROR never leaks internals (8.052071ms)
+✔ openapi: every operation declares its x-gateway settings (12.008231ms)
+✔ PENDING can go to every final state (1.800997ms)
+✔ final states never change; repeating the same request is a no-op (0.433015ms)
+✔ a confirmation after the deadline expires the payment instead (RN03) (0.244304ms)
+✔ REFUNDED: only APPROVED can be refunded, and REFUNDED is final (0.327346ms)
+✔ an approved payment cannot be cancelled, declined or expired (0.238578ms)
+✔ refusing or cancelling after the deadline still works as asked (0.210642ms)
+✔ asks the lib for GET /internal/registrations/{id} of kind subscription and forwards X-Trace-Id (23.988733ms)
+✔ 404 is not_found; 5xx, odd statuses and invalid bodies are unavailable (2.54767ms)
+✔ non-pending registrations may have null/absent expires_at and a null or zero amount (0.7964ms)
+✔ PENDING_PAYMENT without expires_at or positive amount, and garbage expires_at on any status, are unavailable (0.958711ms)
+✔ a rejected request (consult failed, connection error) is unavailable with the error message (0.229429ms)
+ℹ tests 67
+ℹ suites 0
+ℹ pass 67
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 772.470802

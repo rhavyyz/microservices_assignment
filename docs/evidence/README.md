@@ -35,4 +35,4 @@ Preencha ao anexar as evidências.
 
 | Data | Quem | Commit | Resultado | Observações |
 |---|---|---|---|---|
-| | | | | |
+| 12/11/2026 | equipe | `196853c` | Todos os testes passaram, fluxo pago e falhas A, B e C conforme o esperado | veja [`resultados.md`](resultados.md) e `logs/` |

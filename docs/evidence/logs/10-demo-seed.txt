@@ -1,0 +1,20 @@
+
+==> Usuários: participante e candidato a organizador
+  criado
+  criado
+
+==> Administrador aprova o pedido de organizador
+  organizador d816d6fc-7241-4797-8036-370307d1dbe0
+
+==> Organizador cria e publica um evento com uma atividade paga e uma gratuita
+  evento 5ed3c5be-d7da-4532-9d88-a5054ff19a88 | atividade paga 14c1f87d-2dd0-4d4d-83bb-fab9e9c5612d | gratuita 246b8896-50ed-4f29-a0b4-a23a7795e8b0
+
+==> Participante: inscrição paga (aprovada)
+  inscrição d150f1c4-3b7c-48c7-ad84-0a5058220eb6: PENDING_PAYMENT
+  pagamento b68869e5-2840-4bb6-8c3c-96b4c4279035 aprovado; aguardando a confirmação assíncrona...
+  estado final da inscrição: CONFIRMED
+
+==> Pronto
+Contas (senha: $DEMO_PASSWORD): participante.demo@example.test (participante), organizador.demo@example.test (organizador), admin@example.test (administrador)
+Evento 5ed3c5be-d7da-4532-9d88-a5054ff19a88. Para ver a recusa e a expiração, inscreva outra conta na atividade 14c1f87d-2dd0-4d4d-83bb-fab9e9c5612d
+e use 'decline' ou 'expire' em POST payments/payments/{id}/simulate.

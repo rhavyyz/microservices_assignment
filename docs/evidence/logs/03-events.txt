@@ -1,0 +1,93 @@
+
+added 75 packages, and audited 77 packages in 1s
+
+23 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+
+> events@1.0.0 test
+> node --experimental-strip-types --test test/*.test.ts
+
+✔ access log: one completion record per request with method, path, status, responseTime and traceId (154.010077ms)
+✔ access log: an invalid X-Trace-Id is replaced by a fresh id (29.388232ms)
+✔ access log: the path is logged without the query string (23.532321ms)
+✔ access log: userId is bound only for a valid UUID X-User-Id; forged values are never logged raw (23.47966ms)
+✔ access log: /healthcheck is not logged (24.950727ms)
+✔ access log: a 404 and a 4xx are logged with their status; the user id is on them (26.294543ms)
+✔ public reads work without identity and use event_id / activity_id (143.354602ms)
+✔ the activity is served under /api/v1 with Subscription's fields and no seat counts (30.492981ms)
+✔ an invalid X-User-Id is a 401 even on a public read (21.991692ms)
+✔ mutating routes and /me/events need an identity: 401 UNAUTHENTICATED as problem+json (21.976605ms)
+✔ permissions/me answers can_manage: true for the organizer, false for others, 404 for an unknown activity (21.106663ms)
+✔ POST /api/v1/activities/{activity_id}/end: 404 for others, 409 early, 200 then idempotent (22.922815ms)
+✔ roles come from X-User-Roles: a participant cannot create an event (403) (28.003349ms)
+✔ request bodies use amount_minor; price_cents and capacity in a patch are rejected with 400 (30.398836ms)
+✔ OpenAPI: /api/v1 paths with event_id/activity_id, the end and permissions routes, no bearer scheme (29.901776ms)
+✔ openapi: every operation declares its x-gateway settings; /healthcheck stays hidden (19.124777ms)
+✔ ends only the activities that are due, counting the delay from the scheduled end (4.960407ms)
+✔ publishes ActivityEnded once per activity, with a null trace id and no actor in the audit line (1.739607ms)
+✔ skips activities already ended, those of events that are not published, and those another replica holds (0.592254ms)
+✔ works through more than one batch, one transaction per batch (9.827995ms)
+✔ a run that starts while another is going is skipped (overlap guard) (0.509283ms)
+✔ a failing run is logged, publishes nothing, and the next run works (0.693314ms)
+✔ start runs at once and on every interval; stop halts the timer (121.761286ms)
+✔ defaults point at the compose infrastructure (2.422375ms)
+✔ the service consumes nothing and verifies no token: those settings are gone (0.309257ms)
+✔ reads and trims overrides (0.276572ms)
+✔ invalid integers stop the service (0.739759ms)
+✔ ACTIVITY_AUTO_END_AFTER_SECONDS must be a positive integer (0.398654ms)
+✔ business errors keep their status, code and message (2.430686ms)
+✔ schema validation errors list the offending fields (0.608247ms)
+✔ framework 4xx keep their message; anything else is a generic 500 to be logged (0.481137ms)
+✔ the gateway's trace id is kept only when it is well formed (0.378679ms)
+✔ bodies get Date periods and keep absent fields absent (0.353886ms)
+✔ list query: trimmed text, dates, defaults from the schema (0.402495ms)
+✔ the legacy X-Request-Id header is ignored: only X-Trace-Id is read (0.217626ms)
+✔ the identity is the X-User-Id UUID and the X-User-Roles list (1.885855ms)
+✔ roles are trimmed, upper-cased and empty items dropped; absent roles mean no roles (0.317638ms)
+✔ without X-User-Id the caller is anonymous, whatever else is sent (0.200165ms)
+✔ a present X-User-Id that is not a UUID is a 401 UNAUTHENTICATED, never anonymous (0.591905ms)
+✔ a bearer token is ignored: the identity never comes from Authorization (0.230197ms)
+✔ only the organizer of the event can end the activity; someone else gets a 404 and nothing is written (4.541988ms)
+✔ an activity of an event that is not published cannot be ended (409 EVENT_NOT_OPEN) (0.916807ms)
+✔ ending before the scheduled end is a 409 ACTIVITY_NOT_ENDED and publishes nothing (0.455504ms)
+✔ ending at the scheduled end succeeds and publishes ActivityEnded once, keyed by activity_id (2.134419ms)
+✔ ending again is idempotent: 200 with the current activity and no new message (0.891105ms)
+✔ the ended activity stays consultable with its lifecycle, also for anonymous callers (0.720064ms)
+✔ cancelling the event publishes EventCancelled and one ActivityCancelled per activity that has not ended (1.489505ms)
+✔ a cancelled event cannot be cancelled again and publishes nothing more; its activities stay consultable as CANCELLED (0.77021ms)
+✔ another organizer cannot cancel the event: 404 and no ActivityCancelled (0.411155ms)
+✔ permissions/me: true for the organizer, false for others on a public event, 404 for unknown or private activities (0.749258ms)
+✔ activity representation: Subscription names, currency, lifecycle, registration_open and no seat counts (0.423658ms)
+✔ registration is closed while the event is a draft, and the event view uses event_id (0.467518ms)
+✔ creating and editing activities uses amount_minor and publishes PascalCase messages with it (2.52993ms)
+✔ an ended activity is read-only: any patch, even a future ends_at, is a 409 ACTIVITY_ENDED and publishes nothing more (1.076812ms)
+✔ an activity that has not ended can still be edited (0.513822ms)
+✔ the activity of a cancelled event still gives EVENT_CANCELLED, checked before ACTIVITY_ENDED (0.220209ms)
+✔ envelope is flat with the shared contract fields (schema_version, no nested data) (3.392959ms)
+✔ a message field can never override the envelope fields (0.254293ms)
+✔ event messages are PascalCase, keyed by event_id, with name, organizer_id, status and period (0.192483ms)
+✔ activity messages are keyed by event and carry capacity, amount_minor and currency but no seat count (0.249823ms)
+✔ ActivityEnded and ActivityCancelled are keyed by activity_id and carry activity_id, event_id and ends_at (0.209733ms)
+✔ backoff doubles from 1s up to the 30s cap (2.014362ms)
+✔ retryForever retries with backoff until the task succeeds (0.596095ms)
+✔ only organizers create events (1.609632ms)
+✔ someone else's event looks exactly like a missing one (RN07) (0.412902ms)
+✔ drafts are visible to their organizer only; published and cancelled to everyone (0.287677ms)
+✔ periods must end after they start (0.240045ms)
+✔ activities must fit in the event period (bounds included) (0.278457ms)
+✔ cancelled is final and only drafts accept destructive schedule changes (0.378959ms)
+✔ publishing needs a draft with activities that has not ended (2.403029ms)
+✔ lifecycle is CANCELLED with the event, else ENDED once ended_at is set, else OPEN (0.445448ms)
+✔ registration is open only for a published event, an OPEN activity that has not started (0.353886ms)
+✔ an activity ends only in a published event and never before its scheduled end; ending again is allowed (0.516965ms)
+✔ toActivityView drops the legacy reserved/available columns that SELECT a.* still returns (1.163695ms)
+ℹ tests 74
+ℹ suites 0
+ℹ pass 74
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 665.763736

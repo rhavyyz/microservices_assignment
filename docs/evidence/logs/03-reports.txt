@@ -1,0 +1,145 @@
+
+added 75 packages, and audited 77 packages in 1s
+
+23 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+
+> reports@1.0.0 test
+> node --experimental-strip-types --test test/*.test.ts
+
+✔ access log: one completion record per request with method, path, status, responseTime and traceId (153.215003ms)
+✔ access log: an invalid X-Trace-Id is replaced by a fresh id (24.222841ms)
+✔ access log: the path is logged without the query string (18.922377ms)
+✔ access log: userId is bound only for a valid UUID X-User-Id; forged values are never logged raw (17.951024ms)
+✔ access log: /healthcheck is not logged (16.071875ms)
+✔ access log: a 404 and a 4xx are logged with their status; the user id is on them (16.987285ms)
+✔ invalid messages go to the DLQ as a reference only: topic, partition, offset, reason (2.021835ms)
+✔ the DLQ record never carries the payload (0.313448ms)
+✔ a very long reason is truncated (0.180889ms)
+✔ when the DLQ publish fails the handler throws (offset not committed) instead of losing the reference (0.50586ms)
+✔ unknown and ignored types are not dead-lettered (1.419803ms)
+✔ a valid message is processed and not dead-lettered; a database error throws (0.432038ms)
+✔ dlqPublisher sends the reference to the DLQ topic keyed by source topic:partition; fails without a producer (0.312051ms)
+✔ ensureTopics creates the three input topics and the DLQ with the configured partitions (0.305416ms)
+✔ envelope: flat fields, schema_version, ISO offset, null trace_id (2.702648ms)
+✔ envelope: trace_id string is kept (1.582184ms)
+✔ EventCreated takes organizer, name and status from the root (0.373441ms)
+✔ EventUpdated takes status from the message (0.273778ms)
+✔ EventPublished forces PUBLISHED (0.240953ms)
+✔ EventCancelled forces CANCELLED (0.22426ms)
+✔ ActivityCreated and ActivityUpdated read capacity and paid (0.426032ms)
+✔ payment types map to their status (0.537917ms)
+✔ payment without activity_id (nullable) is accepted (0.318896ms)
+✔ amount_minor is kept as an integer, with no decimal conversion (0.548603ms)
+✔ amount_minor must be a non-negative safe integer (0.547975ms)
+✔ a missing or null amount_minor is stored as no amount (the row keeps its previous one) (0.21567ms)
+✔ payments without event_id are rejected (0.226635ms)
+✔ registration and check-in messages without event_id are rejected (0.410946ms)
+✔ registration types map to Subscription statuses (0.353537ms)
+✔ unknown types are ignored, not errors (0.159867ms)
+✔ ActivityEnded, ActivityCancelled and ActivityDeleted map to a lifecycle change (0.30374ms)
+✔ lifecycle messages require activity_id and event_id (0.371905ms)
+✔ AttendanceEligible keeps the counts and percentage; registration_id and activity_id are optional (0.33894ms)
+✔ AttendanceEligible rejects missing or invalid fields (0.495943ms)
+✔ the old dotted type names are no longer recognised (0.119219ms)
+✔ the old nested data format is rejected (no fallback) (0.172368ms)
+✔ invalid messages are rejected with a reason (0.243746ms)
+✔ schema_version 2 is rejected, 0 and non-integers are invalid (0.238228ms)
+✔ a missing schema_version defaults to 1 (0.169365ms)
+✔ a message with only the legacy correlation_id has no trace id (0.107137ms)
+✔ ratio rounds to 4 decimals and is null without a denominator (1.249251ms)
+{"level":30,"time":1794503137713,"pid":31229,"hostname":"host","traceId":"ee97c6db-2661-41e3-9f1d-0a36887a69c9","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/payments"},"res":{"statusCode":200},"responseTime":4.273937000000046,"msg":"request completed"}
+✔ payments: counters and revenue/refunded as lists by currency, bigint strings become numbers (148.043956ms)
+{"level":30,"time":1794503137739,"pid":31229,"hostname":"host","traceId":"e9778181-95b1-4416-80ee-e4e4ce6dde72","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/payments"},"res":{"statusCode":200},"responseTime":0.6791359999999713,"msg":"request completed"}
+✔ payments: empty lists when there is no money (23.711463ms)
+{"level":50,"time":1794503137758,"pid":31229,"hostname":"host","traceId":"078eb28a-554e-4e77-bdc2-459702597d72","userId":"11111111-1111-4111-8111-111111111111","err":{"type":"Error","message":"amount out of the safe integer range: 9007199254740993","stack":"Error: amount out of the safe integer range: 9007199254740993\n    at toSafeNumber (file://<repo>/reports/src/queries.ts:67:39)\n    at file://<repo>/reports/src/queries.ts:99:56\n    at Array.map (<anonymous>)\n    at moneyOf (file://<repo>/reports/src/queries.ts:99:6)\n    at paymentsSection (file://<repo>/reports/src/queries.ts:132:14)\n    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)"},"msg":"request failed"}
+✔ payments: an amount beyond the safe-integer range is an error, not a lossy number (20.678746ms)
+{"level":30,"time":1794503137775,"pid":31229,"hostname":"host","traceId":"e24d816f-95ae-48a4-b659-73fc4c2d089b","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/registrations"},"res":{"statusCode":200},"responseTime":0.5832450000000335,"msg":"request completed"}
+✔ registrations: the new status counters, without the old pending (15.236155ms)
+{"level":30,"time":1794503137793,"pid":31229,"hostname":"host","traceId":"15c69969-0d7c-47f5-9f6a-e52bcde28a6f","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/activities"},"res":{"statusCode":200},"responseTime":1.4158919999999853,"msg":"request completed"}
+✔ activities: per-activity counters, money by currency and held-seat occupancy (18.252669ms)
+{"level":30,"time":1794503137810,"pid":31229,"hostname":"host","traceId":"69662324-70cf-42ce-a25e-acc3ee88e2cf","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/summary"},"res":{"statusCode":200},"responseTime":1.0713649999999575,"msg":"request completed"}
+✔ summary: carries the new registrations and payments shapes (16.251158ms)
+{"level":30,"time":1794503137825,"pid":31229,"hostname":"host","traceId":"5c76fd92-fd72-4f88-97b4-0adf87c08394","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/attendance"},"res":{"statusCode":200},"responseTime":0.475620000000049,"msg":"request completed"}
+{"level":30,"time":1794503137840,"pid":31229,"hostname":"host","traceId":"3a7597e8-ea35-4af0-82cd-4fa5ea8d3cc2","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/attendance"},"res":{"statusCode":200},"responseTime":0.4328069999999684,"msg":"request completed"}
+✔ attendance: certificate_eligible and its rate; null rate without attendees; rate computed from the counts (29.666061ms)
+{"level":30,"time":1794503137855,"pid":31229,"hostname":"host","traceId":"004e9cf5-767a-4c43-b503-3bf5cf75e01e","req":{"method":"GET","url":"/events"},"res":{"statusCode":401},"responseTime":0.3533270000000357,"msg":"request completed"}
+✔ identity: X-User-Id missing or not a UUID is 401 UNAUTHENTICATED (problem+json), for every route (21.280289ms)
+{"level":30,"time":1794503137877,"pid":31229,"hostname":"host","traceId":"6bec08d8-6ce5-400d-b9d9-eaf6fb99f839","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/registrations"},"res":{"statusCode":200},"responseTime":0.23152300000003834,"msg":"request completed"}
+✔ identity: a UUID is accepted; X-User-Roles is ignored (16.332313ms)
+{"level":30,"time":1794503137892,"pid":31229,"hostname":"host","traceId":"5553439b-0d35-40be-b184-7b737a3500c7","userId":"33333333-3333-4333-8333-333333333333","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/registrations"},"res":{"statusCode":404},"responseTime":0.18926999999996497,"msg":"request completed"}
+{"level":30,"time":1794503137904,"pid":31229,"hostname":"host","traceId":"b165b061-b2e6-4c9e-81e3-36b35ba8c26c","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/registrations"},"res":{"statusCode":404},"responseTime":0.2599499999999466,"msg":"request completed"}
+✔ ownership: another user's event and an unknown event are the same 404 EVENT_NOT_FOUND (26.379959ms)
+{"level":30,"time":1794503137919,"pid":31229,"hostname":"host","traceId":"349b7243-0c1e-46ec-a25e-b130550620cf","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events/e1/summary"},"res":{"statusCode":404},"responseTime":0.1817270000000235,"msg":"request completed"}
+✔ a path id that is not a UUID is the same 404 EVENT_NOT_FOUND and never reaches the database (15.816745ms)
+{"level":30,"time":1794503137930,"pid":31229,"hostname":"host","traceId":"bed3b2f1-6c5a-4ef3-8888-368db47c6851","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events"},"res":{"statusCode":200},"responseTime":0.5605459999999312,"msg":"request completed"}
+✔ events list: defaults, {items,total,limit,offset} and the page reaching the query (11.129138ms)
+{"level":30,"time":1794503137941,"pid":31229,"hostname":"host","traceId":"cac62713-3380-408d-8e3d-3c33c4622989","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/activities"},"res":{"statusCode":200},"responseTime":0.25338399999998273,"msg":"request completed"}
+✔ activities list: {items,total,limit,offset} with the item shape unchanged (9.717227ms)
+{"level":30,"time":1794503137953,"pid":31229,"hostname":"host","traceId":"aab730e4-f5a9-43a3-9425-a53dd64a7165","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events"},"res":{"statusCode":400},"responseTime":0.4123429999999644,"msg":"request completed"}
+✔ list parameters out of range or not integers: 400 VALIDATION_ERROR (problem+json) (14.330802ms)
+{"level":30,"time":1794503137760,"pid":31229,"hostname":"host","traceId":"078eb28a-554e-4e77-bdc2-459702597d72","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/payments"},"res":{"statusCode":500},"responseTime":1.8215299999999957,"msg":"request completed"}
+{"level":30,"time":1794503137877,"pid":31229,"hostname":"host","traceId":"742e4eb9-e105-4fc6-ba41-632e3eba943e","userId":"33333333-3333-4333-8333-333333333333","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/registrations"},"res":{"statusCode":404},"responseTime":0.16685000000001082,"msg":"request completed"}
+{"level":30,"time":1794503137856,"pid":31229,"hostname":"host","traceId":"50ca8fca-af88-4912-b21b-6bd6df6b578c","req":{"method":"GET","url":"/events"},"res":{"statusCode":401},"responseTime":0.21720599999997603,"msg":"request completed"}
+{"level":30,"time":1794503137856,"pid":31229,"hostname":"host","traceId":"19a00ebb-731d-4044-b06f-bd2ffb763740","req":{"method":"GET","url":"/events"},"res":{"statusCode":401},"responseTime":0.12257199999999102,"msg":"request completed"}
+{"level":30,"time":1794503137857,"pid":31229,"hostname":"host","traceId":"28d91a20-d13c-4956-a7b9-65953ab27475","req":{"method":"GET","url":"/events"},"res":{"statusCode":401},"responseTime":0.12264099999998734,"msg":"request completed"}
+{"level":30,"time":1794503137857,"pid":31229,"hostname":"host","traceId":"bb127945-ccf7-4f65-ae02-591945f9d8c1","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/summary"},"res":{"statusCode":401},"responseTime":0.11104699999998502,"msg":"request completed"}
+{"level":30,"time":1794503137857,"pid":31229,"hostname":"host","traceId":"486bed01-1b56-4b6e-a81e-60bbda3cc89a","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/summary"},"res":{"statusCode":401},"responseTime":0.1244570000000067,"msg":"request completed"}
+{"level":30,"time":1794503137858,"pid":31229,"hostname":"host","traceId":"39efc427-1be9-409b-99fd-e5be2edaed5e","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/summary"},"res":{"statusCode":401},"responseTime":0.21189800000001924,"msg":"request completed"}
+{"level":30,"time":1794503137858,"pid":31229,"hostname":"host","traceId":"740d2511-9e56-48a8-bd4a-71b3399473d0","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/summary"},"res":{"statusCode":401},"responseTime":0.10196799999999939,"msg":"request completed"}
+{"level":30,"time":1794503137858,"pid":31229,"hostname":"host","traceId":"c78686a3-34a9-4fa6-a9a9-d51df2f3b136","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/activities"},"res":{"statusCode":401},"responseTime":0.1255050000000324,"msg":"request completed"}
+{"level":30,"time":1794503137858,"pid":31229,"hostname":"host","traceId":"050e1cab-e06c-439a-8773-251ea811aaf0","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/activities"},"res":{"statusCode":401},"responseTime":0.13311699999997018,"msg":"request completed"}
+{"level":30,"time":1794503137858,"pid":31229,"hostname":"host","traceId":"22a7a24e-9654-4eed-a7c4-0b34d7ebbfbc","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/activities"},"res":{"statusCode":401},"responseTime":0.10064199999999346,"msg":"request completed"}
+{"level":30,"time":1794503137859,"pid":31229,"hostname":"host","traceId":"75a2e1e3-b20b-42c8-aa5c-5f326e2ed5bd","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/activities"},"res":{"statusCode":401},"responseTime":0.09156200000001036,"msg":"request completed"}
+{"level":30,"time":1794503137859,"pid":31229,"hostname":"host","traceId":"9fe234d1-4d7f-42cd-9cf0-ff3d7b780d08","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/registrations"},"res":{"statusCode":401},"responseTime":0.0785020000000145,"msg":"request completed"}
+{"level":30,"time":1794503137859,"pid":31229,"hostname":"host","traceId":"fddd5657-ff94-44a4-b7e1-adc1c24674a4","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/registrations"},"res":{"statusCode":401},"responseTime":0.11789199999998345,"msg":"request completed"}
+{"level":30,"time":1794503137859,"pid":31229,"hostname":"host","traceId":"b690b24a-3a1c-4bab-9b12-041af3f4fd44","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/registrations"},"res":{"statusCode":401},"responseTime":0.09638100000000804,"msg":"request completed"}
+{"level":30,"time":1794503137860,"pid":31229,"hostname":"host","traceId":"afac2a76-8afb-4dcf-b436-e2da351f80de","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/registrations"},"res":{"statusCode":401},"responseTime":0.08415899999999965,"msg":"request completed"}
+{"level":30,"time":1794503137860,"pid":31229,"hostname":"host","traceId":"4c789dfb-9fc0-4330-b439-6ffdbfd13023","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/payments"},"res":{"statusCode":401},"responseTime":0.08283199999999624,"msg":"request completed"}
+{"level":30,"time":1794503137860,"pid":31229,"hostname":"host","traceId":"ad9608dc-d8c5-46c4-8482-03858c15f2bb","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/payments"},"res":{"statusCode":401},"responseTime":0.08394900000001826,"msg":"request completed"}
+{"level":30,"time":1794503137860,"pid":31229,"hostname":"host","traceId":"30fb38ef-6c39-42a2-884a-9e34aec51c7a","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/payments"},"res":{"statusCode":401},"responseTime":0.07375200000001314,"msg":"request completed"}
+{"level":30,"time":1794503137860,"pid":31229,"hostname":"host","traceId":"103a486d-0b3e-4b39-811d-3f24d12ddfe1","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/payments"},"res":{"statusCode":401},"responseTime":0.10385400000001255,"msg":"request completed"}
+{"level":30,"time":1794503137861,"pid":31229,"hostname":"host","traceId":"4f59a79b-a119-4928-a93f-1313d0fe329c","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/attendance"},"res":{"statusCode":401},"responseTime":0.07878099999999222,"msg":"request completed"}
+{"level":30,"time":1794503137861,"pid":31229,"hostname":"host","traceId":"f59eac6f-2073-4bb7-8d4e-5e128a0efbd8","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/attendance"},"res":{"statusCode":401},"responseTime":0.08178400000002739,"msg":"request completed"}
+{"level":30,"time":1794503137861,"pid":31229,"hostname":"host","traceId":"0aa4272f-f98c-4470-8a3c-ba7cdce89322","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/attendance"},"res":{"statusCode":401},"responseTime":0.0754980000000387,"msg":"request completed"}
+{"level":30,"time":1794503137861,"pid":31229,"hostname":"host","traceId":"e19aff8c-2eb8-429f-93b7-da5d76f3e3ec","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/attendance"},"res":{"statusCode":401},"responseTime":0.08632400000004736,"msg":"request completed"}
+{"level":30,"time":1794503137919,"pid":31229,"hostname":"host","traceId":"941b2aad-3e93-4019-a814-38d431653027","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events/e1/activities"},"res":{"statusCode":404},"responseTime":0.12047599999993963,"msg":"request completed"}
+{"level":30,"time":1794503137919,"pid":31229,"hostname":"host","traceId":"8f1c71c1-db11-4a55-944b-14f6dd79098a","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events/e1/registrations"},"res":{"statusCode":404},"responseTime":0.08345999999994547,"msg":"request completed"}
+{"level":30,"time":1794503137920,"pid":31229,"hostname":"host","traceId":"8d3cb7b6-fdd2-4376-86b2-85e35267b49e","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events/e1/payments"},"res":{"statusCode":404},"responseTime":0.09302900000000136,"msg":"request completed"}
+{"level":30,"time":1794503137920,"pid":31229,"hostname":"host","traceId":"cc7c9033-9ff6-44f1-a4a6-8cc88def1b0d","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events/e1/attendance"},"res":{"statusCode":404},"responseTime":0.09547299999996994,"msg":"request completed"}
+{"level":30,"time":1794503137931,"pid":31229,"hostname":"host","traceId":"212f02b6-cb89-4ed3-bf48-590db7a1bec6","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events"},"res":{"statusCode":200},"responseTime":0.13926299999991443,"msg":"request completed"}
+{"level":30,"time":1794503137953,"pid":31229,"hostname":"host","traceId":"a0faa723-38d6-44d7-b0b2-c36b619139c8","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/activities"},"res":{"statusCode":400},"responseTime":0.13982199999998102,"msg":"request completed"}
+{"level":30,"time":1794503137953,"pid":31229,"hostname":"host","traceId":"fca2082c-e79b-48e6-9a1b-ea69345640de","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events"},"res":{"statusCode":400},"responseTime":0.12753100000009,"msg":"request completed"}
+{"level":30,"time":1794503137953,"pid":31229,"hostname":"host","traceId":"66916d1a-fa26-4def-9ff8-391e66890b2a","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/activities"},"res":{"statusCode":400},"responseTime":0.1199179999999842,"msg":"request completed"}
+{"level":30,"time":1794503137954,"pid":31229,"hostname":"host","traceId":"82ce9065-db1a-45f7-a8b2-12a3bdeb6867","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events"},"res":{"statusCode":400},"responseTime":0.12878699999998844,"msg":"request completed"}
+{"level":30,"time":1794503137954,"pid":31229,"hostname":"host","traceId":"6a27c2b2-35c4-4cee-86a1-e86c0a4196dc","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/activities"},"res":{"statusCode":400},"responseTime":0.11474899999996069,"msg":"request completed"}
+{"level":30,"time":1794503137954,"pid":31229,"hostname":"host","traceId":"acfdf772-bd8e-492a-9147-96fdc8b2e274","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events"},"res":{"statusCode":400},"responseTime":0.10476200000005065,"msg":"request completed"}
+{"level":30,"time":1794503137954,"pid":31229,"hostname":"host","traceId":"58865fd2-2468-43fa-b023-5e9b879302fe","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/activities"},"res":{"statusCode":400},"responseTime":0.12487599999997201,"msg":"request completed"}
+{"level":30,"time":1794503137955,"pid":31229,"hostname":"host","traceId":"8ac2e6f2-7535-4efa-9c16-c66c4f7a9586","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events"},"res":{"statusCode":400},"responseTime":0.13158099999998285,"msg":"request completed"}
+{"level":30,"time":1794503137955,"pid":31229,"hostname":"host","traceId":"7bcae84c-91c7-4448-8a73-f16171f3235b","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/activities"},"res":{"statusCode":400},"responseTime":0.10671800000000076,"msg":"request completed"}
+{"level":30,"time":1794503137955,"pid":31229,"hostname":"host","traceId":"7953b817-45ee-4e8e-a3f0-ca30ec41133b","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events"},"res":{"statusCode":400},"responseTime":0.09861599999999271,"msg":"request completed"}
+{"level":30,"time":1794503137955,"pid":31229,"hostname":"host","traceId":"f7fd815a-5c66-4ac6-bf58-9bc04c12fec8","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/activities"},"res":{"statusCode":400},"responseTime":0.09994299999993927,"msg":"request completed"}
+✔ echoes a valid X-Trace-Id and ignores the old X-Request-Id / X-Correlation-Id (151.747289ms)
+✔ trace id: too short, too long or bad characters are replaced by a generated UUID (27.319533ms)
+{"level":30,"time":1794503137765,"pid":31230,"hostname":"host","traceId":"trace-from-gw-1","req":{"method":"GET","url":"/events"},"res":{"statusCode":401},"responseTime":1.278096000000005,"msg":"request completed"}
+✔ traceId in an error body is the one echoed in the header (22.280555ms)
+✔ healthcheck: 503 until the first migration, 200 after, 503 when the ping fails; body keeps {status} (34.896195ms)
+{"level":30,"time":1794503137816,"pid":31230,"hostname":"host","traceId":"d1418631-5e0e-414f-a374-c1451ee9f038","req":{"method":"GET","url":"/nope"},"res":{"statusCode":404},"responseTime":0.3946030000000178,"msg":"request completed"}
+✔ unknown route: 404 NOT_FOUND as problem+json (15.674758ms)
+{"level":50,"time":1794503137833,"pid":31230,"hostname":"host","traceId":"61472a65-37ab-43f1-8169-990ef9c5d2d8","userId":"11111111-1111-4111-8111-111111111111","err":{"type":"Error","message":"secret connection string postgres://u:p@host","stack":"Error: secret connection string postgres://u:p@host\n    at Object.query (file://<repo>/reports/test/server.test.ts:93:47)\n    at findEvent (file://<repo>/reports/src/queries.ts:14:24)\n    at owned (file://<repo>/reports/src/server.ts:203:43)\n    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at async Object.<anonymous> (file://<repo>/reports/src/server.ts:249:16)"},"msg":"request failed"}
+✔ unexpected failure: 500 INTERNAL_ERROR without internals (17.546853ms)
+{"level":30,"time":1794503137857,"pid":31230,"hostname":"host","traceId":"59e80de5-4fe0-46b2-89c1-3ad0bc6b9232","req":{"method":"GET","url":"/openapi.json"},"res":{"statusCode":200},"responseTime":6.981334000000004,"msg":"request completed"}
+✔ openapi: every operation declares x-gateway (business routes public + auth, /healthcheck private); /openapi.json is hidden (23.055235ms)
+{"level":30,"time":1794503137872,"pid":31230,"hostname":"host","traceId":"282ad7d8-909e-4fdb-8ded-738ad07b620a","req":{"method":"GET","url":"/openapi.json"},"res":{"statusCode":200},"responseTime":1.4032509999999547,"msg":"request completed"}
+✔ openapi: error responses use the problem schema and the X-User-Id requirement is documented (15.285183ms)
+{"level":30,"time":1794503137834,"pid":31230,"hostname":"host","traceId":"61472a65-37ab-43f1-8169-990ef9c5d2d8","userId":"11111111-1111-4111-8111-111111111111","req":{"method":"GET","url":"/events/22222222-2222-4222-8222-222222222222/summary"},"res":{"statusCode":500},"responseTime":1.4392889999999738,"msg":"request completed"}
+ℹ tests 63
+ℹ suites 0
+ℹ pass 63
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 598.029637

@@ -1,0 +1,190 @@
+npm warn EBADENGINE Unsupported engine {
+npm warn EBADENGINE   package: 'eventhub-frontend@0.1.0',
+npm warn EBADENGINE   required: { node: '^22.22.2 || ^24.15.0 || >=26.0.0' },
+npm warn EBADENGINE   current: { node: 'v24.13.0', npm: '11.6.2' }
+npm warn EBADENGINE }
+npm warn EBADENGINE Unsupported engine {
+npm warn EBADENGINE   package: '@asamuzakjp/css-color@7.1.9',
+npm warn EBADENGINE   required: { node: '^22.22.2 || ^24.15.0 || >=26.0.0' },
+npm warn EBADENGINE   current: { node: 'v24.13.0', npm: '11.6.2' }
+npm warn EBADENGINE }
+npm warn EBADENGINE Unsupported engine {
+npm warn EBADENGINE   package: '@asamuzakjp/dom-selector@10.0.5',
+npm warn EBADENGINE   required: { node: '^22.22.2 || ^24.15.0 || >=26.0.0' },
+npm warn EBADENGINE   current: { node: 'v24.13.0', npm: '11.6.2' }
+npm warn EBADENGINE }
+npm warn EBADENGINE Unsupported engine {
+npm warn EBADENGINE   package: 'jsdom@30.1.3',
+npm warn EBADENGINE   required: { node: '^22.22.2 || ^24.15.0 || >=26.0.0' },
+npm warn EBADENGINE   current: { node: 'v24.13.0', npm: '11.6.2' }
+npm warn EBADENGINE }
+npm warn EBADENGINE Unsupported engine {
+npm warn EBADENGINE   package: 'w3c-xmlserializer@6.0.0',
+npm warn EBADENGINE   required: { node: '^22.22.2 || ^24.15.0 || >=26.0.0' },
+npm warn EBADENGINE   current: { node: 'v24.13.0', npm: '11.6.2' }
+npm warn EBADENGINE }
+
+added 246 packages, and audited 247 packages in 43s
+
+61 packages are looking for funding
+  run `npm fund` for details
+
+10 moderate severity vulnerabilities
+
+To address issues that do not require attention, run:
+  npm audit fix
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+
+> eventhub-frontend@0.1.0 lint
+> eslint .
+
+
+> eventhub-frontend@0.1.0 typecheck
+> tsc --noEmit
+
+
+> eventhub-frontend@0.1.0 test:run
+> vitest run
+
+
+ RUN  v5.1.0 <repo>/frontend
+
+ ✓ src/api/domainApis.test.ts (8 tests) 38ms
+ ✓ src/api/contract.reportscerts.test.ts (7 tests) 45ms
+ ✓ src/api/client.test.ts (23 tests) 74ms
+ ✓ src/api/contract.test.ts (9 tests) 72ms
+ ✓ src/pages/EventsPage.test.tsx (9 tests) 1336ms
+   ✓ Catálogo de eventos (público) (9)
+     ✓ lista os eventos com link para o detalhe, sem enviar token 576ms
+stderr | src/pages/ReportPage.test.tsx > Relatório do evento > tabela por atividade com ocupação, receita e presença; cancelada sem taxa de ocupação
+Encountered two children with the same key, `22222222-2222-4222-8222-222222222222`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version.
+
+ ✓ src/api/contract.sources.test.ts (3 tests) 58ms
+ ✓ src/api/contract.payments.test.ts (6 tests) 41ms
+ ✓ src/schemas/forms.test.ts (17 tests) 28ms
+ ✓ src/pages/CertificatesPage.test.tsx (10 tests) 3315ms
+   ✓ Meus certificados (10)
+     ✓ lista com o nome do evento (de Eventos, sem token), data de emissão e link do evento 855ms
+     ✓ 404 (certificado de outra pessoa ou inexistente) mostra mensagem e não baixa nada 308ms
+     ✓ 503 (arquivo indisponível) mostra erro e permite tentar de novo 309ms
+     ✓ paginação: "Próxima" só quando a página veio cheia (50) e pede offset 50 344ms
+ ✓ src/pages/RegisterPage.test.tsx (10 tests) 3499ms
+   ✓ Página de cadastro (10)
+     ✓ mostra os erros de validação e não chama a API 502ms
+     ✓ valida senha curta e confirmação diferente 385ms
+     ✓ cadastra, envia só nome, e-mail e senha, e leva ao login com aviso de sucesso 449ms
+     ✓ escolher "Organizador" envia o pedido e avisa que falta a aprovação de um administrador 450ms
+     ✓ e-mail já cadastrado (409) aparece no campo e mantém a página 368ms
+     ✓ erros de validação do servidor voltam para o campo certo 383ms
+     ✓ impede envio duplicado enquanto a requisição está em andamento 378ms
+ ✓ src/pages/MyRegistrationsPage.test.tsx (11 tests) 3645ms
+   ✓ Minhas inscrições (11)
+     ✓ lista as inscrições com o nome da atividade, situação, valor e link para o evento 851ms
+     ✓ se Eventos falhar, a inscrição aparece mesmo assim, com identificação curta 324ms
+     ✓ cancelar exige confirmação; "Voltar" desiste sem chamar a API 403ms
+     ✓ aceitar uma oferta atualiza a situação 363ms
+     ✓ paginação por deslocamento: página cheia habilita "Próxima" e a seguinte usa offset=20 350ms
+ ✓ src/pages/EventDetailPage.test.tsx (19 tests) 3666ms
+   ✓ Detalhe do evento (visitante) (7)
+     ✓ mostra o evento e as atividades, e convida o visitante a entrar, sem chamar a API de inscrições 509ms
+   ✓ Inscrição em uma atividade (autenticado) (12)
+     ✓ carrega as inscrições vivas com Bearer e marca a atividade já inscrita 342ms
+     ✓ sem vagas e com lista de espera: o botão entra na lista (join_waitlist=true) 303ms
+ ✓ src/pages/ProfilePage.test.tsx (12 tests) 3930ms
+   ✓ Página de perfil (12)
+     ✓ mostra o carregamento e depois os dados do usuário 815ms
+     ✓ pedido negado é informado; sem pedido não aparece nada sobre organizador 560ms
+     ✓ atualiza o nome (PATCH só com name), confirma e reflete no cabeçalho 396ms
+     ✓ valida o nome no cliente e não chama a API 345ms
+ ✓ src/pages/ReportPage.test.tsx (13 tests) 3995ms
+   ✓ Relatório do evento (13)
+     ✓ mostra inscrições, pagamentos, ocupação e presença, com Bearer 923ms
+     ✓ dinheiro por moeda, sem somar moedas diferentes 306ms
+     ✓ sem receita nem reembolso: mensagem clara; moeda desconhecida não quebra a tela 305ms
+     ✓ tabela por atividade com ocupação, receita e presença; cancelada sem taxa de ocupação 383ms
+     ✓ paginação das atividades usa o total e pede o deslocamento certo 344ms
+ ✓ src/pages/AdminUsersPage.test.tsx (11 tests) 4178ms
+   ✓ Administração de usuários (11)
+     ✓ lista todos com Bearer, sem filtro, e mostra a situação do pedido de organizador 861ms
+     ✓ filtra por "Aguardando aprovação" e busca por nome ou e-mail 585ms
+     ✓ aprova: envia approved=true, atualiza a linha e lembra de entrar de novo 394ms
+     ✓ nega o pedido pendente: envia approved=false 425ms
+     ✓ retirar o papel pede confirmação e só então chama a API 396ms
+ ✓ src/schemas/organizer.test.ts (17 tests) 24ms
+ ✓ src/pages/PaymentPage.test.tsx (14 tests) 4277ms
+   ✓ Pagamento (11)
+     ✓ mostra valor, situação, prazo e as ações do provedor simulado, com Bearer 809ms
+     ✓ aprovar: envia {action:"approve"}, mostra aprovado e esconde o simulador 317ms
+     ✓ decline: mostra o estado final e a vaga liberada 349ms
+     ✓ 409 PAYMENT_NOT_APPLIED: explica e recarrega o estado real (já aprovado) 318ms
+     ✓ enquanto pendente consulta de novo e passa a aprovado sozinho; depois para de consultar 451ms
+ ✓ src/routing.test.tsx (9 tests) 1952ms
+   ✓ Rotas e guardas (só experiência de navegação; o backend autoriza de fato) (8)
+     ✓ rota protegida sem sessão leva ao login, sem chamar a API 333ms
+     ✓ participante vê "acesso negado" na busca, sem nenhuma chamada à API de busca 349ms
+     ✓ organizador vê o link e acessa a busca 324ms
+     ✓ quem já tem sessão não fica preso em /entrar nem /cadastro 338ms
+ ✓ src/components/format.test.ts (10 tests) 13ms
+ ✓ src/pages/UsersSearchPage.test.tsx (6 tests) 2332ms
+   ✓ Busca de usuários (organizador) (6)
+     ✓ exige ao menos um filtro e não chama a API sem isso 709ms
+     ✓ envia os filtros como parâmetros, com Bearer Token, e lista os resultados 501ms
+     ✓ estado vazio: mensagem clara 350ms
+     ✓ pagina: próxima página pede page=1 e "Anterior" fica desabilitado na primeira 373ms
+ ✓ src/config.test.ts (4 tests) 8ms
+ ✓ src/api/errors.test.ts (7 tests) 11ms
+ ✓ src/pages/LoginPage.test.tsx (7 tests) 1043ms
+ ✓ src/security.test.ts (7 tests) 313ms
+   ✓ em execução (1)
+     ✓ login, consulta e erros não vazam senha, token ou Authorization para o console nem para a tela 305ms
+ ✓ src/pages/HomePage.test.tsx (5 tests) 777ms
+   ✓ Início (5)
+     ✓ participante vê os atalhos da jornada e não vê a área do organizador 319ms
+ ✓ src/pages/OrganizerPages.test.tsx (30 tests) 6282ms
+   ✓ Meus eventos (organizador) (4)
+     ✓ lista os eventos do usuário (rascunhos incluídos) com Bearer e link para gerenciar 854ms
+     ✓ falha mostra o erro e "Tentar novamente" refaz a chamada 314ms
+     ✓ paginação usa o total: "Próxima" só existe se há mais eventos 306ms
+   ✓ Novo evento (3)
+     ✓ cria o rascunho com o contrato certo e leva à página de gestão 422ms
+   ✓ Gerenciar evento (16)
+     ✓ cancelar exige confirmação; "Voltar" não chama a API; confirmar cancela 307ms
+     ✓ edita os dados do evento com PATCH e reflete o novo título 318ms
+ ✓ src/pages/NotificationsPage.test.tsx (13 tests) 6782ms
+   ✓ Notificações (7)
+     ✓ lista as mensagens com Nova/Lida, data e o link certo por tipo, com Bearer 842ms
+     ✓ não vira link o redirect_url nem um payment_id que não é UUID 325ms
+     ✓ estado vazio, e filtro "Não lidas" pede status DEFAULT,RECEIVED 333ms
+     ✓ "Carregar mais" usa o cursor next_base_notification_id e acrescenta 316ms
+     ✓ marcar uma como lida: PUT [{id,status:SEEN}] e passa a "Lida" 331ms
+     ✓ "Marcar todas como lidas" só envia as não lidas; erro parcial é informado e não marca a que falhou 359ms
+   ✓ Tempo real (WebSocket do Gateway) (6)
+     ✓ se a conexão cair, reconecta com espera crescente; fechamento 4000 (outra aba) NÃO reconecta 3403ms
+
+ Test Files  27 passed (27)
+      Tests  297 passed (297)
+   Start at  14:00:35
+   Duration  9.61s (tests 47%, environment 31%, transform 8%, import 8%, setup 6%)
+
+Environment  jsdom was created 27 times · 33.71s total, 31% of tracked time
+             create it once per worker with pool: 'vmThreads' (keeps per-file isolation) or isolate: false (shares it across files)
+             learn more: https://vitest.dev/guide/improving-performance#test-environments
+
+
+> eventhub-frontend@0.1.0 build
+> tsc --noEmit && vite build
+
+vite v8.3.5 building client environment for production...
+transforming...
+✓ 248 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.73 kB │ gzip:   0.47 kB
+dist/assets/index-Cz_d-l_p.css    6.60 kB │ gzip:   2.13 kB
+dist/assets/index-WcbG2LJJ.js   485.58 kB │ gzip: 145.38 kB
+
+✓ built in 202ms
