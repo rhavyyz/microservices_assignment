@@ -1,6 +1,6 @@
 # Monorepo
 
-Execução completa, dados de demonstração e testes: [`docs/running.md`](docs/running.md). Evidências de validação: [`docs/evidence/`](docs/evidence/README.md).
+Execução completa, dados de demonstração e testes: [`docs/running.md`](docs/running.md). Evidências de validação: `docs/evidence/`.
 
 Docker Compose monorepo of services: service-discoverer, gateway, certificates, events, subscription, payments, user, notifications, reports, plus the React frontend in `frontend/` (run with Vite, not in the Compose stack). Architecture decisions: the three ADRs in `docs/decisions/` and the implementation notes (DT-nn) in `docs/architecture/technical-decisions.md`.
 

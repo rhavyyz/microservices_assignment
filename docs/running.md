@@ -1,7 +1,7 @@
 # Como executar, testar e demonstrar o EventHub
 
 Passo a passo único para subir a pilha inteira, criar dados de demonstração e rodar todos os testes. Os detalhes de cada serviço estão nos READMEs
-das pastas. As evidências a anexar à entrega ficam em [`docs/evidence/`](evidence/README.md).
+das pastas.
 
 ## 1. Pré-requisitos
 

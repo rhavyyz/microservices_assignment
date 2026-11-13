@@ -1,10 +1,5 @@
 # Contratos e dependências com a equipe
 
-> Estado: **backend de Usuários implementado (Fases 0–5)**; frontend na próxima etapa.
-> Legenda: **Aprovado** (existe no código do repositório) · **Proposto** (sugestão desta entrega, aguardando confirmação) · **Pendente** (sem contrato; não foi inventado).
-> Revisado sobre o `main` em `b0753be` (Gateway e Notificações já mesclados).
-> **Atualização 2026-11-03:** a autenticação de JWT no Gateway (incluindo `/ws`) está **mesclada no `main`** (PR #7). Inscrições passa a confiar em `X-User-Id`/`X-User-Roles` do Gateway em vez de validar o JWT; isso está **implementado na branch `feat/subscription-gateway-identity`, ainda não mesclado** (itens marcados com "(branch)"). Decisão em DT-03.
-
 ## 1. Inventário do repositório
 
 | Item | Estado encontrado | Consequência |
