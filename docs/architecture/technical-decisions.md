@@ -218,7 +218,7 @@ O repositório não define pilha para Usuários. O prompt exige versões estáve
 - H2 nos ITs: não valida constraints do PostgreSQL real.
 
 ### Consequências
-O código foi inicialmente escrito sem acesso ao Maven Central. A primeira execução real (ver `docs/testing/test-report.md`) confirmou as premissas de API do Boot 4.1.1, springdoc 3.0.3 × Boot 4.1, Testcontainers 2.0.5 (`org.testcontainers.postgresql.PostgreSQLContainer`) e `spring.jackson.deserialization.fail-on-unknown-properties`: tudo compilou e funcionou. Os únicos ajustes foram bugs de teste.
+O código foi inicialmente escrito sem acesso ao Maven Central. A primeira execução real (ver `docs/evidence/resultados.md`) confirmou as premissas de API do Boot 4.1.1, springdoc 3.0.3 × Boot 4.1, Testcontainers 2.0.5 (`org.testcontainers.postgresql.PostgreSQLContainer`) e `spring.jackson.deserialization.fail-on-unknown-properties`: tudo compilou e funcionou. Os únicos ajustes foram bugs de teste.
 
 
 ## DT-05 — Tópicos Kafka são criados pelo serviço que os usa, antes de consumir ou publicar

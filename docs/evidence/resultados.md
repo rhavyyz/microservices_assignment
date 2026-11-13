@@ -41,9 +41,6 @@ Mecanismo: a reserva é feita sob bloqueio da atividade no banco de Inscrições
 inscrição `PENDING_PAYMENT`, pagamento simulado aprovado e inscrição `CONFIRMED`. Passam por Gateway, Usuários, Eventos, Inscrições e Pagamentos
 (Java, Node, Python e Go na mesma requisição de ponta a ponta), com Kafka e Notificações no caminho assíncrono.
 
-Relatório do evento depois do fluxo (captura da tela de relatório): 5 inscrições (3 confirmadas, 1 aguardando pagamento, 1 recusada), 1 pagamento
-aprovado, 1 recusado e receita de R$ 50,00, coerentes com o que foi executado.
-
 ## 4. Falhas de dependência (`logs/11-falhas.txt`)
 
 | Cenário | Esperado | Observado |

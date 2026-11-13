@@ -1,6 +1,6 @@
 # Monorepo
 
-Execução completa, dados de demonstração e testes: [`docs/running.md`](docs/running.md). Evidências de validação: [`docs/evidence/`](docs/evidence/README.md).
+Execução completa, dados de demonstração e testes: [`docs/running.md`](docs/running.md). Evidências de validação: `docs/evidence/`.
 
 Docker Compose monorepo of services: service-discoverer, gateway, certificates, events, subscription, payments, user, notifications, reports, plus the React frontend in `frontend/` (run with Vite, not in the Compose stack). Architecture decisions: the three ADRs in `docs/decisions/` and the implementation notes (DT-nn) in `docs/architecture/technical-decisions.md`.
 
@@ -15,7 +15,7 @@ UI-facing entry point on host port `8080` (so it cannot be scaled). Call `/{kind
 - Pipeline, outermost first: Logging, Resolve, Auth, RateLimit, DefaultHeaders, Proxy (CORS wraps everything). Each endpoint has four settings stored in Mongo (editable via the admin PUT):
   - `maxPerMin` (default `DEFAULT_MAX_PER_MIN`): fixed one-minute window per gateway instance, 429 + `Retry-After` when exceeded; `0` blocks the endpoint.
   - `rateLimitBy` (default `user_or_ip`): how the counter is keyed. `user_or_ip` = `X-User-Id` if present, else client IP; `ip` = always client IP (use for login-style endpoints so a rotating or missing user header cannot dodge the limit); `global` = one shared counter per endpoint.
-  - `requireAuth` (default `false`): when `true`, a missing/empty `X-User-Id` gets 401, before rate limiting (so it consumes no budget). This is only a header-presence check for now: `X-User-Id` is trusted as-is and identity is not verified.
+  - `requireAuth` (default `false`): when `true`, the gateway verifies the RS256 JWT (issuer `eventhub-users`, key from the Users JWKS): no token or an invalid one gets 401, no key available gets 503, before rate limiting (so it consumes no budget). On success it sets `X-User-Id` (`sub`) and `X-User-Roles`; any client-sent value of these headers is discarded.
   - `isPublic` (default `false`, secure by default): when `false`, callers get the same 404 as for a nonexistent endpoint (no hint that the route exists, no rate-limit budget consumed, no downstream call). A freshly synced endpoint is therefore unreachable until an admin PUTs `{"isPublic": true}`, unless the service declared `isPublic: true` for it in its OpenAPI (see `x-gateway` below). Private endpoints still take part in matching: with a private `GET /users/me` and a public `GET /users/{id}`, `/users/me` is 404 (it does not fall through to `/users/{id}`). The admin API still lists and edits private endpoints.
   - Documents stored before these fields existed read as the defaults; no migration needed. Note that this means existing endpoints in an already-populated DB become private after the `isPublic` change, until flipped with the admin PUT.
 - Client IP is the connection address. Only if it is inside `TRUSTED_PROXIES` (comma-separated IPs/CIDRs, default empty) is `X-Forwarded-For` read, from the right, taking the first address that is not itself a trusted proxy; otherwise the header is ignored so it cannot be forged. Invalid entries make the gateway refuse to start. `DefaultHeaders` still forwards incoming `X-Forwarded-*` as-is.
@@ -188,7 +188,7 @@ Run the tests (needs JDK 21; `*IT` need Docker):
 
 Run outside Docker: publish the database with `docker compose --env-file .env -f user/docker-compose.yml -f user/docker-compose.dev.yml up -d user-db`, then export `USERS_DB_URL=jdbc:postgresql://localhost:5433/users`, `USERS_DB_USER`, `USERS_DB_PASSWORD`, `USERS_JWT_PRIVATE_KEY_FILE=$PWD/user/.keys/jwt-private.pem`, `USERS_DISCOVERY_ENABLED=false` and run `./mvnw spring-boot:run` in `user/`.
 
-> Status: the backend test suite is `cd user && ./mvnw verify` (needs Docker); run it after pulling, since other teams changed the service (trace id, access log, OpenAPI gateway settings). See `docs/testing/test-report.md` for the last recorded results.
+> Status: the backend test suite is `cd user && ./mvnw verify` (needs Docker); run it after pulling, since other teams changed the service (trace id, access log, OpenAPI gateway settings). See `docs/running.md` (section 5) for all test commands and `docs/evidence/resultados.md` for the last recorded results.
 
 ## Frontend (`frontend/`)
 React 19 + TypeScript + Vite: catálogo público de eventos, inscrição por atividade, minhas inscrições, cadastro, login, perfil e, para organizadores, busca de usuários e a área do organizador (criar, editar, publicar e cancelar eventos, atividades, participantes e check-in). Também: pagamento das inscrições (provedor simulado) e notificações em tempo real (WebSocket do Gateway, com consulta periódica como reserva). Fala só com o Gateway. Docs: `docs/architecture/frontend.md`, `docs/architecture/technical-decisions.md` (DT-07), (DT-08).
