@@ -1,7 +1,7 @@
 # Evidências de validação
 
-Esta pasta guarda o que prova que o sistema funciona e que pode ser reproduzido. O **plano** e os **resultados dos testes automatizados**
-estão em [`docs/testing/`](../testing/). Aqui ficam as evidências de execução da pilha inteira, que só podem ser geradas com Docker e navegador.
+Esta pasta guarda o que prova que o sistema funciona e que pode ser reproduzido. Os **comandos dos testes automatizados** estão na
+seção 5 de [`docs/running.md`](../running.md#5-testes) e seus resultados em [`resultados.md`](resultados.md). Aqui ficam as evidências de execução da pilha inteira, que só podem ser geradas com Docker e navegador.
 
 ## O que anexar (marque ao concluir)
 

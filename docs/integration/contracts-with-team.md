@@ -1,197 +1,294 @@
-# Contratos e dependências com a equipe
+# Contratos entre os serviços
 
-## 1. Inventário do repositório
+Este documento descreve **o que cada serviço oferece e consome** (REST e Kafka) e **como os serviços se relacionam**.
+É um índice de contratos: o detalhe campo a campo fica no documento de cada serviço, que é a fonte de verdade
+(seção 9). Se este texto divergir do código, vale o código.
 
-| Item | Estado encontrado | Consequência |
-|---|---|---|
-| `service-discoverer/` (Go) + libs Python/Go/**Java** | Implementado. Registro **em memória**; exige `GET /healthcheck` 2xx; remove hosts sem saúde após ~1 min. | Usuários usa a lib Java e **re-registra periodicamente** (DT-03). |
-| `gateway/` (Go) | **Implementado**: rota `/{kind}/...`, tabela de endpoints no MongoDB, CORS, rate limit, `/admin/endpoints`, WebSocket `/ws`. | Contrato lido do código (seção 2). Substitui as suposições anteriores P1–P4. |
-| `notifications/` (Go) | Implementado (Kafka → MongoDB, API de listagem). | Não consome Usuários; usa `X-User-Id` (ver P13). |
-| `user/` | **Serviço implementado** (Spring Boot 4.1, Java 21, PostgreSQL). | Esta entrega. |
-| `events/` | Implementado conforme o contrato de Inscrições (seção 4b.1, DT-10). | Inscrições consegue consumir a API real. |
-| `subscription/`, `payments/`, `reports/`, `certificates/` | Ver seções 4b/4c e DT-06/DT-09 (a ressalva antiga de que Relatórios lia o formato antigo de Eventos **não se confirmou** no teste de ponta a ponta de 2026-11-11: nome, status e atividades chegaram corretos). | — |
-| `docker-compose.yml` raiz | Kafka KRaft; o **Gateway publica `8080:8080`** (única porta do host). Entrada `user:` editada por Usuários. | URL de desenvolvimento: `http://localhost:8080` (P1 resolvida). |
+## 1. Mapa de relações
 
-## 2. Contrato do Gateway (Aprovado — lido do código)
+```text
+                         ┌────────────┐   JWKS (GET /.well-known/jwks.json)
+  Frontend ── HTTP ────► │  Gateway   │ ◄───────────────────────────────┐
+  (React)   /{kind}/...  │ :8080      │                                 │
+       ▲                 └─────┬──────┘                          ┌──────┴─────┐
+       │ WebSocket /ws         │ HTTP (kind via discoverer)      │  Usuários  │
+       │                       ▼                                 └──────▲─────┘
+       │        Usuários · Eventos · Inscrições · Pagamentos ·          │ GET /internal/users/{id}
+       │        Relatórios · Certificados · Notificações                │
+       │                                                                │
+       │   REST entre serviços (via discoverer)                         │
+       │     Inscrições ──► Eventos      (atividade, permissão)         │
+       │     Pagamentos ──► Inscrições   (fatos da inscrição)           │
+       │     Certificados ─► Eventos, Usuários ─────────────────────────┘
+       │
+       │   Kafka (cada serviço publica só os próprios eventos de domínio)
+       │     Eventos     ──► events.events        ──► Inscrições, Relatórios
+       │     Inscrições  ──► subscription.events  ──► Pagamentos, Certificados, Relatórios
+       │     Pagamentos  ──► payments.events      ──► Inscrições, Relatórios
+       │     Inscrições, Pagamentos ──► notifications ──► Notificações
+       └──── Notificações ──► notifications-push ──► Gateway
+```
 
-| Comportamento | Detalhe | Efeito em Usuários |
-|---|---|---|
-| Roteamento | `/{kind}/resto` → instância saudável do kind (via discoverer), **prefixo `/{kind}` removido**. | O frontend chama `{GATEWAY}/user/api/v1/...`. |
-| Descoberta de endpoints | O Gateway lê **`GET /openapi.json`** de cada kind (só `paths` + métodos) e registra cada par método/caminho. | O serviço publica `/openapi.json` (springdoc). |
-| Visibilidade | Endpoints nascem **privados (404)**, `requireAuth=false`, `maxPerMin` padrão. Só `PUT /admin/endpoints` altera. | `user/scripts/register-gateway-routes.sh` abre os endpoints necessários. |
-| `requireAuth` | O Gateway verifica o JWT (RS256, `iss`, `exp`, chave do JWKS de Usuários): sem token ou token inválido → `401`; sem chave disponível → `503`. | Mantido `false` em Usuários; o serviço valida o JWT. Ver P3. |
-| Identidade injetada | Em toda rota o Gateway apaga `X-User-Id`/`X-User-Roles` do cliente; com token válido define `X-User-Id` = `sub` e `X-User-Roles` = `roles` (separadas por vírgula). Em rota sem `requireAuth`, token ausente ou inválido segue **anônimo**. `Authorization` é repassado sem alteração. | Usuários continua ignorando esses cabeçalhos e valida o próprio JWT (é quem emite o token). Inscrições **(branch)** confia nos cabeçalhos. |
-| WebSocket `/ws` | Token em `Authorization: Bearer` ou `?access_token=` (cabeçalho vence). `X-User-Id` e `?user_id=` **não são mais aceitos**. Falha → `401`/`503` antes do upgrade. A conexão aberta sobrevive ao `exp`. | Nenhum em Usuários. Mudança incompatível, aceita: o `/ws` ainda não tem consumidores. |
-| CORS | Gateway responde preflight e define cabeçalhos; **reflete qualquer `Origin` com credenciais**; remove `Access-Control-*` do serviço. | Usuários **não** configura CORS (DT-03). |
-| Correlação | Usa **`X-Trace-Id`** (gera se ausente; ecoa na resposta). | Usuários adota `X-Trace-Id` em vez de `X-Correlation-Id` do prompt. `X-Request-Id` (nome antigo) é ignorado, sem fallback. Em Kafka, o mesmo valor segue no campo `trace_id` (snake_case, string ou null) dos eventos de Inscrições e Pagamentos; é nulo em trabalho de fundo e Pagamentos o devolve nos resultados. |
-| Rate limit | Por endpoint; `user_or_ip` usa `X-User-Id`. valor verificado (`sub`); um cabeçalho forjado não escolhe o balde. | Script usa `rateLimitBy=ip`. |
-| Admin API | **Sem autenticação**, sem porta no host. | Não expor publicamente. |
+Regras gerais de relacionamento:
 
-### Rotas de Usuários no Gateway
+- **Declarativo e reativo.** Nenhum serviço envia comandos a outro por Kafka. Cada um publica fatos sobre o que é seu
+  e reage aos fatos dos outros (ADR-002).
+- **REST só para consulta imediata**, sempre pelo service-discoverer (kind → host saudável). Nunca por endereço fixo.
+- **Cada serviço é dono do seu banco.** Nenhum lê o banco de outro; quem precisa de dados alheios consome eventos
+  (Relatórios) ou consulta a API (Certificados).
+- **Entrada única:** o Gateway é o único acesso externo. Endpoints `/internal/...` e `permissions/me` não são
+  abertos nele; são protegidos por isolamento de rede.
 
-| Método | Caminho público | Destino | Aberto pelo script | Limite |
-|---|---|---|---|---|
-| POST | `/user/api/v1/auth/register` | `/api/v1/auth/register` | sim | 10/min/IP |
-| POST | `/user/api/v1/auth/login` | `/api/v1/auth/login` | sim | 10/min/IP |
-| GET | `/user/api/v1/users/me` | `/api/v1/users/me` | sim | 120/min por usuário (IP se anônimo) |
-| PATCH | `/user/api/v1/users/me` | `/api/v1/users/me` | sim | 30/min por usuário (IP se anônimo) |
-| GET | `/user/api/v1/users?id=&email=&name=&page=&size=` | `/api/v1/users` | sim | 60/min por usuário (IP se anônimo); somente `ORGANIZER` |
-| GET | `/user/api/v1/admin/users?q=&organizerRequest=&page=&size=` | `/api/v1/admin/users` | sim | 60/min por usuário; somente `ADMIN` (DT-11) |
-| PUT | `/user/api/v1/admin/users/{id}/organizer` | `/api/v1/admin/users/{id}/organizer` | sim | 30/min por usuário; somente `ADMIN`; corpo `{"approved":bool}` |
-
-O cadastro aceita `requestedRole` (`PARTICIPANT`/`ORGANIZER`, opcional). `ORGANIZER` só abre um pedido `PENDING`; o papel é concedido por um `ADMIN` (DT-11). Os limites 10/min por IP (login e cadastro) agora saem do `x-gateway` do serviço, mas só valem em banco do Gateway novo (P33).
-| GET | `/.well-known/jwks.json` | — | **não** (servido direto via discoverer) | — |
-| GET | `/healthcheck`, `/openapi.json` | — | **não** (internos) | — |
-
-## 3. Contrato de descoberta (Aprovado)
-
-`POST /register {"kind":"user","host":"host:porta"}` → 204; `GET /consult?kind=user` → `{"host":...}`. Variáveis: `SERVICE_DISCOVERER_URL`, `SERVICE_HOST`, `PORT`. Divergência com o prompt: `/healthcheck` (contrato do repositório) em vez de `/actuator/health`.
-
-## 4. Pendências para a equipe
-
-| # | Pergunta concreta | Proposta provisória | Quem confirma | Efeito |
-|---|---|---|---|---|
-| P1 | URL pública do Gateway em dev. | **Resolvida:** o compose publica `8080:8080`; o frontend usa `VITE_API_BASE_URL=http://localhost:8080` (sem valor fixo no código). | Gateway | Nenhum. |
-| P3 | **Quem valida o JWT e define `X-User-Id`?** **Resolvido: o Gateway (DT-03, mesclado no `main`, PR #7).** Antes, ninguém: o Gateway só conferia a presença do cabeçalho e Notificações confiava nele (e no `user_id` da URL do `/ws`). | **O Gateway** valida o JWT (JWKS de Usuários), **remove** o `X-User-Id`/`X-User-Roles` recebidos e injeta `sub`/`roles`; o `/ws` segue a mesma regra. Restam em aberto: (a) `requireAuth=true` em `/users/me` (hoje `false`; o script de rotas de Usuários não foi alterado); (b) **os serviços só podem confiar em `X-User-Id` se forem alcançáveis apenas pelo Gateway**: o modelo adotado é de rede fechada, em que o Gateway é a única porta publicada no host e os serviços internos são confiáveis entre si (um contêiner dentro da rede pode forjar o cabeçalho; ver DT-03); (c) Usuários continua **sem** confiar em `X-User-Id` e valida o próprio JWT. | Gateway + Notificações | Nenhuma em Usuários. Futuros clientes do `/ws` devem enviar o JWT (ver seção 2). |
-| P5 | Como os serviços obtêm a chave pública? | `GET /.well-known/jwks.json` via `GET /consult?kind=user`. O Gateway faz isso com cache em memória, atualização a cada 10 min e nova busca (no máximo 1 por 30 s) quando chega um `kid` desconhecido. | Todos | Endpoint já existe. |
-| P6 | `iss` e `aud`. | `iss=eventhub-users` (configurável; o Gateway lê `JWT_ISSUER`), sem `aud`. | Todos | Validação nos consumidores. |
-| P7 | Fluxo aprovado para criar `ORGANIZER` em produção. | **Resolvido no código (DT-11):** cadastro com pedido de organizador + aprovação por um `ADMIN` (`/api/v1/admin/users`). Falta validar de ponta a ponta e a equipe confirmar o fluxo. | Equipe/docente | Baixa. O papel só vale após novo login (token de 30 min). |
-| P8 | Usuários publica evento Kafka? | **Não.** Nenhum tópico criado. | Notificações | Sem Kafka no serviço. |
-| P9 | Certificados: nome do participante por snapshot em Inscrições ou endpoint interno? **Resolvido (DT-06):** endpoint interno de Usuários `GET /internal/users/{id}`, sem autenticação, devolvendo **somente `id` e `name`**, protegido pelo isolamento de rede e nunca registrado no Gateway. Certificados só emite ao consumir `AttendanceEligible`. | Ver DT-06. | Certificados + Usuários | Usuários expõe o endpoint interno; Certificados o consome. |
-| P10 | Onde o frontend é servido? | Pasta `frontend/` com build estático; compose raiz não alterado. | Equipe | Próxima etapa. |
-| P12 | Força bruta no login. | Limite por IP no Gateway (script). Usuários não limita. IPs compartilhados (campus/NAT) podem ser bloqueados juntos. | Gateway | Limitação conhecida. |
-| P13 | O cadastro retorna `409` para e-mail existente (exigido), o que permite enumerar e-mails. | Mitigar com o rate limit do Gateway. | Equipe | Aceito conscientemente. |
-| P14 | O Gateway **reflete qualquer `Origin` com `Allow-Credentials: true`**. Hoje é inofensivo (Bearer em memória, sem cookies), mas vira falha se algum serviço passar a usar cookies. | Restringir às origens do frontend por ambiente. | Gateway | Nenhuma em Usuários. |
-| P15 | O Gateway define `X-Trace-Id` e o proxy copia o do serviço: o cabeçalho pode chegar duplicado (`a, a`). | Frontend usa o `traceId` do corpo de erro. | Gateway | Cosmético. |
-| P16 | Sem `USERS_DB_PASSWORD` no `.env`, o `user-db` não inicia (de propósito, sem senha padrão) e o `user` fica aguardando; os demais serviços não são afetados. | Copiar `.env.example` para `.env`. | Equipe | Documentado no README. |
-| P18 | **Busca de usuários** (`GET /api/v1/users`) expõe nome e e-mail de terceiros. Padrão adotado: somente `ORGANIZER`, ao menos um filtro, paginada (máx. 50), sem hash/senha, filtros fora dos logs. Um organizador enxerga **todos** os usuários (não só os inscritos em seus eventos). | Se o requisito for "só inscritos nos meus eventos", o filtro deve ficar com Inscrições; ou Usuários expõe consulta interna por lista de ids. | Equipe/docente | Decidir antes de usar em produção. |
-| P17 | Compose raiz: entrada `user:` ganhou `build.additional_contexts`, `depends_on`, `environment` e `volumes` (padrão idêntico ao de `notifications`). | — | Equipe | Revisar o diff. |
-| P19 | **A API de admin do Gateway (`/admin/endpoints`) não tem autenticação e agora está na porta publicada `8080`** (o código já avisa para não expô-la). Quem alcança a porta consegue abrir rotas privadas, desligar `requireAuth` e alterar limites; o `docker-compose` publica em todas as interfaces (`0.0.0.0`). | Em dev: publicar só em loopback (`127.0.0.1:8080:8080`) ou proteger `/admin` (token no cabeçalho ou outra porta interna). | Gateway | Nenhuma em Usuários; risco de segurança. |
-| P20 | O Gateway valida `iss` com `JWT_ISSUER` (padrão `eventhub-users`), mas o compose **não o repassa**. Se `USERS_JWT_ISSUER` for alterado no `.env`, o Gateway passa a recusar todos os tokens (rotas `requireAuth`) ou a tratá-los como anônimos. | No serviço `gateway` do compose: `JWT_ISSUER: ${USERS_JWT_ISSUER:-eventhub-users}`. Enquanto isso, não alterar o emissor (comentário no `.env.example`). | Gateway | Nenhuma em Usuários. |
-| P21 | **Resolvida no código:** Eventos passou a implementar o contrato que Inscrições consome (`/api/v1/activities/{id}`, `/permissions/me`, `amount_minor`, `currency`, `registration_open`). | Validar de ponta a ponta com os serviços de pé: criar uma inscrição pela interface e conferir `201`. O frontend foi escrito contra o contrato novo; antes dessa mudança ele quebraria. | Eventos + Inscrições | Verificação pendente (sem Docker no ambiente de desenvolvimento). |
-| P22 | Inscrições serializa datas com `str(datetime)` do Python (`2026-11-03 23:25:45+00:00`, com espaço), e não com ISO 8601 como os demais serviços. | Usar ISO 8601 (`...T...Z`). O frontend normaliza enquanto isso. **Provavelmente resolvida:** no teste de ponta a ponta de 2026-11-11 `expires_at` veio com `T`; conferir `serializable()` e marcar como resolvida. | Inscrições | Safari e outros motores estritos falhariam sem a normalização. |
-| P23 | Erros de Inscrições vêm com `title` igual ao `code` e sem `detail`; os de Eventos vêm com `detail` em inglês. | O frontend traduz pelo código (`CODE_MESSAGES`). Manter os códigos estáveis e avisar ao criar novos. | Eventos + Inscrições | Código novo sem tradução cai numa mensagem genérica. |
-| P24 | Os serviços declaram `x-gateway` no OpenAPI, **mas o Gateway só semeia endpoints novos** (`SyncKind` nunca altera `isPublic`, `requireAuth` ou limites de rotas existentes). Com um banco do Gateway antigo, rotas criadas antes do `x-gateway` seguem privadas e respondem `404` direto do Gateway (µs, sem chegar ao serviço). Alguns READMEs de serviço ainda mandam rodar scripts de registro. | Em desenvolvimento: `docker compose down` e `docker compose -f gateway/docker-compose.yml down -v`, depois subir de novo; ou `PUT /admin/endpoints` por rota. Idealmente o Gateway deveria reconciliar as rotas declaradas (ou avisar quando o `x-gateway` divergir do armazenado). | Gateway | Média: causa um `404` difícil de diagnosticar. |
-| P25 | A lista de participantes (`GET /activities/{id}/registrations`) traz só `user_id`, e **não informa quem já fez check-in**. O frontend busca nome/e-mail com uma chamada de busca de usuários **por participante** (até 50 por página). | Usuários poderia oferecer busca em lote por ids (`ids=a,b,c`); Inscrições poderia incluir `checked_in_at` (ou um flag) na listagem. Enquanto isso o check-in é idempotente e a tela avisa que não mostra presenças anteriores. | Usuários + Inscrições | Pode esbarrar no limite de taxa do Gateway numa página cheia; nesse caso a tela mostra o id curto em vez do nome. |
-| P26 | O WebSocket `/ws` do Gateway só aceita o token no cabeçalho `Authorization` ou em `?access_token=`. O navegador **não consegue** enviar cabeçalho, então o frontend usa a query, que pode aparecer em logs de proxies e do navegador. O Gateway registra só o caminho. | Aceitar um ticket de uso único (emitido por uma rota autenticada) ou o token via subprotocolo (`Sec-WebSocket-Protocol`); manter TLS obrigatório e token de vida curta. | Gateway | Média em produção sem TLS. |
-| P27 | O `redirect_url` das notificações não é preenchido por nenhum serviço (Pagamentos e Inscrições mandam só `payload` + `payload_type`). O frontend monta o destino pelo tipo. | Se um dia for usado, definir que é um caminho interno relativo (não URL absoluta). O frontend não o segue. | Notificações + produtores | Baixa. |
-| P28 | O contador de não lidas é uma consulta (`limit=100`, status `DEFAULT,RECEIVED`): o serviço não oferece contagem. | Um campo/rota `unread_count`. | Notificações | Baixa: acima de 100 a interface mostra "100+". |
-| P29 | Pagamentos não devolve o `activity_id` de pagamentos antigos (nulo) e o nome da atividade não vem na resposta; a tela mostra só valor, situação e prazo. | Opcional: incluir título da atividade/evento na resposta. | Pagamentos | Baixa. |
-
-| P30 | Relatórios e Certificados não informam o fuso/atraso do modelo de leitura: o frontend avisa que os números podem atrasar e oferece "Atualizar", mas não há campo "atualizado em". | Incluir `generated_at`/`as_of` no `summary`. | Relatórios | Baixa. |
-| P31 | `GET /certificates/me` não devolve total; o frontend só oferece "Próxima" quando a página vem cheia (pode abrir uma página vazia se o total for múltiplo de 50). Certificados antigos têm `event_id` nulo e aparecem sem título do evento. | Incluir `total` e, se possível, o título do evento. | Certificados | Baixa. |
-| P32 | **Papel retirado continua valendo nos tokens já emitidos** até expirarem (30 min): o JWT carrega `roles` e os outros serviços confiam na claim (DT-11). Só o serviço de Usuários confere o papel no banco. | Se for exigido efeito imediato: consultar permissões por requisição ou encurtar a validade do token. | Todos os serviços que usam `roles` | Baixa. |
-| P33 | Rotas novas de administração (`GET /api/v1/admin/users`, `PUT /api/v1/admin/users/{id}/organizer`) e os limites 10/min por IP de login e cadastro entram no `x-gateway` (DT-11). O Gateway só semeia rotas novas: num banco do Gateway **já populado** os limites de login/cadastro **não mudam** (E1 do relatório). | Aplicar `user/scripts/register-gateway-routes.sh` ou `PUT /admin/endpoints`; ou recriar o banco do Gateway. | Gateway + Usuários | Média: sem isso o limite anti-força-bruta não vale em instalações antigas. |
-| P34 | **(relatório de testes, E2)** Inscrições responde `422` em `application/json` (`{"detail":[…]}`, ecoa a entrada) para UUID inválido e JSON malformado, fora do `problem+json` com `code`/`traceId`. Causa: sem handler para `RequestValidationError` em `subscription/app/api.py`. | Handler que devolva `problem+json` (`400 VALIDATION_ERROR`, ou `422` com código) e documentar o código. | Inscrições | Baixa: o frontend só envia UUIDs válidos. |
-| P35 | **(E3)** Pagamento `EXPIRED`: a inscrição segue `PENDING_PAYMENT` e a vaga presa até o prazo da reserva (15 min); a notificação diz "A vaga reservada foi liberada" antes disso; `POST /payments` devolve o mesmo pagamento `EXPIRED`, então não dá para pagar de novo. | Decisão de produto: (a) Inscrições trata `PaymentExpired` como `PaymentDeclined` (expira e promove a lista de espera), ou (b) Pagamentos permite nova cobrança e corrige o texto. | Pagamentos + Inscrições | **Alta** para o fluxo de pagamento. A tela de pagamento do frontend mostra "expirado" enquanto a inscrição segue pendente. |
-| P36 | **(C3)** O PDF do certificado sai em inglês, com `Title: untitled` e `Author: anonymous`. | Traduzir, formatar a data em pt-BR e preencher título/autor/assunto (`pdf_generator.py`). | Certificados | Cosmética. |
-| P37 | **(C4)** Quem estava na lista de espera recebe "O prazo da sua reserva terminou." quando a atividade termina, sem nunca ter tido reserva. | Texto próprio para `WAITLISTED` (`service.py`). | Inscrições | Cosmética. |
-
-## 4b. Tópicos Kafka (Aprovado — DT-05)
-
-Quem usa o tópico garante que ele existe antes de consumir ou publicar (cria se ausente; nunca altera um existente; 6 partições por padrão).
-
-| Tópico | Produz | Consome | Garantem a criação (hoje) |
-|---|---|---|---|
-| `notifications` | Inscrições (outros serviços) | Notificações | Notificações, Inscrições |
-| `notifications-push` | Notificações | Gateway (`/ws`) | Notificações, Gateway |
-| `payments.events` | Pagamentos | Inscrições | Inscrições |
-| `events.events` | Eventos (envelope plano; chave `activity_id` em `ActivityEnded`/`ActivityCancelled`, `event_id` nos demais) | Inscrições (trata só `ActivityEnded`/`ActivityCancelled`; ignora os outros tipos) | Inscrições, Eventos |
-| `subscription.events` | Inscrições | Pagamentos (grupo `payments-service`) / Certificados (grupo `certificates-service`) / Relatórios | Inscrições, Pagamentos, Certificados |
-| `subscription.dlq` | Inscrições | Operação (manual) | Inscrições |
-| `certificates.dlq` | Certificados | Operação (manual) | Certificados |
-| `reports.dlq` | Relatórios | Operação (manual) | Relatórios |
-
-Inscrições/Pagamentos é declarativo (DT-09): Inscrições não envia comandos; publica `RegistrationPendingPayment`, `RegistrationCancelled`, `RegistrationExpired` etc. em `subscription.events` e Pagamentos reage. Pagamentos cria a cobrança lendo os fatos por HTTP em `GET /internal/registrations/{registration_id}` de Inscrições (rota interna, sem autenticação, fora do Gateway; resposta `registration_id`, `activity_id`, `user_id`, `status`, `amount_minor`, `currency`, `expires_at`, `event_id`; 404 se desconhecida). Inscrições consome `payments.events` (`PaymentCreated`, `PaymentApproved`, `PaymentDeclined`, `PaymentExpired`, `PaymentCancelled`, `PaymentRefunded`, com `registration_id`, `amount_minor`, `currency`, `trace_id` opcional; campos adicionais ignorados). Detalhes em `subscription/CONTRACTS.md`.
-
-Certificados e Pagamentos já usam Kafka e criam os tópicos que consomem/produzem (DT-06, DT-09). Eventos publica em `events.events` e cria o tópico; **Eventos não consome Kafka** (DT-10). Relatórios ainda não foi adaptado: ao usar Kafka deve criar os tópicos que produz ou consome do mesmo modo.
-
-### 4b.1 Eventos (Aprovado — DT-10)
-
-Eventos implementa o contrato que Inscrições já consome, sob `/api/v1`:
+## 2. Convenções comuns
 
 | Item | Contrato |
 |---|---|
-| `GET /api/v1/activities/{activity_id}` | `activity_id`, `event_id`, `capacity`, `amount_minor`, `currency`, `registration_open`, `waitlist_enabled`, `starts_at`, `ends_at`, mais campos descritivos (`title`, `description`, `speaker`, `location`, `paid`, `lifecycle`, `ended_at`, `created_at`, `updated_at`) que Inscrições ignora. |
-| `GET /api/v1/activities/{activity_id}/permissions/me` | `{"can_manage": bool}`. |
-| `POST /api/v1/activities/{activity_id}/end` | Encerramento manual pelo organizador, somente depois de `ends_at`. Há também encerramento automático após `ACTIVITY_AUTO_END_AFTER_SECONDS` (padrão 86400) do `ends_at`. |
-| Identidade | Só `X-User-Id`/`X-User-Roles`; Eventos não valida JWT e ignora `Authorization`. |
-| Assentos | Eventos guarda só a capacidade máxima; **Inscrições é o único contador de vagas**. Eventos não consome Kafka. |
-| `events.events` | Envelope plano `message_id`, `schema_version=1`, `type`, `occurred_at`, `trace_id` + campos do tipo. Tipos: `ActivityEnded`, `ActivityCancelled` (`activity_id`, `event_id`, `ends_at`; chave = `activity_id`), `EventCreated`, `EventUpdated`, `EventPublished`, `EventCancelled`, `ActivityCreated`, `ActivityUpdated`, `ActivityDeleted` (chave = `event_id`). Cancelar um evento cancela suas atividades. |
+| URL pública | `{GATEWAY}/{kind}/<caminho do serviço>`; o Gateway remove o prefixo `/{kind}`. Kinds: `user`, `events`, `subscription`, `payments`, `reports`, `certificates`, `notifications`. |
+| Identidade | O Gateway verifica o JWT (RS256, `iss=eventhub-users`, chave do JWKS de Usuários) e envia **`X-User-Id`** (`sub`, UUID) e **`X-User-Roles`** (papéis separados por vírgula; ausente sem papéis). Os serviços confiam só nesses cabeçalhos; qualquer valor vindo do cliente é apagado pelo Gateway. Usuários é a exceção: emite e valida o próprio JWT. |
+| Correlação | **`X-Trace-Id`** (`^[A-Za-z0-9._-]{8,64}$`): o Gateway mantém o valor válido ou gera um UUID; os serviços o ecoam na resposta, usam no log, devolvem em `traceId` nos erros e gravam em `trace_id` nos eventos Kafka (nulo em trabalho de fundo). `X-Request-Id` e `X-Correlation-Id` são ignorados. |
+| Erros | `application/problem+json` com `{title, status, code, detail?, traceId}` (Eventos acrescenta `errors[]` em validação). O `code` é estável e é o que o cliente deve testar. |
+| Dinheiro | `amount_minor`: inteiro em centavos; `currency` = `BRL`. `0` = gratuita. |
+| Datas | ISO 8601 com fuso. |
+| Ids | UUID. |
+| Saúde | `GET /healthcheck` em todo serviço (200 quando o próprio banco responde; Kafka fora do ar **não** derruba a saúde). O discoverer remove hosts sem 2xx após cerca de 1 minuto. |
+| OpenAPI | `GET /openapi.json` em cada serviço; o Gateway o lê para descobrir rotas e configurações (`x-gateway`). |
 
-Supersedidos (não são mais contratos vivos): o modelo antigo de Eventos com reserva de vagas (saga `registration.requested`/`seat.*`), os tópicos/grupos `events-events`/`subscription-events` e a validação de JWT em Eventos. Relatórios ainda lê o formato antigo de Eventos e deixa de projetar eventos/atividades até ser adaptado.
+## 3. Service-discoverer
 
-## 4c. Certificados (Aprovado — DT-06)
+| Operação | Contrato |
+|---|---|
+| `POST /register` | `{"kind": "<kind>", "host": "<host:porta>"}`. Registro em memória; os serviços re-registram periodicamente pela biblioteca `discovery` (Python, TypeScript, Go, Java). |
+| `GET /consult?kind=<kind>` | Devolve `{"host": "..."}` de uma instância saudável do kind (400 kind desconhecido, 503 sem instância). A biblioteca guarda em cache e consulta de novo se o host falhar. |
+| `GET /healthcheck` | Saúde do próprio discoverer. |
 
-| Direção | Contraparte | Contrato |
+Quem o usa: Gateway (roteamento), Inscrições → Eventos, Pagamentos → Inscrições, Certificados → Eventos e Usuários.
+
+## 4. Gateway
+
+| Contrato | Detalhe |
+|---|---|
+| Roteamento | `/{kind}/resto` → instância saudável do kind. Endpoints novos nascem **privados** (404); a configuração (`isPublic`, `requireAuth`, `maxPerMin`, `rateLimitBy`) vem do `x-gateway` do `openapi.json` (somente inserção) ou de `PUT /admin/endpoints`. |
+| `requireAuth=true` | Sem token ou token inválido → 401; sem chave do JWKS disponível → 503. Com `requireAuth=false`, token ausente ou inválido segue como anônimo, sem `X-User-Id`. |
+| CORS e rate limit | Aplicados no Gateway (preflight, cabeçalhos, limite por endpoint por IP ou por usuário). Os serviços não configuram CORS. |
+| `GET /ws` | WebSocket com `Authorization: Bearer` ou `?access_token=`; recebe as notificações do usuário empurradas por `notifications-push`. |
+| `GET/PUT /admin/endpoints` | Administração das rotas. **Sem autenticação** (limitação conhecida; não expor a porta). |
+| Kafka | Consome `notifications-push` (item 7). |
+
+## 5. Contratos REST por serviço
+
+Todos os caminhos abaixo são os do serviço (sem o prefixo `/{kind}`). “Pública” = aberta no Gateway; “interna” =
+só entre serviços.
+
+### 5.1 Usuários (`user`) — detalhe em `docs/api/users.openapi.yaml`
+
+| Operação | Acesso | Resultado |
 |---|---|---|
-| Consome | Inscrições, tópico `subscription.events` | Grupo `certificates-service`. Envelope: `message_id`, `schema_version=1`, `type`, `registration_id`, `activity_id`, `user_id`, `event_id` (UUID do evento em Eventos; presente em todo tipo, para Certificados e Relatórios), `aggregate_version`, `occurred_at`, `status`. Só `AttendanceEligible` é tratado; os demais tipos são ignorados. `AttendanceEligible` é **por evento (um por usuário e evento)** e acrescenta: `attended_activities` e `total_activities` (inteiros, `total >= 1`, `0 <= attended <= total`) e `attendance_percentage` (número = `attended*100/total` arredondado a 2 casas). `registration_id`/`activity_id` são os da inscrição que disparou (a última atividade a terminar). Inscrições só emite quando a regra RN06 (>= 75%) é atendida, depois do fim da última atividade confirmada do evento. Certificados valida o contrato, confere que o percentual é consistente com as contagens (tolerância 0,01) e aplica o próprio limiar de 75%; fora disso, a mensagem vai para a DLQ (`INVALID_CONTRACT` ou `NOT_ELIGIBLE`). |
-| Produz | Operação, tópico `certificates.dlq` | Somente referência (`source_topic`, `partition`, `offset`, `reason`) de mensagens venenosas. |
-| Chama | Eventos, `GET /api/v1/events/{event_id}` | JSON com `event_id`, `title`, `starts_at`, `ends_at` (ISO com fuso) e `status` (`DRAFT`, `PUBLISHED` ou `CANCELLED`; resposta sem `status` é inválida e gera nova tentativa). `title` é o nome no certificado e a data é a de `starts_at`. `CANCELLED` = mensagem venenosa (`EVENT_CANCELLED` na DLQ), verificado antes do término. O evento deve ter terminado (`agora >= ends_at`); se não terminou, a mensagem é **estacionada** na tabela `pending_attendance` do próprio serviço (o offset é confirmado, nada bloqueia) e um agendador (a cada 30 s) a emite depois de `ends_at`. `404` = mensagem venenosa; outro erro = nova tentativa. Certificados não consulta mais `GET /activities/{id}`. |
-| Chama | Usuários, `GET /internal/users/{id}` | `200 {"id","name"}`, sem autenticação, rede interna. `404` = mensagem venenosa. |
-| Expõe (Gateway) | Frontend | `GET /certificates/api/v1/certificates/me` e `GET /certificates/api/v1/certificates/{id}` (PDF, só do dono), `requireAuth=true`, abertos por `certificates/scripts/register_gateway.sh`. `/healthcheck` e `/openapi.json` ficam privados. |
+| `POST /api/v1/auth/register` | pública | cria conta `PARTICIPANT`; `requestedRole: ORGANIZER` só abre um pedido (`organizerRequest: PENDING`) |
+| `POST /api/v1/auth/login` | pública | JWT RS256 |
+| `GET /api/v1/users/me` · `PATCH /api/v1/users/me` | autenticada | consulta e atualização do perfil próprio |
+| `GET /api/v1/users` | `ORGANIZER` | busca por `id`, `email`, `name` (paginada) |
+| `GET /api/v1/admin/users` | `ADMIN` | lista com filtro `q` e `organizerRequest` |
+| `PUT /api/v1/admin/users/{id}/organizer` | `ADMIN` | corpo `{"approved": bool}` aprova ou recusa o pedido |
+| `GET /.well-known/jwks.json` | pública | chaves públicas; consumida pelo Gateway |
+| `GET /internal/users/{id}` | interna | `{"id","name"}` e nada mais; consumida por Certificados |
 
-Todas as chamadas de saída levam `X-Trace-Id`. O percentual enviado à regra de elegibilidade é o do evento, calculado por Inscrições e reverificado por Certificados. O certificado é único por (usuário, evento): um segundo evento para o mesmo par é tratado como duplicado (sucesso, sem novo certificado). `GET /certificates/api/v1/certificates/me` passa a incluir `event_id` em cada item.
+Os papéis do token são `PARTICIPANT`, `ORGANIZER` e `ADMIN`. Usuários não consome nem publica Kafka.
 
-## 5. Dependências por consumidor
+### 5.2 Eventos (`events`) — detalhe em `events/docs/contracts.md`
 
-| Consumidor | O que recebe de Usuários | Estado |
+| Operação | Acesso | Resultado |
 |---|---|---|
-| Eventos | `X-User-Id` e `X-User-Roles` do Gateway (sem validar o JWT); valida a responsabilidade pelo evento (RN07) | Aprovado (DT-10) |
-| Inscrições | `sub` do token validado (nunca `userId` do corpo) | Proposto |
-| Pagamentos | Referência via Inscrições; sem acesso ao banco de Usuários | Proposto |
-| Notificações | Contrato de mensagem a definir (P8); identifica por `X-User-Id`, que agora é definido pelo Gateway após verificar o JWT (P3) | Pendente |
-| Check-in | Valida inscrição no domínio proprietário | Proposto |
-| Certificados | (leitura de `event_id` em Eventos, DT-10) `id` e `name` por `GET /internal/users/{id}` (sem autenticação, rede interna; P9, DT-06) | Aprovado (DT-06) |
-| Relatórios | Sem dados pessoais de Usuários | Proposto |
+| `GET /api/v1/events` · `GET /api/v1/events/{event_id}` | pública | busca paginada (`q`, `from`, `to`, `limit`, `offset`) e detalhe com atividades |
+| `GET /api/v1/events/{event_id}/activities` · `GET /api/v1/activities/{activity_id}` | pública | programação e atividade |
+| `GET /api/v1/me/events` | autenticada | eventos do chamador em qualquer status |
+| `POST /api/v1/events` | `ORGANIZER` | cria evento em `DRAFT` |
+| `PATCH /api/v1/events/{event_id}` · `POST .../publish` · `POST .../cancel` | dono | edita, publica, cancela |
+| `POST /api/v1/events/{event_id}/activities` | dono | cria atividade (`capacity` imutável) |
+| `PATCH /api/v1/activities/{activity_id}` · `POST .../end` · `DELETE ...` | dono | edita, encerra, remove (só em `DRAFT`) |
+| `GET /api/v1/activities/{activity_id}/permissions/me` | interna | `{"can_manage": bool}`; consumida por Inscrições |
 
-### Serviços atrás do Gateway
-Um serviço que só recebe tráfego pelo Gateway **não precisa validar o JWT**: lê `X-User-Id` (UUID) e `X-User-Roles` (`PARTICIPANT`/`ORGANIZER`, separadas por vírgula; ausente se não houver). Ausência de `X-User-Id` significa requisição anônima (rota sem `requireAuth`); um serviço protegido deve responder `401`. Isso só é seguro se o serviço **não for alcançável por outro caminho**: valide o token como abaixo. O `Authorization` continua sendo repassado. Inscrições **(branch)**, nas chamadas feitas em nome do usuário, reencaminha a Eventos `X-User-Id`, `X-User-Roles`, `X-Trace-Id` e o `Authorization` (sem verificá-lo); chamadas em segundo plano (reação a `events.events` e a `payments.events`) não levam identidade. Não há segredo entre serviços: os endpoints `/internal/...` dependem do isolamento de rede.
+Eventos guarda só a capacidade máxima; quem conta as vagas é Inscrições. Erros de negócio: 403 `FORBIDDEN`, 404
+`NOT_FOUND` (também para recurso de outro organizador), 409 (`EVENT_CANCELLED`, `EVENT_NOT_DRAFT`, `INVALID_STATUS`,
+`ACTIVITY_ENDED`, ...), 422 (`ACTIVITY_OUTSIDE_EVENT`, `INVALID_PERIOD`).
 
-### Como um consumidor valida o token (Proposto)
-RS256; chave pública em `GET /consult?kind=user` → `http://<host>/.well-known/jwks.json` (`kid` na assinatura); exigir `iss`, `exp` e assinatura. Claims: `sub` (UUID), `roles` (`PARTICIPANT`/`ORGANIZER`), `iss`, `iat`, `exp`, `jti`.
+### 5.3 Inscrições (`subscription`) — detalhe em `subscription/CONTRACTS.md`
 
-## 6. Frontend como consumidor (Proposto, implementado em `frontend/`)
-| Item | Como o frontend se comporta |
+| Operação | Acesso | Resultado |
+|---|---|---|
+| `POST /api/v1/activities/{activity_id}/registrations` | autenticada | cria a inscrição: `CONFIRMED` (gratuita), `PENDING_PAYMENT` (paga, com vaga) ou `WAITLISTED` |
+| `GET /api/v1/activities/{activity_id}/availability` | autenticada | disponibilidade de vagas da atividade |
+| `GET /api/v1/registrations/me` · `GET /api/v1/registrations/{registration_id}` | dono | consulta |
+| `POST /api/v1/registrations/{registration_id}/cancel` | dono | cancela e libera a vaga |
+| `POST /api/v1/registrations/{registration_id}/accept-offer` | dono | aceita a oferta da fila (`OFFERED`) |
+| `GET /api/v1/activities/{activity_id}/registrations` | organizador da atividade | lista de inscritos |
+| `POST /api/v1/registrations/{registration_id}/check-in` | organizador da atividade | registra presença |
+| `GET /internal/registrations/{registration_id}` | interna | fatos da inscrição para Pagamentos (abaixo) |
+
+`GET /internal/registrations/{registration_id}` devolve `registration_id`, `activity_id`, `user_id`, `status`,
+`amount_minor`, `currency`, `expires_at` (nulo fora de `OFFERED`/`PENDING_PAYMENT`) e `event_id`; id desconhecido ou
+inválido → 404 `REGISTRATION_NOT_FOUND`. Estados da inscrição: `WAITLISTED`, `OFFERED`, `PENDING_PAYMENT`,
+`CONFIRMED`, `CANCELLED`, `EXPIRED`, `REJECTED`. A reserva dura `RESERVATION_SECONDS` (900).
+
+### 5.4 Pagamentos (`payments`) — detalhe em `payments/README.md`
+
+| Operação | Acesso | Resultado |
+|---|---|---|
+| `POST /payments` | dono da inscrição | corpo `{"registration_id"}`; cria o pagamento `PENDING` (201; 200 se já existir) com valor, moeda, dono e atividade lidos de Inscrições |
+| `GET /payments/{paymentId}` · `GET /payments?registration_id=` | dono | consulta |
+| `POST /payments/{paymentId}/simulate` | dono | simulador do provedor: `{"action":"approve"\|"decline"\|"expire"}` (`SIMULATOR_ENABLED`) |
+
+Estados: `PENDING → APPROVED \| DECLINED \| EXPIRED \| CANCELLED`; `APPROVED → REFUNDED`. Erros: 404
+`REGISTRATION_NOT_FOUND`, 409 `REGISTRATION_NOT_PAYABLE`, 409 `PAYMENT_NOT_APPLIED` (com `payment_status`), 503
+`UPSTREAM_UNAVAILABLE` (Inscrições inacessível). O prazo do pagamento é próprio (`PAYMENT_TTL_SECONDS`, 900).
+
+### 5.5 Relatórios (`reports`) — detalhe em `reports/README.md`
+
+Somente leitura, só para o organizador dono do evento (outro usuário → 404, igual a inexistente).
+
+| Operação | Resultado |
 |---|---|
-| Endereço | só o Gateway, em `VITE_API_BASE_URL`; caminhos `/user/api/v1/...` em `src/config.ts` |
-| Rotas usadas | `POST auth/register` (com `requestedRole`), `POST auth/login`, `GET/PATCH users/me`, `GET users` (busca, só organizador), `GET admin/users` e `PUT admin/users/{id}/organizer` (só administrador, DT-11) |
-| Token | em memória; enviado como `Authorization: Bearer`; descartado no logout, na expiração e em qualquer 401 autenticado (DT-07) |
-| Erros do Gateway em texto puro | 401, 404, 429 e 503 são tratados sem exibir o corpo (relevante se `requireAuth` for ligado, ver P-itens de Gateway) |
-| `X-Request-Id` duplicado (P15) | usa o primeiro valor; as mensagens usam o `traceId` do corpo |
-| CORS | depende do Gateway (reflete a origem; P14). Em dev o Vite roda em `http://localhost:5173` sem proxy |
-| Onde servir (P10) | dev: Vite; produção: `npm run build` gera `frontend/dist` estático. Nenhum serviço novo no compose raiz |
+| `GET /events` | eventos do chamador (paginado: `limit` 1–100, `offset`) |
+| `GET /events/{eventId}/summary` | inscrições, pagamentos, ocupação, presença e atividades por ciclo de vida |
+| `GET /events/{eventId}/activities` | indicadores por atividade (paginado) |
+| `GET /events/{eventId}/registrations` | contagem por status |
 
-### Fase C do frontend: Relatórios e Certificados
-| Item | Como o frontend se comporta |
-|---|---|
-| Relatórios (token, só o dono) | `GET /reports/events/{id}/summary` e `GET /reports/events/{id}/activities?limit&offset` (`{items,total,limit,offset}`). 404 `EVENT_NOT_FOUND` para inexistente ou alheio. Dinheiro em unidades menores por moeda, nunca somado; taxas 0–1 ou `null` |
-| Certificados (token) | `GET /certificates/api/v1/certificates/me?limit&offset` e `GET …/{id}` (PDF anexo, `application/pdf`; 404 `NOT_FOUND`; 503 se o arquivo faltar). Sem rota de criação: emissão vem do Kafka (evento encerrado e ≥ 75% de presença) |
-| Download | por `fetch` com Bearer e `Accept: application/pdf`; resposta com outro `Content-Type` é rejeitada |
+### 5.6 Certificados (`certificates`) — detalhe em `certificates/README.md`
 
-### Fase B do frontend: Pagamentos e Notificações
-| Item | Como o frontend se comporta |
-|---|---|
-| Pagamentos (token) | `POST /payments/payments` (corpo só `registration_id`; 201 novo, 200 existente), `GET /payments/payments/{id}`, `POST /payments/payments/{id}/simulate` (`approve`/`decline`/`expire`). Erros por código: `REGISTRATION_NOT_PAYABLE`, `PAYMENT_NOT_FOUND`, `PAYMENT_NOT_APPLIED`, `UPSTREAM_UNAVAILABLE` |
-| Notificações (token) | `GET /notifications/list` (`status` repetível/por vírgula, `limit` 1–100, `base_notification_id`), `PUT /notifications/update-state` (lote ≤ 100). Erros em texto puro |
-| Tempo real | `GET /ws?access_token=<JWT>` no Gateway; quadros `{"type":"connected"}` e `{"type":"notification","notification":{…}}`; fechamento `4000` = substituída por outra conexão (P26) |
-| Destino | só pelo `payload_type` (P27) |
+| Operação | Acesso | Resultado |
+|---|---|---|
+| `GET /api/v1/certificates/me?limit=&offset=` | dono | `{"certificates":[{id, registration_id, activity_id, event_id, issued_at}]}` |
+| `GET /api/v1/certificates/{certificate_id}` | dono | PDF; de outro usuário → 404 `NOT_FOUND` |
 
-### Fase A2 do frontend: área do organizador
-| Item | Como o frontend se comporta |
-|---|---|
-| Eventos (token) | `GET /events/api/v1/me/events`, `POST /events`, `PATCH /events/{id}`, `POST /events/{id}/publish`, `POST /events/{id}/cancel`, `POST /events/{id}/activities`, `PATCH /activities/{id}`, `POST /activities/{id}/end`, `DELETE /activities/{id}` (204) |
-| Inscrições (token) | `GET /subscription/api/v1/activities/{id}/registrations`, `POST /subscription/api/v1/registrations/{id}/check-in` (resposta: `registration_id`, `checked_in_at`, `recorded_by`, `eligible_emitted`) |
-| Rascunho | `GET /events/{id}` com token: só o dono enxerga rascunho |
-| Regras | capacidade imutável (nunca enviada no PATCH); preço só em rascunho; erros por código em `CODE_MESSAGES` (`EVENT_NOT_DRAFT`, `EVENT_WITHOUT_ACTIVITIES`, `ACTIVITY_OUTSIDE_EVENT`, `INVALID_PERIOD`, `OUTSIDE_CHECK_IN_WINDOW`…) |
-| Limite conhecido | P25 (nome dos participantes e presença) |
+Não existe endpoint de criação: certificado só nasce de `AttendanceEligible` (item 6).
+Consome por REST: `GET /api/v1/events/{event_id}` (Eventos) e `GET /internal/users/{id}` (Usuários).
 
-### Fase A1 do frontend: Eventos e Inscrições
-| Item | Como o frontend se comporta |
+### 5.7 Notificações (`notifications`) — detalhe no `README.md` raiz
+
+| Operação | Resultado |
 |---|---|
-| Eventos (público, sem token) | `GET /events/api/v1/events`, `/events/api/v1/events/{event_id}`, `/events/api/v1/activities/{activity_id}`; campos `event_id`, `activity_id`, `amount_minor`, `currency`, `registration_open`, `lifecycle` |
-| Inscrições (autenticado) | `POST /subscription/api/v1/activities/{id}/registrations` (`join_waitlist`), `GET .../activities/{id}/availability`, `GET .../registrations/me`, `POST .../registrations/{id}/cancel`, `POST .../registrations/{id}/accept-offer` |
-| Vagas | só Inscrições conta; visitante vê só a capacidade (a rota exige login) |
-| Erros | traduzidos pelo código (P23); Gateway em texto puro (401/404/429/503) tratado sem exibir o corpo |
-| Datas | ISO (Eventos) e `str(datetime)` (Inscrições, P22) |
-| Rastreio | `X-Trace-Id` (antes `X-Request-Id`, aceito como fallback) |
+| `GET /list` | notificações do usuário, mais novas primeiro, paginação por `base_notification_id`; filtros `status` e `limit` |
+| `PUT /update-state` | corpo `[{"id","status"}]` (1 a 100); `status` ∈ `DEFAULT`, `RECEIVED`, `SEEN`; aplicação parcial com `{"updated","errors"}` |
+
+## 6. Contratos Kafka
+
+### 6.1 Envelope e regras comuns
+
+Mensagem JSON **plana** (sem `data` aninhado):
+
+| Campo | Regra |
+|---|---|
+| `message_id` | UUID único por mensagem e **igual em reenvios**; é a chave de deduplicação dos consumidores. |
+| `schema_version` | Sempre `1`. Outro valor é inválido e vai para a DLQ. |
+| `type` | PascalCase (tabelas abaixo). |
+| `occurred_at` | ISO 8601. |
+| `trace_id` | `X-Trace-Id` de origem; pode ser nulo. |
+
+Regras de compatibilidade:
+
+1. Entrega **at-least-once** (Transactional Outbox no produtor); todo consumidor deduplica por `message_id`, na mesma
+   transação do efeito.
+2. Consumidor **ignora campos desconhecidos** e **tipos desconhecidos** (confirma sem erro). Acrescentar campo é
+   mudança compatível; remover, renomear ou mudar o tipo de um campo exige nova `schema_version`.
+3. Mensagem inválida (JSON, `schema_version`, campos obrigatórios) vai para a DLQ do consumidor com referência
+   (tópico, partição, offset), nunca bloqueando a partição.
+4. A chave Kafka mantém a ordem do agregado; consumidores usam `aggregate_version` (Inscrições) para rejeitar estado antigo.
+5. Cada serviço consumidor usa grupo próprio e cria, se ausentes, os tópicos de que depende.
+
+### 6.2 Tópicos
+
+| Tópico | Produtor | Consumidores | Chave | DLQ |
+|---|---|---|---|---|
+| `events.events` | Eventos | Inscrições, Relatórios | `event_id` (eventos e criação/edição/remoção de atividade); `activity_id` (`ActivityEnded`, `ActivityCancelled`) | `subscription.dlq`, `reports.dlq` |
+| `subscription.events` | Inscrições | Pagamentos, Certificados, Relatórios | `registration_id` | `certificates.dlq`, `reports.dlq` |
+| `payments.events` | Pagamentos | Inscrições, Relatórios | `registration_id` | `subscription.dlq`, `reports.dlq` |
+| `notifications` | Inscrições, Pagamentos | Notificações | `user_id` | — (inválidas são registradas e ignoradas) |
+| `notifications-push` | Notificações | Gateway | — | — |
+
+### 6.3 Tipos por tópico
+
+**`events.events`** (Eventos):
+
+| `type` | Campos além do envelope |
+|---|---|
+| `EventCreated`, `EventUpdated`, `EventPublished`, `EventCancelled` | `event_id`, `organizer_id`, `organization`, `name`, `status`, `starts_at`, `ends_at` |
+| `ActivityCreated`, `ActivityUpdated`, `ActivityDeleted` | `activity_id`, `event_id`, `name`, `starts_at`, `ends_at`, `capacity`, `amount_minor`, `currency`, `paid`, `waitlist_enabled` |
+| `ActivityEnded`, `ActivityCancelled` | `activity_id`, `event_id`, `ends_at` |
+
+Inscrições reage só a `ActivityEnded` e `ActivityCancelled` (cancelamento é terminal e cancela as inscrições da
+atividade); Relatórios projeta todos.
+
+**`subscription.events`** (Inscrições), com `registration_id`, `activity_id`, `user_id`, `event_id`, `aggregate_version`, `status`:
+
+| `type` | Quando | Quem reage |
+|---|---|---|
+| `RegistrationWaitlisted`, `WaitlistOffered` | entrou na fila; recebeu oferta | Relatórios |
+| `RegistrationPendingPayment` | inscrição paga com vaga ou oferta paga aceita | Relatórios (Pagamentos ignora; a cobrança nasce em `POST /payments`) |
+| `RegistrationConfirmed`, `RegistrationRejected` | confirmação; recusa | Relatórios |
+| `RegistrationCancelled`, `RegistrationExpired` | cancelamento; reserva vencida | **Pagamentos** (cancela cobrança pendente ou estorna a aprovada), Relatórios |
+| `AttendanceRecorded` | check-in | Relatórios |
+| `AttendanceEligible` | presença ≥ `ATTENDANCE_MIN_PERCENT` (75) no evento; no máximo uma vez por pessoa e evento; campos extras `attended_activities`, `total_activities`, `attendance_percentage` | **Certificados**, Relatórios |
+
+**`payments.events`** (Pagamentos), com `registration_id`, `amount_minor`, `currency`, `payment_id`, `user_id`, `event_id`, `activity_id`, `status`, `reason`:
+
+| `type` | Efeito em Inscrições |
+|---|---|
+| `PaymentApproved` | se a inscrição está `PENDING_PAYMENT`, dentro da reserva e com o mesmo valor/moeda → `CONFIRMED`; caso contrário é ignorada (e Pagamentos estorna) |
+| `PaymentDeclined` | `PENDING_PAYMENT` → `REJECTED`; libera a vaga e promove a fila |
+| `PaymentCreated`, `PaymentExpired`, `PaymentCancelled`, `PaymentRefunded` | informativos (sem mudança de estado) |
+
+**`notifications`** (Inscrições, Pagamentos) — formato de Notificações:
+
+| Campo | Regra |
+|---|---|
+| `user_id`, `message` | obrigatórios, não vazios |
+| `payload` + `payload_type` | objeto JSON e texto; ambos presentes ou ambos ausentes |
+| `redirect_url` | opcional, opaco |
+| `id`, `status`, `seen` | nunca enviados pelo produtor |
+
+**`notifications-push`** (Notificações → Gateway): `{id, user_id, message, redirect_url, payload, payload_type, status, created_at}`.
+Melhor esforço; pode repetir, então o receptor deduplica por `id`; falha no push é recuperada por `GET /list`.
+
+## 7. Quem chama quem por REST
+
+| Origem | Destino | Chamada | Para quê |
+|---|---|---|---|
+| Gateway | Usuários | `GET /.well-known/jwks.json` | verificar o JWT |
+| Gateway | todos | `/{kind}/...` | roteamento (via discoverer) |
+| Inscrições | Eventos | `GET /api/v1/activities/{activity_id}` | capacidade, preço, abertura, datas |
+| Inscrições | Eventos | `GET /api/v1/activities/{activity_id}/permissions/me` | autorizar operação do organizador |
+| Pagamentos | Inscrições | `GET /internal/registrations/{registration_id}` | valor, moeda, dono, status e prazo da inscrição |
+| Certificados | Eventos | `GET /api/v1/events/{event_id}` | título, período e status do evento |
+| Certificados | Usuários | `GET /internal/users/{id}` | nome do participante |
+
+Chamadas em nome do usuário levam `X-User-Id`, `X-User-Roles` (se houver) e `X-Trace-Id`; chamadas de fundo não
+carregam identidade. Timeout de 5 s, sem retry de mutações. Falha do destino nunca corrompe estado: Pagamentos
+responde 503 `UPSTREAM_UNAVAILABLE`; Certificados guarda a mensagem e tenta de novo.
+
+## 8. Fluxo de inscrição paga em termos de contrato
+
+1. Participante: `POST /subscription/api/v1/activities/{id}/registrations`. Inscrições chama Eventos (REST),
+   reserva a vaga, grava a inscrição `PENDING_PAYMENT` e publica `RegistrationPendingPayment`.
+2. Participante: `POST /payments/payments` com `{"registration_id"}`. Pagamentos chama Inscrições
+   (`GET /internal/registrations/{id}`) e cria o pagamento `PENDING`; publica `PaymentCreated`.
+3. Provedor (simulador): `POST /payments/payments/{id}/simulate`. Pagamentos publica `PaymentApproved`,
+   `PaymentDeclined` ou `PaymentExpired`, e uma notificação ao usuário.
+4. Inscrições consome `payments.events`: `PaymentApproved` → `CONFIRMED` + `RegistrationConfirmed`;
+   `PaymentDeclined` → `REJECTED` + `RegistrationRejected`.
+5. Se a inscrição for cancelada ou a reserva vencer, Inscrições publica `RegistrationCancelled`/`RegistrationExpired`;
+   Pagamentos cancela a cobrança pendente ou estorna a aprovada (`PaymentCancelled`/`PaymentRefunded`).
+   Aprovação que chega depois do prazo não é honrada.
+6. Relatórios e Notificações apenas observam os mesmos eventos; Certificados reage a `AttendanceEligible` depois dos
+   check-ins.
+
+## 9. Fonte de verdade por serviço
+
+| Serviço | Documento |
+|---|---|
+| Usuários | `docs/api/users.openapi.yaml`, `docs/architecture/users-service.md` |
+| Eventos | `events/docs/contracts.md` |
+| Inscrições | `subscription/CONTRACTS.md` |
+| Pagamentos | `payments/README.md` |
+| Relatórios | `reports/README.md` |
+| Certificados | `certificates/README.md` |
+| Notificações e Gateway | `README.md` (raiz) |
+| Decisões por trás dos contratos | `docs/architecture/technical-decisions.md` (ADR-002 e DT-*) |

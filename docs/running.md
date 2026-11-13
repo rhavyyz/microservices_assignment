@@ -83,14 +83,38 @@ cd frontend && cp .env.example .env && npm ci && npm run dev    # http://localho
 
 ## 5. Testes
 
-| Serviço | Comando | Observação |
-|---|---|---|
-| Frontend | `cd frontend && npm run lint && npm run typecheck && npm run test:run && npm run build` | sem Docker |
-| Usuários | `(cd service-discoverer/Libs/java && mvn -q install -DskipTests) && cd user && ./mvnw verify` | `*IT` precisam de Docker |
-| Eventos, Pagamentos, Relatórios | `cd <serviço> && npm ci && npm test` | `node:test` |
-| Inscrições | `cd subscription && python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.lock ../service-discoverer/Libs/python "httpx>=0.28,<1" pytest ruff && TEST_DATABASE_URL=postgresql://postgres:test@localhost:55432/subscription_test python -m pytest -v && ruff check app tests scripts` | precisa de um PostgreSQL de teste (`docker run -d --name pgtest -e POSTGRES_PASSWORD=test -e POSTGRES_DB=subscription_test -p 55432:5432 postgres:16`). Sem `TEST_DATABASE_URL` os testes de concorrência são ignorados |
-| Certificados | `cd certificates && python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt ../service-discoverer/Libs/python pytest && PYTHONPATH=$PWD python -m pytest` | |
-| Gateway, Notificações, service-discoverer | `cd <pasta> && go test ./...` | |
+Os logs são salvos em `~/evidencias` (`mkdir -p ~/evidencias`). Execute a partir da raiz do repositório.
+
+```bash
+# Frontend
+(cd frontend && npm ci && npm run lint && npm run typecheck && npm run test:run && npm run build) 2>&1 | tee ~/evidencias/01-frontend.log
+
+# Usuários (JDK 21 + Docker)
+(cd service-discoverer/Libs/java && mvn -q install -DskipTests)
+(cd user && ./mvnw verify) 2>&1 | tee ~/evidencias/02-user-verify.log
+
+# Eventos, Pagamentos, Relatórios
+for s in events payments reports; do (cd $s && npm ci && npm test) 2>&1 | tee ~/evidencias/03-$s.log; done
+
+# Go (Go instalado, por exemplo: sudo snap install go --classic)
+for d in gateway notifications service-discoverer service-discoverer/Libs/go; do echo "## $d"; (cd $d && go test ./...); done 2>&1 | tee ~/evidencias/04-go.log
+
+# Certificados
+(cd certificates && python3 -m venv .venv && . .venv/bin/activate && pip install -q -r requirements.txt pytest && pip install -q ../service-discoverer/Libs/python && PYTHONPATH=$PWD python -m pytest) 2>&1 | tee ~/evidencias/05-certificates.log
+
+# Inscrições (precisa de um PostgreSQL de teste)
+docker run -d --name pgtest -e POSTGRES_PASSWORD=test -e POSTGRES_DB=subscription_test -p 55432:5432 postgres:16
+sleep 5
+(cd subscription && python3 -m venv .venv && . .venv/bin/activate && pip install -q -r requirements.lock pytest ruff \
+  && pip install -q ../service-discoverer/Libs/python "httpx>=0.28,<1" \
+  && export TEST_DATABASE_URL='postgresql://postgres:test@localhost:55432/subscription_test' \
+  && python -m pytest -v 2>&1 | tee ~/evidencias/06-subscription.log \
+  && python -m pytest -v -k "concurrent or race" 2>&1 | tee ~/evidencias/07-concorrencia.log \
+  && ruff check app tests scripts 2>&1 | tee ~/evidencias/08-ruff.log)
+docker rm -f pgtest
+```
+
+Sem `TEST_DATABASE_URL` os testes de concorrência de Inscrições são ignorados.
 
 ## 6. Documentação das APIs
 
@@ -101,7 +125,7 @@ cd frontend && cp .env.example .env && npm ci && npm run dev    # http://localho
 | Eventos | `events/docs/contracts.md` |
 | Inscrições e tópicos Kafka | `subscription/CONTRACTS.md` |
 | Pagamentos, Relatórios, Certificados | `payments/README.md`, `reports/README.md`, `certificates/README.md` |
-| Contratos entre equipes e perguntas em aberto | `docs/integration/contracts-with-team.md` |
+| Contratos entre os serviços (REST, Kafka e relações) | `docs/integration/contracts-with-team.md` |
 
 ## 7. Problemas comuns
 
